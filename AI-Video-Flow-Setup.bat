@@ -40,9 +40,10 @@ set SCRIPT="%TEMP%\create_shortcut.vbs"
 echo Set oWS = WScript.CreateObject("WScript.Shell") > %SCRIPT%
 echo sLinkFile = oWS.SpecialFolders("Desktop") ^& "\AI Video Flow.lnk" >> %SCRIPT%
 echo Set oLink = oWS.CreateShortcut(sLinkFile) >> %SCRIPT%
-echo oLink.TargetPath = "%~dp0AI-Video-Flow.bat" >> %SCRIPT%
+echo oLink.TargetPath = "%~dp0AI-Video-Flow.vbs" >> %SCRIPT%
 echo oLink.WorkingDirectory = "%~dp0" >> %SCRIPT%
 echo oLink.Description = "AI Video Flow - DaVinci Resolve AI Connector" >> %SCRIPT%
+echo oLink.IconLocation = "%~dp0assets\icon.ico" >> %SCRIPT%
 echo oLink.Save >> %SCRIPT%
 cscript /nologo %SCRIPT%
 del %SCRIPT%

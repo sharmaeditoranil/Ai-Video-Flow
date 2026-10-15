@@ -1,0 +1,15 @@
+#!/bin/bash
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../.." && pwd )"
+cd "$DIR"
+
+# Preferred python environment
+if [ -f "$HOME/.ai-video-flow/venv/bin/python" ]; then
+    PY="$HOME/.ai-video-flow/venv/bin/python"
+elif command -v python3 &>/dev/null; then
+    PY=$(command -v python3)
+else
+    osascript -e 'display alert "Python 3 Not Found" message "Please install Python 3.10+ from python.org to run AI Video Flow."'
+    exit 1
+fi
+
+"$PY" "$DIR/launch_app.py"

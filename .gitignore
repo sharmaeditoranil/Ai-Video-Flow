@@ -1,0 +1,32 @@
+# Environments & Python
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Reference External Repos (cloned repos)
+reference_repos/
+
+# Temporary Render & Output Files
+renders/
+*.cube
+*.mp4
+*.webm
+*.mov
+*.wav
+*.mp3
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Logs & System
+*.log
+.system_generated/
+.gemini/

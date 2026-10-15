@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<WorkflowIntegration version="1.0">
+    <Plugin id="com.aivideoflow.resolve.plugin">
+        <Name>AI Video Flow</Name>
+        <Description>Advanced DaVinci Resolve AI Editing Assistant & Wedding Automation</Description>
+        <Author>AI Video Flow Team</Author>
+        <Version>1.0.0</Version>
+        <EntryPoint>index.html</EntryPoint>
+        <WindowOptions>
+            <DefaultWidth>420</DefaultWidth>
+            <DefaultHeight>680</DefaultHeight>
+            <MinWidth>360</MinWidth>
+            <MinHeight>500</MinHeight>
+            <Resizable>true</Resizable>
+        </WindowOptions>
+    </Plugin>
+</WorkflowIntegration>

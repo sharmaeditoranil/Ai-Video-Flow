@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Video Flow – DaVinci Resolve AI Connector</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h2>AI Video Flow</h2>
+          <span>Resolve AI Connector</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="home">
+          <span class="icon">⚡</span> Dashboard
+        </button>
+        <button class="nav-item" data-tab="wedding">
+          <span class="icon">💍</span> Wedding AI Engine
+        </button>
+        <button class="nav-item" data-tab="commands">
+          <span class="icon">💬</span> Claude AI Assistant
+        </button>
+        <button class="nav-item" data-tab="diagnostics">
+          <span class="icon">🔍</span> Diagnostics & Status
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="version-badge">v1.0.0 Commercial Edition</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="status-indicators">
+          <div class="status-pill" id="status-resolve">
+            <span class="status-dot dot-yellow"></span>
+            <span class="status-label">DaVinci Resolve: Checking...</span>
+          </div>
+          <div class="status-pill" id="status-claude">
+            <span class="status-dot dot-green"></span>
+            <span class="status-label">Claude AI: Configured</span>
+          </div>
+          <div class="status-pill" id="status-mcp">
+            <span class="status-dot dot-green"></span>
+            <span class="status-label">MCP Server: Active</span>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="btn btn-primary" id="btn-connect-all">
+            <span class="icon">🚀</span> CONNECT ALL
+          </button>
+        </div>
+      </header>
+
+      <!-- Tab: Home Dashboard -->
+      <section class="tab-pane active" id="pane-home">
+        <div class="hero-card">
+          <div class="hero-content">
+            <div class="badge">Next-Gen Video Automation</div>
+            <h1>From 1500 Raw Wedding Clips to a Beat-Synced Masterpiece.</h1>
+            <p>Direct live integration between Claude Desktop and DaVinci Resolve. Trims camera shake, extracts in-focus golden moments, and assembles ready-to-color timelines.</p>
+            
+            <div class="cta-group">
+              <button class="btn btn-lg btn-glow" id="btn-quick-connect">
+                ⚡ CONNECT ALL SERVICES
+              </button>
+              <button class="btn btn-lg btn-secondary" id="btn-test-connection">
+                🔄 Test Connection
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 Core Status Cards -->
+        <div class="card-grid">
+          <div class="stat-card">
+            <div class="card-header">
+              <span class="card-title">DaVinci Resolve Bridge</span>
+              <span class="badge badge-studio" id="resolve-edition-badge">Auto-Detect</span>
+            </div>
+            <div class="card-body">
+              <p class="card-desc">Official Blackmagic Design Scripting API connection.</p>
+              <div class="metric-row">
+                <span>Active Project:</span>
+                <strong id="metric-project">Scanning...</strong>
+              </div>
+              <div class="metric-row">
+                <span>Timeline Count:</span>
+                <strong id="metric-timelines">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="card-header">
+              <span class="card-title">Claude Desktop MCP</span>
+              <span class="badge badge-success">Registered</span>
+            </div>
+            <div class="card-body">
+              <p class="card-desc">Model Context Protocol server registered in Claude config.</p>
+              <div class="metric-row">
+                <span>Protocol:</span>
+                <strong>JSON-RPC 2.0 Stdio</strong>
+              </div>
+              <div class="metric-row">
+                <span>Available Tools:</span>
+                <strong>9 Tools Active</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="card-header">
+              <span class="card-title">Wedding AI Intelligence</span>
+              <span class="badge badge-purple">Ready</span>
+            </div>
+            <div class="card-body">
+              <p class="card-desc">Optical Flow Shake Trimmer & Librosa Beat Sync Engine.</p>
+              <div class="metric-row">
+                <span>Supported Formats:</span>
+                <strong>Teaser, Highlight, Full Film</strong>
+              </div>
+              <div class="metric-row">
+                <span>Languages:</span>
+                <strong>Hindi, Hinglish, English</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: Wedding AI Engine -->
+      <section class="tab-pane" id="pane-wedding">
+        <div class="section-header">
+          <h2>💍 Wedding AI Culling & Auto-Timeline Studio</h2>
+          <p>Drop your 1000-1500 raw wedding clips. The AI will remove shaky starts, detect clear in-focus moments, and create 3 separate timelines.</p>
+        </div>
+
+        <div class="workflow-grid">
+          <div class="panel-box">
+            <h3>1. Input Footage & Audio</h3>
+            <div class="form-group">
+              <label>Wedding Raw Clips Folder</label>
+              <div class="input-action">
+                <input type="text" id="input-folder-path" placeholder="/Volumes/HardDrive/Wedding_Shoot_Rohit" value="/Volumes/Wedding_Sample_Footage">
+                <button class="btn btn-secondary">Browse</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Background Wedding Song (MP3 / WAV)</label>
+              <div class="input-action">
+                <input type="text" id="input-audio-path" placeholder="song.mp3" value="/Music/wedding_cinematic_song.mp3">
+                <button class="btn btn-secondary">Browse</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Output Sequences to Create</label>
+              <div class="checkbox-row">
+                <label><input type="checkbox" checked id="chk-teaser"> 01_Teaser_60s (Reel)</label>
+                <label><input type="checkbox" checked id="chk-highlight"> 02_Cinematic_Highlight_4m</label>
+                <label><input type="checkbox" checked id="chk-fullfilm"> 03_Full_Wedding_Film</label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary btn-block" id="btn-run-wedding-ai">
+              ✨ Start AI In-Clip Trimming & Build Timelines
+            </button>
+          </div>
+
+          <div class="panel-box">
+            <h3>2. Live Processing Output</h3>
+            <div class="console-box" id="wedding-console">
+              <div class="console-line info">[System] Ready to process raw wedding clips.</div>
+              <div class="console-line">[1] Optical Flow Camera Shake Detector: Initialized</div>
+              <div class="console-line">[2] Laplacian Sharpness & Blur Filter: Initialized</div>
+              <div class="console-line">[3] Librosa Music Beat Grid Analyzer: Ready</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: Claude Assistant & Natural Language -->
+      <section class="tab-pane" id="pane-commands">
+        <div class="section-header">
+          <h2>💬 Natural Language Commands for Claude AI</h2>
+          <p>You can speak to Claude Desktop in Hindi, Hinglish, or English. Claude executes these operations directly in DaVinci Resolve.</p>
+        </div>
+
+        <div class="prompt-cards-grid">
+          <div class="prompt-card">
+            <span class="prompt-lang">Hinglish / Hindi</span>
+            <p>"DaVinci Resolve connect karo aur current project ka naam batao."</p>
+            <span class="prompt-action">Triggers: <code>resolve_get_status</code></span>
+          </div>
+
+          <div class="prompt-card">
+            <span class="prompt-lang">Hinglish / Hindi</span>
+            <p>"Wedding clips me se shaky start trim karo aur 3-minute highlight timeline banao."</p>
+            <span class="prompt-action">Triggers: <code>ai_create_wedding_timelines</code></span>
+          </div>
+
+          <div class="prompt-card">
+            <span class="prompt-lang">Hinglish / Hindi</span>
+            <p>"Background music ke beats analyze karke timeline par markers lagao."</p>
+            <span class="prompt-action">Triggers: <code>resolve_add_beat_markers</code></span>
+          </div>
+
+          <div class="prompt-card">
+            <span class="prompt-lang">English</span>
+            <p>"Create a vertical 9:16 Instagram reel timeline with the top 2% shots."</p>
+            <span class="prompt-action">Triggers: <code>ai_create_wedding_timelines (format: teaser)</code></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

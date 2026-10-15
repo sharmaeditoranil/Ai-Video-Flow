@@ -9,7 +9,6 @@ __pycache__/
 *.so
 
 # Reference External Repos (cloned repos)
-reference_repos/
 
 # Temporary Render & Output Files
 renders/

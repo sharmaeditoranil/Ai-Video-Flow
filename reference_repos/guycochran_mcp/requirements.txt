@@ -1,0 +1,2 @@
+# Compatibility path. pyproject.toml is the source of dependency metadata.
+-e .

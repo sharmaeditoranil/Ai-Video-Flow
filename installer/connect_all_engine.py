@@ -10,7 +10,7 @@ import json
 import shutil
 import platform
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger("ai_video_flow.connect_all")
 
@@ -82,15 +82,37 @@ class ConnectAllEngine:
         results["steps"].append(f"Claude Desktop Detected: {claude_installed}")
 
         # Step 4: Register MCP Server into Claude Desktop config
-        server_script = os.path.join(self.project_root, "packages", "mcp_server", "server.py")
-        results["mcp_server"]["path"] = server_script
+        # On macOS, Claude Desktop is sandboxed and blocked from ~/Documents.
+        # We route through ~/.ai-video-flow/app/ which has full access permissions.
+        if self.system_os == "Darwin":
+            app_dir = os.path.expanduser("~/.ai-video-flow/app")
+            os.makedirs(app_dir, exist_ok=True)
+            workspace_packages = os.path.join(self.project_root, "packages")
+            target_packages = os.path.join(app_dir, "packages")
+            try:
+                if os.path.exists(target_packages):
+                    shutil.rmtree(target_packages)
+                shutil.copytree(workspace_packages, target_packages)
+            except Exception as e:
+                logger.warning(f"Failed to sync packages to ~/.ai-video-flow: {e}")
 
-        python_exec = sys.executable
+            server_script = os.path.join(app_dir, "packages", "mcp_server", "server.py")
+            python_exec = os.path.expanduser("~/.ai-video-flow/venv/bin/python")
+            if not os.path.exists(python_exec):
+                python_exec = sys.executable
+            target_pythonpath = app_dir
+        else:
+            server_script = os.path.join(self.project_root, "packages", "mcp_server", "server.py")
+            python_exec = sys.executable
+            target_pythonpath = self.project_root
+
+        results["mcp_server"]["path"] = server_script
 
         registration_success = self._register_claude_mcp(
             server_name="ai-video-flow-resolve",
             command=python_exec,
-            args=[server_script]
+            args=[server_script],
+            pythonpath=target_pythonpath
         )
         results["claude_desktop"]["configured"] = registration_success
         results["mcp_server"]["registered"] = registration_success
@@ -124,7 +146,7 @@ class ConnectAllEngine:
 
         return (len(detected_paths) > 0, detected_paths)
 
-    def _register_claude_mcp(self, server_name: str, command: str, args: list) -> bool:
+    def _register_claude_mcp(self, server_name: str, command: str, args: list, pythonpath: Optional[str] = None) -> bool:
         """Safely updates Claude Desktop's claude_desktop_config.json with automatic backup."""
         try:
             claude_dir = os.path.dirname(self.claude_config_path)
@@ -155,7 +177,7 @@ class ConnectAllEngine:
                 "command": command,
                 "args": args,
                 "env": {
-                    "PYTHONPATH": self.project_root
+                    "PYTHONPATH": pythonpath or self.project_root
                 }
             }
 

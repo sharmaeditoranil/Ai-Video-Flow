@@ -137,6 +137,12 @@
     $("home-premiere-version").textContent = p.installed ? (p.app_name || p.version || "Installed") : "—";
     $("set-premiere").textContent = pText;
 
+    const ed = data.edius || {};
+    const edText = ed.installed ? (ed.running ? "Running" : "Installed") : (ed.system_os && ed.system_os !== "Windows" ? "Windows only" : "Not installed");
+    setStatus("st-edius", ed.running ? "ok" : (ed.installed ? "warn" : ""), `EDIUS: ${edText}`);
+    setBadge("home-edius-badge", edText, ed.running ? "ok" : "warn");
+    $("home-edius-version").textContent = ed.installed ? (ed.app_name || ed.version || "Installed") : (edText === "Windows only" ? "Use the XML export" : "—");
+
     setStatus("st-claude", c.configured ? "ok" : "warn", c.configured ? "Claude Desktop is connected" : "Press Connect to link Claude Desktop");
     setBadge("home-claude-badge", c.configured ? "Connected" : "Not connected", c.configured ? "ok" : "warn");
     $("set-claude").textContent = c.configured ? "Connected" : "Not connected";

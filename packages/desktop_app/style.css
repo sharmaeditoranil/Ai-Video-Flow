@@ -223,6 +223,8 @@ textarea { resize: vertical; }
 }
 
 .cards-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 20px; }
+.cards-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 20px; }
+@media (max-width: 1280px) { .cards-4 { grid-template-columns: repeat(2, 1fr); } }
 .stat-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 8px; }
 
 /* ---------- Ads ---------- */
@@ -357,7 +359,7 @@ textarea { resize: vertical; }
   .nav-ico { font-size: 16px; }
   .side-profile .chip-text { display: none; }
   .side-profile { padding: 6px; justify-content: center; }
-  .welcome, .studio, .tools, .settings, .cards-3 { grid-template-columns: 1fr; }
+  .welcome, .studio, .tools, .settings, .cards-3, .cards-4 { grid-template-columns: 1fr; }
   .ad-banner { grid-template-columns: 96px 1fr; padding-right: 16px; }
   .ad-photo { width: 96px; height: 100%; }
   .ad-join { grid-column: 1 / -1; margin: 0 16px 16px; }

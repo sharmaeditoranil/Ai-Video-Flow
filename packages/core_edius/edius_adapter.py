@@ -39,12 +39,9 @@ class EdiusAdapter:
         """Detects installed EDIUS versions on Windows."""
         self._installed_apps = []
         if self._system_os == "Windows":
+            # Any EDIUS version (7, 8, 9, X, 11, ...) in either Program Files folder
             search_paths = [
-                r"C:\Program Files\Grass Valley\EDIUS 11\EDIUS.exe",
-                r"C:\Program Files\Grass Valley\EDIUS X\EDIUS.exe",
-                r"C:\Program Files\Grass Valley\EDIUS 9\EDIUS.exe",
-                r"C:\Program Files\Grass Valley\EDIUS 8\EDIUS.exe",
-                r"C:\Program Files\Grass Valley\EDIUS 7\EDIUS.exe",
+                r"C:\Program Files\Grass Valley\EDIUS*\EDIUS.exe",
                 r"C:\Program Files (x86)\Grass Valley\EDIUS*\EDIUS.exe",
             ]
             for pat in search_paths:

@@ -1014,6 +1014,7 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self._json({
                 "resolve": resolve_adapter.get_status(),
                 "premiere": premiere_adapter.get_status(),
+                "edius": edius_adapter.get_status(),
                 "hyperframes": hyperframes_service.is_available(),
                 "claude": ConnectAllEngine(root_dir).check_status()
             })

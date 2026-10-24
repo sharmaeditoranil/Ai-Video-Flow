@@ -6,6 +6,8 @@ via official Blackmagic Design Python scripting interface.
 
 import os
 import sys
+import glob
+import subprocess
 import platform
 import logging
 from typing import Optional, Dict, Any, List
@@ -135,6 +137,68 @@ class ResolveAdapter:
                 logger.error(f"Error reading Resolve status: {e}")
 
         return status
+
+    def is_running(self) -> bool:
+        """Checks if DaVinci Resolve process is running."""
+        try:
+            if self._system_os == "Darwin":
+                proc = subprocess.run(["pgrep", "-f", "DaVinci Resolve"], capture_output=True, text=True)
+                return proc.returncode == 0
+            elif self._system_os == "Windows":
+                proc = subprocess.run(
+                    ["tasklist", "/fi", "imagename eq Resolve.exe"],
+                    capture_output=True, text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                )
+                return "Resolve.exe" in proc.stdout
+        except Exception as e:
+            logger.debug(f"Process check failed: {e}")
+        return False
+
+    def launch(self) -> Dict[str, Any]:
+        """Launches DaVinci Resolve or brings it to the foreground if already running."""
+        try:
+            if self._system_os == "Darwin":
+                app_path = "/Applications/DaVinci Resolve/DaVinci Resolve.app"
+                if not os.path.exists(app_path):
+                    app_path = "/Applications/DaVinci Resolve.app"
+
+                if self.is_running():
+                    subprocess.run(["osascript", "-e", 'tell application "DaVinci Resolve" to activate'], check=False)
+                    self.connect()
+                    return {"success": True, "message": "DaVinci Resolve is running and brought to front."}
+
+                if os.path.exists(app_path):
+                    subprocess.Popen(["open", "-a", app_path])
+                    return {"success": True, "message": "Launching DaVinci Resolve..."}
+                else:
+                    subprocess.Popen(["open", "-a", "DaVinci Resolve"])
+                    return {"success": True, "message": "Launching DaVinci Resolve..."}
+
+            elif self._system_os == "Windows":
+                resolve_exe = r"C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe"
+                if self.is_running():
+                    return {"success": True, "message": "DaVinci Resolve is already running."}
+                if os.path.exists(resolve_exe):
+                    subprocess.Popen([resolve_exe], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    return {"success": True, "message": "Launching DaVinci Resolve..."}
+                return {"success": False, "error": "Resolve.exe not found at default install path."}
+
+            return {"success": False, "error": f"Unsupported OS: {self._system_os}"}
+        except Exception as e:
+            logger.error(f"Failed to launch DaVinci Resolve: {e}")
+            return {"success": False, "error": str(e)}
+
+    def organize_bins_automatically(self) -> Dict[str, Any]:
+        """Creates standard wedding / video editing bins in DaVinci Resolve Media Pool."""
+        if not self.is_connected() or not self._current_project:
+            return {"success": False, "error": "DaVinci Resolve is not connected or no active project open."}
+        bins = ["01_A_ROLL", "02_B_ROLL", "03_MUSIC", "04_SFX", "05_TIMELINES"]
+        created = []
+        for b in bins:
+            if self.create_bin(b):
+                created.append(b)
+        return {"success": True, "message": f"Organized {len(created)} bins in DaVinci Resolve", "bins": created}
 
     # -------------------------------------------------------------
     # PROJECT OPERATIONS

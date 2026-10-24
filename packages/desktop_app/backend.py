@@ -590,6 +590,12 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/test-resolve":
             self._json(resolve_adapter.get_status())
 
+        elif self.path == "/api/resolve/launch":
+            self._json(resolve_adapter.launch())
+
+        elif self.path == "/api/resolve/organize-bins":
+            self._json(resolve_adapter.organize_bins_automatically())
+
         elif self.path == "/api/premiere/launch":
             self._json(premiere_adapter.launch())
 

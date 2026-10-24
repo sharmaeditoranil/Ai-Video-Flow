@@ -506,16 +506,56 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  const btnOpenPremiereXml = document.getElementById("btn-open-premiere-xml");
-  if (btnOpenPremiereXml) {
-    btnOpenPremiereXml.addEventListener("click", async () => {
+  const btnSendToNle = document.getElementById("btn-open-premiere-xml");
+  const targetNleRadios = document.querySelectorAll('input[name="target_nle"]');
+
+  function updateNleButtonState() {
+    const selected = document.querySelector('input[name="target_nle"]:checked');
+    const val = selected ? selected.value : "resolve";
+    if (!btnSendToNle) return;
+    if (val === "resolve") {
+      btnSendToNle.innerHTML = "🎬 Send to DaVinci";
+      btnSendToNle.title = "Launch or focus DaVinci Resolve";
+    } else if (val === "premiere") {
+      btnSendToNle.innerHTML = "🟣 Send to Premiere";
+      btnSendToNle.title = "Launch or focus Adobe Premiere Pro";
+    } else {
+      btnSendToNle.innerHTML = "⚡ Send to Both";
+      btnSendToNle.title = "Launch both DaVinci Resolve & Adobe Premiere Pro";
+    }
+  }
+
+  targetNleRadios.forEach((r) => {
+    r.addEventListener("change", updateNleButtonState);
+  });
+  updateNleButtonState();
+
+  if (btnSendToNle) {
+    btnSendToNle.addEventListener("click", async () => {
+      const selected = document.querySelector('input[name="target_nle"]:checked');
+      const val = selected ? selected.value : "resolve";
+      btnSendToNle.disabled = true;
       try {
-        appendLog("Launching Adobe Premiere Pro...", "info");
-        const res = await api("/api/premiere/launch", {});
-        appendLog(res.message || "Premiere Pro ready.", "info");
-        await api("/api/open-folder", { path: "" });
+        if (val === "resolve") {
+          appendLog("🎬 Launching / focusing DaVinci Resolve...", "info", weddingConsole);
+          const res = await api("/api/resolve/launch", {});
+          appendLog(res.message || (res.success ? "DaVinci Resolve ready." : res.error), res.success ? "info" : "warning", weddingConsole);
+        } else if (val === "premiere") {
+          appendLog("🟣 Launching / focusing Adobe Premiere Pro...", "info", weddingConsole);
+          const res = await api("/api/premiere/launch", {});
+          appendLog(res.message || (res.success ? "Premiere Pro ready." : res.error), res.success ? "info" : "warning", weddingConsole);
+          await api("/api/open-folder", { path: "" });
+        } else {
+          appendLog("⚡ Launching DaVinci Resolve & Adobe Premiere Pro...", "info", weddingConsole);
+          const resRes = await api("/api/resolve/launch", {});
+          const resPrem = await api("/api/premiere/launch", {});
+          appendLog(`DaVinci: ${resRes.message || "Ready"} | Premiere: ${resPrem.message || "Ready"}`, "info", weddingConsole);
+          await api("/api/open-folder", { path: "" });
+        }
       } catch (e) {
-        appendLog("Error launching Premiere: " + e, "error");
+        appendLog("Error launching editing software: " + e, "error", weddingConsole);
+      } finally {
+        btnSendToNle.disabled = false;
       }
     });
   }
@@ -523,14 +563,31 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnPremiereOrganize = document.getElementById("btn-premiere-organize");
   if (btnPremiereOrganize) {
     btnPremiereOrganize.addEventListener("click", async () => {
+      const selected = document.querySelector('input[name="target_nle"]:checked');
+      const val = selected ? selected.value : "resolve";
+      btnPremiereOrganize.disabled = true;
       try {
-        appendLog("📁 Organizing Adobe Premiere Pro project bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
-        btnPremiereOrganize.disabled = true;
-        const res = await api("/api/premiere/organize-bins", {});
-        if (res.success) {
-          appendLog(`✅ Premiere Pro Bins Organized: ${res.message || "Smart Bins created"}`, "info", weddingConsole);
+        if (val === "resolve") {
+          appendLog("📁 Organizing DaVinci Resolve Media Pool bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
+          const res = await api("/api/resolve/organize-bins", {});
+          if (res.success) {
+            appendLog(`✅ DaVinci Resolve Bins Organized: ${res.message}`, "info", weddingConsole);
+          } else {
+            appendLog(`⚠️ DaVinci Resolve bin note: ${res.error || res.message}`, "warning", weddingConsole);
+          }
+        } else if (val === "premiere") {
+          appendLog("📁 Organizing Adobe Premiere Pro project bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
+          const res = await api("/api/premiere/organize-bins", {});
+          if (res.success) {
+            appendLog(`✅ Premiere Pro Bins Organized: ${res.message || "Smart Bins created"}`, "info", weddingConsole);
+          } else {
+            appendLog(`⚠️ Premiere Pro bin note: ${res.error || res.message}`, "warning", weddingConsole);
+          }
         } else {
-          appendLog(`⚠️ Premiere Pro bin note: ${res.error || res.message}`, "warning", weddingConsole);
+          appendLog("📁 Organizing bins in both DaVinci Resolve & Premiere Pro...", "info", weddingConsole);
+          const r1 = await api("/api/resolve/organize-bins", {});
+          const r2 = await api("/api/premiere/organize-bins", {});
+          appendLog(`✅ Resolve: ${r1.message || r1.error} | Premiere: ${r2.message || r2.error}`, "info", weddingConsole);
         }
       } catch (e) {
         appendLog("Error organizing bins: " + e, "error", weddingConsole);

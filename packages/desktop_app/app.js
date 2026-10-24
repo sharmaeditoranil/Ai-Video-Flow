@@ -588,6 +588,20 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const btnOpenAdminPortal = document.getElementById("btn-open-admin-portal");
+  if (btnOpenAdminPortal) {
+    btnOpenAdminPortal.addEventListener("click", async () => {
+      try {
+        const res = await api("/api/admin/open-portal");
+        if (res.success) {
+          appendLog(`🌐 Admin Portal opened: ${res.url}`, "info", weddingConsole);
+        }
+      } catch (e) {
+        window.open("http://localhost:8899/", "_blank");
+      }
+    });
+  }
+
   async function executeWeddingProcessing(tier) {
     if (!pendingRunParams) return;
     if (modalTierSelect) modalTierSelect.style.display = "none";

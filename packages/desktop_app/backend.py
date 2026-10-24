@@ -851,6 +851,26 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             res = cloud_ai_client.save_api_key(provider, key)
             self._json({"success": res, "message": "API key successfully saved!" if res else "Failed to save API key."})
 
+        elif self.path == "/api/admin/open-portal":
+            import webbrowser
+            from packages.licensing.admin_server import init_db
+            init_db()
+            global _ADMIN_SERVER_RUNNING
+            if "_ADMIN_SERVER_RUNNING" not in globals():
+                _ADMIN_SERVER_RUNNING = True
+                from packages.licensing.admin_server import AdminRequestHandler
+                def _run_srv():
+                    try:
+                        srv = ThreadingHTTPServer(("0.0.0.0", 8899), AdminRequestHandler)
+                        srv.serve_forever()
+                    except Exception:
+                        pass
+                threading.Thread(target=_run_srv, daemon=True).start()
+                time.sleep(0.4)
+
+            webbrowser.open("http://localhost:8899/")
+            self._json({"success": True, "url": "http://localhost:8899/", "message": "Admin Portal opened in browser!"})
+
         elif self.path == "/api/apply-correction":
             prompt = (data.get("prompt") or "").strip()
             target_nle = data.get("target_nle") or "resolve"

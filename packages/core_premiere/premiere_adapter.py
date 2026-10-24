@@ -5,9 +5,14 @@ and seamless timeline interchange (FCP XML / OpenTimelineIO) for Adobe Premiere 
 """
 
 import os
+import re
 import sys
+import json
 import glob
 import time
+import uuid
+import shutil
+import zipfile
 import platform
 import subprocess
 import logging
@@ -19,6 +24,37 @@ if not logger.handlers:
     _h.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
     logger.addHandler(_h)
     logger.propagate = False
+
+
+# The signed CEP bridge extension that runs ExtendScript inside Premiere Pro (2022 and newer);
+# packaging/sign_premiere_bridge.py builds the .zxp from cep_bridge/
+BRIDGE_ZXP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aivideoflow_bridge.zxp")
+BRIDGE_ID = "com.aivideoflow.bridge"
+QUEUE_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "premiere_queue")
+
+
+# Older ExtendScript engines have no JSON object
+JSON_POLYFILL = r"""if (typeof JSON !== 'object') { JSON = {}; }
+if (typeof JSON.stringify !== 'function') {
+  JSON.stringify = function s(v) {
+    if (v === null || v === undefined) return 'null';
+    var t = typeof v;
+    if (t === 'number' || t === 'boolean') return String(v);
+    if (t === 'string') return '"' + v.replace(/[\\"\u0000-\u001f]/g, function (c) {
+      var m = {'"': '\\"', '\\': '\\\\', '\n': '\\n', '\r': '\\r', '\t': '\\t'};
+      return m[c] || ('\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4));
+    }) + '"';
+    if (v instanceof Array) { var a = []; for (var i = 0; i < v.length; i++) a.push(s(v[i])); return '[' + a.join(',') + ']'; }
+    var o = []; for (var k in v) { if (v.hasOwnProperty(k) && typeof v[k] !== 'function') o.push(s(k) + ':' + s(v[k])); }
+    return '{' + o.join(',') + '}';
+  };
+}
+"""
+
+
+def _js(value: Any) -> str:
+    """A Python value as a JavaScript literal for ExtendScript."""
+    return json.dumps(value, ensure_ascii=False)
 
 
 class PremiereAdapter:
@@ -40,6 +76,11 @@ class PremiereAdapter:
             # Sort newest first (e.g. 2026 > 2025 > 2024)
             self._installed_apps.sort(key=lambda x: x["version"], reverse=True)
             self._active_app = self._installed_apps[0]
+            running = self._running_paths()
+            for app_info in self._installed_apps:  # several versions installed: use the one that is open
+                if any(r.startswith(app_info["path"]) or app_info["path"].startswith(os.path.dirname(r)) for r in running):
+                    self._active_app = app_info
+                    break
         else:
             self._active_app = None
 
@@ -76,6 +117,19 @@ class PremiereAdapter:
                         "executable": exe_path
                     })
         return found
+
+    def _running_paths(self) -> List[str]:
+        try:
+            if self._system_os == "Darwin":
+                out = subprocess.run(["pgrep", "-fl", "Adobe Premiere Pro"], capture_output=True, text=True).stdout
+                return [line.split(" ", 1)[1] for line in out.splitlines() if "/Contents/MacOS/Adobe Premiere Pro" in line]
+            if self._system_os == "Windows":
+                out = subprocess.run(["wmic", "process", "where", "name='Adobe Premiere Pro.exe'", "get", "ExecutablePath"],
+                                     capture_output=True, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+                return [line.strip() for line in out.splitlines()[1:] if line.strip()]
+        except Exception:
+            pass
+        return []
 
     def is_running(self) -> bool:
         """Checks if Adobe Premiere Pro process is running."""
@@ -118,7 +172,7 @@ class PremiereAdapter:
         if self.is_running():
             # Already running, bring to focus
             if self._system_os == "Darwin":
-                subprocess.run(["osascript", "-e", f'tell application "{self._active_app["path"]}" to activate'], check=False)
+                subprocess.Popen(["open", "-a", self._active_app["path"]])  # brings it to the front without waiting
             return {"success": True, "message": "Adobe Premiere Pro is already running and has been brought to front."}
 
         try:
@@ -141,78 +195,85 @@ class PremiereAdapter:
     # Zero external server or node_modules dependency required
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # Bridge install (user-level CEP extension, no admin rights needed)
+    # -------------------------------------------------------------------------
+    def _extensions_dir(self) -> str:
+        if self._system_os == "Windows":
+            return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "Adobe", "CEP", "extensions")
+        return os.path.expanduser("~/Library/Application Support/Adobe/CEP/extensions")
+
+    def install_bridge(self) -> Dict[str, Any]:
+        """Installs the signed bridge package into Premiere's extensions folder (user level, no admin rights,
+        no debug settings). Returns changed=True when Premiere must be restarted once to load it."""
+        target = os.path.join(self._extensions_dir(), BRIDGE_ID)
+        if not os.path.isfile(BRIDGE_ZXP):
+            return {"success": False, "error": "The Premiere bridge package is missing from this app build."}
+        try:
+            with zipfile.ZipFile(BRIDGE_ZXP) as z:
+                signature = z.read("META-INF/signatures.xml")
+                try:
+                    with open(os.path.join(target, "META-INF", "signatures.xml"), "rb") as f:
+                        if f.read() == signature:
+                            return {"success": True, "changed": False, "path": target}
+                except OSError:
+                    pass
+                shutil.rmtree(target, ignore_errors=True)  # a stale file would break the signature check
+                z.extractall(target)
+            return {"success": True, "changed": True, "path": target}
+        except Exception as e:
+            logger.error(f"Premiere bridge install failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    def bridge_alive(self) -> bool:
+        try:
+            with open(os.path.join(QUEUE_DIR, "bridge.alive"), encoding="utf-8") as f:
+                return time.time() * 1000 - float(f.read().strip() or 0) < 6000
+        except (OSError, ValueError):
+            return False
+
+    def run_bridge(self, jsx_code: str, label: str = "", timeout: float = 30.0) -> Dict[str, Any]:
+        """Runs ExtendScript inside Premiere through the bridge and returns its JSON answer."""
+        os.makedirs(QUEUE_DIR, exist_ok=True)
+        job_id = uuid.uuid4().hex
+        wrapped = (JSON_POLYFILL + "(function(){try{" + jsx_code + "\n}catch(err){return JSON.stringify({success:false,error:err.toString()});}})();")
+        tmp = os.path.join(QUEUE_DIR, f"{job_id}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"id": job_id, "label": label, "jsx": wrapped}, f)
+        os.replace(tmp, os.path.join(QUEUE_DIR, f"{job_id}.job.json"))
+        result_file = os.path.join(QUEUE_DIR, f"{job_id}.result.json")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if os.path.isfile(result_file):
+                with open(result_file, encoding="utf-8") as f:
+                    raw = json.load(f).get("result", "")
+                os.remove(result_file)
+                if raw in ("EvalScript error.", "", None):
+                    return {"success": False, "error": "Premiere Pro could not run the script."}
+                try:
+                    parsed = json.loads(raw)
+                    return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
+                except ValueError:
+                    return {"success": True, "raw_output": raw}
+            time.sleep(0.5)
+        try:
+            os.remove(os.path.join(QUEUE_DIR, f"{job_id}.job.json"))
+        except OSError:
+            pass
+        return {"success": False, "error": "Premiere Pro did not answer. Restart Premiere Pro once so it loads the AI Video Flow bridge.",
+                "bridge_missing": True}
+
     def eval_extendscript(self, jsx_code: str) -> Dict[str, Any]:
-        """
-        Executes raw ExtendScript code inside Adobe Premiere Pro.
-        Returns parsed JSON result.
-        """
+        """Executes ExtendScript inside Adobe Premiere Pro (via the bridge) and returns its JSON result."""
         self.refresh()
         if not self._active_app:
             return {"success": False, "error": "Adobe Premiere Pro is not installed."}
-
         if not self.is_running():
             return {"success": False, "error": "Adobe Premiere Pro is not running. Please open Premiere Pro first."}
-
-        app_name = self._active_app["name"]
-        wrapped_jsx = (
-            "(function(){\n"
-            "try {\n"
-            f"{jsx_code}\n"
-            "} catch(err) {\n"
-            "  return JSON.stringify({success: false, error: err.toString()});\n"
-            "}\n"
-            "})();"
-        )
-
-        try:
-            if self._system_os == "Darwin":
-                apple_script = (
-                    "on run argv\n"
-                    f"tell application \"{app_name}\"\n"
-                    "  DoScript (item 1 of argv)\n"
-                    "end tell\n"
-                    "end run"
-                )
-                res = subprocess.run(
-                    ["osascript", "-e", apple_script, wrapped_jsx],
-                    capture_output=True,
-                    text=True,
-                    timeout=25
-                )
-                if res.returncode != 0:
-                    return {"success": False, "error": res.stderr.strip() or "AppleScript DoScript failed"}
-                output_str = res.stdout.strip()
-            elif self._system_os == "Windows":
-                import tempfile
-                with tempfile.NamedTemporaryFile("w", suffix=".jsx", delete=False, encoding="utf-8") as tf:
-                    tf.write(wrapped_jsx)
-                    tmp_jsx = tf.name
-                res = subprocess.run(
-                    [self._active_app["executable"], "/cmd", tmp_jsx],
-                    capture_output=True,
-                    text=True,
-                    timeout=25
-                )
-                output_str = res.stdout.strip()
-                try:
-                    os.remove(tmp_jsx)
-                except Exception:
-                    pass
-            else:
-                return {"success": False, "error": f"Unsupported OS: {self._system_os}"}
-
-            import json
-            try:
-                parsed = json.loads(output_str)
-                if isinstance(parsed, dict) and "success" not in parsed:
-                    parsed["success"] = True
-                return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
-            except Exception:
-                return {"success": True, "raw_output": output_str}
-
-        except Exception as e:
-            logger.error(f"ExtendScript error: {e}")
-            return {"success": False, "error": str(e)}
+        installed = self.install_bridge()
+        if installed.get("changed") and not self.bridge_alive():
+            return {"success": False, "error": "The AI Video Flow bridge was just installed. Restart Premiere Pro once, then try again."}
+        return self.run_bridge(jsx_code, timeout=25)
 
     def get_project_state(self) -> Dict[str, Any]:
         """Queries live project state, bin structure, and sequence count from Premiere Pro."""
@@ -439,31 +500,61 @@ class PremiereAdapter:
         return self.eval_extendscript(jsx)
 
     def open_timeline(self, xml_path: str) -> Dict[str, Any]:
-        """
-        Opens or imports an XML timeline directly in Adobe Premiere Pro.
-        """
-        if not os.path.exists(xml_path):
-            return {"success": False, "error": f"Timeline file not found: {xml_path}"}
+        return self.open_timelines([xml_path])
 
+    def open_timelines(self, xml_paths: List[str], project_name: str = "", project_dir: str = "") -> Dict[str, Any]:
+        """Creates a new Premiere Pro project and imports the XML timelines into it (works in Premiere 2022+)."""
+        xml_paths = [os.path.abspath(p) for p in xml_paths if p and os.path.isfile(p)]
+        if not xml_paths:
+            return {"success": False, "error": "Timeline file not found."}
         self.refresh()
         if not self._active_app:
             return {"success": False, "error": "Adobe Premiere Pro is not installed."}
+        installed = self.install_bridge()
+        if not installed.get("success"):
+            return installed
+        was_running = self.is_running()
+        if was_running and installed.get("changed") and not self.bridge_alive():
+            return {"success": False, "restart_needed": True,
+                    "error": "AI Video Flow bridge installed. Close and reopen Premiere Pro once, then press 'Send again'."}
+        if not was_running:
+            self.launch()
+        # Wait for Premiere to start and the bridge to check in (Premiere can take a minute to open)
+        deadline = time.time() + (150 if not was_running else 10)
+        while not self.bridge_alive() and time.time() < deadline:
+            time.sleep(1)
+        if not self.bridge_alive():
+            return {"success": False, "bridge_missing": True,
+                    "error": "Premiere Pro did not load the AI Video Flow bridge. Restart Premiere Pro once; "
+                             "or import the XML yourself: File > Import."}
 
-        try:
-            abs_xml = os.path.abspath(xml_path)
+        name = re.sub(r"[^\w\- ]+", "_", project_name or os.path.splitext(os.path.basename(xml_paths[0]))[0]).strip() or "AI_Video_Flow"
+        project_dir = project_dir or os.path.join(os.path.dirname(xml_paths[0]), "premiere_projects")
+        os.makedirs(project_dir, exist_ok=True)
+        project_path = os.path.join(project_dir, f"{name}_{time.strftime('%Y%m%d_%H%M%S')}.prproj")
+        jsx = f"""
+        var xmls = {_js(xml_paths)};
+        var projPath = {_js(project_path)};
+        if (!app.newProject(projPath)) {{ return JSON.stringify({{success: false, error: 'Could not create the project ' + projPath}}); }}
+        var proj = app.project;
+        for (var k = 0; app.projects && k < app.projects.numProjects; k++) {{
+            if (app.projects[k].path == projPath) {{ proj = app.projects[k]; }}
+        }}
+        var before = proj.sequences.numSequences;
+        var ok = proj.importFiles(xmls, true, proj.rootItem, false);
+        proj.save();
+        var names = [];
+        for (var i = 0; i < proj.sequences.numSequences; i++) {{ names.push(proj.sequences[i].name); }}
+        if (proj.sequences.numSequences > 0) {{ proj.activeSequence = proj.sequences[proj.sequences.numSequences - 1]; }}
+        return JSON.stringify({{success: proj.sequences.numSequences > before, project: proj.path, sequences: names,
+                                error: proj.sequences.numSequences > before ? '' : 'Premiere imported no sequence from the XML.'}});
+        """
+        res = self.run_bridge(jsx, label=name, timeout=180)
+        if res.get("success"):
             if self._system_os == "Darwin":
-                subprocess.Popen(["open", "-a", self._active_app["path"], abs_xml])
-            elif self._system_os == "Windows":
-                subprocess.Popen([self._active_app["executable"], abs_xml], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            logger.info(f"Sent timeline to Adobe Premiere Pro: {abs_xml}")
-            return {
-                "success": True,
-                "file_path": abs_xml,
-                "message": f"Timeline opened in {self._active_app['name']}."
-            }
-        except Exception as e:
-            logger.error(f"Failed to open timeline in Premiere: {e}")
-            return {"success": False, "error": str(e)}
+                subprocess.Popen(["open", "-a", self._active_app["path"]])
+            res["message"] = f"Premiere Pro project created with {len(res.get('sequences', []))} sequence(s): {res.get('project')}"
+        return res
 
     def export_plan_to_premiere_xml(
         self,
@@ -817,6 +908,8 @@ class PremiereAdapter:
 
         ET.SubElement(sequence, "duration").text = str(curr_frame)
 
+        from packages.ai_engine.fcp_xml import describe_files
+        describe_files(xmeml)  # Premiere ignores sequences whose files do not describe their media
         tree = ET.ElementTree(xmeml)
         ET.indent(tree, space="  ", level=0)
         tree.write(output_path, encoding="utf-8", xml_declaration=True)

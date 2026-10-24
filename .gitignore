@@ -32,6 +32,7 @@ renders/
 
 # Standalone app build output
 build/
+packages/core_premiere/aivideoflow_bridge.zxp
 .build-venv/
 # Standalone installers are >100MB: share via GitHub Releases, not git
 dist/AI-Video-Flow-Mac-*.dmg

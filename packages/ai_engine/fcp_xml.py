@@ -6,6 +6,9 @@ position, so the same moment from every camera sits on top of each other.
 """
 
 import os
+import re
+import subprocess
+import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List
 
@@ -18,6 +21,84 @@ def _rate(parent: ET.Element, fps: int) -> None:
 
 def _pathurl(path: str) -> str:
     return "file://localhost/" + os.path.abspath(path).replace("\\", "/").lstrip("/")
+
+
+def _url_path(url: str) -> str:
+    p = urllib.parse.unquote(url[len("file://localhost"):] if url.startswith("file://localhost") else url)
+    return p.lstrip("/") if re.match(r"^/[A-Za-z]:/", p) else p  # Windows: /C:/... -> C:/...
+
+
+_INFO: Dict[str, Dict[str, Any]] = {}
+
+
+def media_info(path: str) -> Dict[str, Any]:
+    """Duration, picture size, frame rate and audio layout of a media file (read with ffmpeg, cached)."""
+    if path in _INFO:
+        return _INFO[path]
+    info: Dict[str, Any] = {"duration": 0.0, "video": False, "width": 1920, "height": 1080, "fps": 25.0,
+                            "audio": False, "samplerate": 48000, "channels": 2}
+    try:
+        from packages.ai_engine.audio_io import ffmpeg_path
+        err = subprocess.run([ffmpeg_path(), "-hide_banner", "-i", path], capture_output=True, text=True,
+                             errors="ignore", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stderr
+        m = re.search(r"Duration: (\d+):(\d+):([\d.]+)", err)
+        if m:
+            info["duration"] = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
+        v = re.search(r"Stream #.*?Video: .*?(\d{2,5})x(\d{2,5})(?:.*?([\d.]+) fps)?", err)
+        if v:
+            info.update(video=True, width=int(v[1]), height=int(v[2]))
+            if v[3]:
+                info["fps"] = float(v[3])
+        a = re.search(r"Stream #.*?Audio: [^,]+, (\d+) Hz, ([^,]+)", err)
+        if a:
+            layout = a[2].strip()
+            n = re.match(r"(\d+) channels", layout)
+            info.update(audio=True, samplerate=int(a[1]),
+                        channels=1 if layout == "mono" else int(n[1]) if n else 2)
+    except Exception:
+        pass
+    _INFO[path] = info
+    return info
+
+
+def describe_files(root: ET.Element) -> None:
+    """Premiere Pro drops a whole sequence when a <file> does not describe its media, so every
+    file definition gets its duration and video/audio characteristics. Clips on audio tracks whose
+    file has no sound (e.g. a camera that recorded without audio) are left out for the same reason."""
+    silent = set()
+    for f in root.iter("file"):
+        url = f.findtext("pathurl")
+        if url and not media_info(_url_path(url))["audio"] and media_info(_url_path(url))["video"]:
+            silent.add(f.get("id"))
+    for audio in root.iter("audio"):
+        for track in audio.findall("track"):
+            for item in track.findall("clipitem"):
+                ref = item.find("file")
+                if ref is not None and ref.get("id") in silent:
+                    track.remove(item)
+    for f in root.iter("file"):
+        url = f.findtext("pathurl")
+        if not url or f.find("media") is not None:
+            continue
+        info = media_info(_url_path(url))
+        fps = int((f.findtext("rate/timebase") or "").strip() or round(info["fps"]) or 25)
+        if f.find("duration") is None:
+            ET.SubElement(f, "duration").text = str(max(1, int(round(info["duration"] * fps))))
+        media = ET.SubElement(f, "media")
+        if info["video"]:
+            sc = ET.SubElement(ET.SubElement(media, "video"), "samplecharacteristics")
+            _rate(sc, fps)
+            ET.SubElement(sc, "width").text = str(info["width"])
+            ET.SubElement(sc, "height").text = str(info["height"])
+            ET.SubElement(sc, "anamorphic").text = "FALSE"
+            ET.SubElement(sc, "pixelaspectratio").text = "square"
+            ET.SubElement(sc, "fielddominance").text = "none"
+        if info["audio"] or not info["video"]:
+            audio = ET.SubElement(media, "audio")
+            sc = ET.SubElement(audio, "samplecharacteristics")
+            ET.SubElement(sc, "depth").text = "16"
+            ET.SubElement(sc, "samplerate").text = str(info["samplerate"])
+            ET.SubElement(audio, "channelcount").text = str(info["channels"])
 
 
 def write_track_sequence(xml_path: str, name: str, tracks: List[List[Dict[str, Any]]], fps: float = 25.0,
@@ -91,6 +172,7 @@ def write_track_sequence(xml_path: str, name: str, tracks: List[List[Dict[str, A
 
 
 def _write(root: ET.Element, xml_path: str) -> None:
+    describe_files(root)
     os.makedirs(os.path.dirname(xml_path) or ".", exist_ok=True)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)
     with open(xml_path, "r+", encoding="utf-8") as fh:  # FCP 7 importers expect the DOCTYPE line

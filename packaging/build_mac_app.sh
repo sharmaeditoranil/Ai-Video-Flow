@@ -17,6 +17,9 @@ fi
 "$VENV/bin/pip" install --upgrade pip --quiet
 "$VENV/bin/pip" install -r requirements.txt -r packaging/requirements-build.txt --quiet
 
+echo "      Signing the Premiere Pro bridge..."
+"$VENV/bin/python" packaging/sign_premiere_bridge.py
+
 echo "[2/4] Building AI Video Flow.app with PyInstaller..."
 rm -rf build/work "build/dist/AI Video Flow" "build/dist/AI Video Flow.app"
 "$VENV/bin/pyinstaller" --noconfirm --clean --log-level WARN \

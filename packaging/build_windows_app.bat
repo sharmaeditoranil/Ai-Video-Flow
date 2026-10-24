@@ -15,6 +15,9 @@ if not exist ".build-venv\Scripts\python.exe" (
 ".build-venv\Scripts\python.exe" -m pip install --upgrade pip --quiet
 ".build-venv\Scripts\python.exe" -m pip install -r requirements.txt -r packaging\requirements-build.txt --quiet || goto :fail
 
+echo       Signing the Premiere Pro bridge...
+".build-venv\Scripts\python.exe" packaging\sign_premiere_bridge.py || goto :fail
+
 echo [2/4] Compiling with PyInstaller...
 if exist build\dist rmdir /s /q build\dist
 if exist build\work rmdir /s /q build\work

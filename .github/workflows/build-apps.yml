@@ -27,6 +27,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r packaging/requirements-build.txt 2>&1 | tee pip.log \
             || { echo "::error title=pip failed::$(tail -30 pip.log | tr '\n' '|')"; exit 1; }
+      - name: Sign Premiere Pro bridge
+        shell: bash
+        run: python packaging/sign_premiere_bridge.py
       - name: PyInstaller
         shell: bash
         run: |

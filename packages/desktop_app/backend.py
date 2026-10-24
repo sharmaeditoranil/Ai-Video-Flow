@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.5"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.6"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -523,7 +523,7 @@ def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str, audio_path: str = "",
-                  markers: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+                  markers: Optional[Dict[str, List[Dict[str, Any]]]] = None, project_name: str = "") -> Dict[str, Any]:
     """Builds every plan in the chosen editor(s). `markers` maps plan key -> [{"seconds", "name"}]."""
     # DaVinci Resolve: live Media Pool import + timelines
     created_resolve = []
@@ -563,9 +563,13 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
                 created_premiere.append(xml_path)
                 _add_voiceover_xml(job_id, p, xml_path)
                 _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} ({res.get('clip_count', 0)} clips)", "info")
-                if target_nle == "premiere" or premiere_adapter.is_running():
-                    premiere_adapter.open_timeline(xml_path)
-                    _log(job_id, f"  🚀 Sent to Adobe Premiere Pro: {os.path.basename(xml_path)}", "info")
+        if created_premiere and (target_nle == "premiere" or premiere_adapter.is_running()):
+            _log(job_id, "Creating the Premiere Pro project (Premiere opens if it is closed - this can take a minute)…", "info")
+            opened = premiere_adapter.open_timelines(created_premiere, project_name=project_name or "AI_Video_Flow")
+            if opened.get("success"):
+                _log(job_id, f"  🚀 {opened['message']}", "info")
+            else:
+                _log(job_id, f"  Premiere Pro: {opened.get('error')} The XML files are in {os.path.dirname(created_premiere[0])}.", "warning")
 
     # Grass Valley EDIUS: FCP XML
     created_edius = []
@@ -816,7 +820,7 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
             json.dump({"folder": folder, "mode": mode, "plans": plans, "target_nle": target_nle, "audio": ""}, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        result = _export_plans(job_id, plans, target_nle, "", markers)
+        result = _export_plans(job_id, plans, target_nle, "", markers, project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
@@ -1098,7 +1102,7 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             }, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        result = _export_plans(job_id, plans, target_nle, audio_path)
+        result = _export_plans(job_id, plans, target_nle, audio_path, project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)

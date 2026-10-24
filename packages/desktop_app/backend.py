@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.1"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.2"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -789,8 +789,11 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         multicam = False
         if mode == "wedding":
             sync_report = multicam_sync.sync(analyzed, folder)
-            analyzed.sort(key=lambda c: c["abs_start"])
             multicam = len(sync_report["cameras"]) > 1
+            if multicam:
+                _log(job_id, "Matching the cameras by their sound (songs, speeches, crowd)…", "info")
+                multicam_sync.audio_place_wedding(analyzed, sync_report)
+            analyzed.sort(key=lambda c: c["abs_start"])
         audio_synced_plan = None
         if mode in ("youtube", "music_video"):
             song = audio_path if (mode == "music_video" and audio_path and os.path.isfile(audio_path)) else None
@@ -815,7 +818,16 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if multicam:
             _log(job_id, f"Multi-camera footage: {len(sync_report['cameras'])} cameras found.", "info")
             for cam, r in sync_report["cameras"].items():
-                if cam == sync_report["reference"]:
+                heard = r.get("audio_placed", 0)
+                if r.get("no_clock"):
+                    if r.get("placement") == "by sound":
+                        how = (f"camera clock not set - kept together in recording order and placed by sound "
+                               f"({heard} matching clips)")
+                    else:
+                        how = ("camera clock not set and no matching sound - its clips are kept together in recording "
+                               "order AFTER the other cameras. Drag this block to the right ritual")
+                    r["please_check"] = r.get("placement") != "by sound"
+                elif cam == sync_report["reference"]:
                     how = "reference camera"
                 elif r["method"] == "timecode":
                     how = "synced by timecode"
@@ -824,6 +836,9 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 else:
                     how = f"clock corrected {r['offset_sec']:+.1f} s by {r['method']}" + (
                         f" ({r['flash_matches']} flashes)" if r["flash_matches"] else "")
+                if heard and not r.get("no_clock") and cam != sync_report["reference"]:
+                    how += f", {heard} clips fine-tuned by sound"
+                    r["please_check"] = False
                 _log(job_id, f"  • {cam}: {r['clips']} clips · {how} · time from {r['time_source']}"
                              + (" · please check this camera's position" if r.get("please_check") else ""),
                      "warning" if r.get("please_check") else "normal")

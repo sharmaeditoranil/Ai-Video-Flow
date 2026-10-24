@@ -46,9 +46,8 @@ def _timecode_seconds(info: str) -> Optional[float]:
     return h * 3600 + mi * 60 + se + fr / max(fps, 1.0)
 
 
-def recording_start(path: str, duration: float) -> Tuple[float, str]:
-    """Returns (unix seconds of the first frame, source of that time).
-    Timecode is preferred: it is frame-accurate and, on jam-synced or time-of-day cameras, shared by all cameras."""
+def probe_times(path: str) -> Dict[str, Optional[float]]:
+    """Raw clock values of a clip: metadata creation time (unix) and start timecode (seconds of day)."""
     info = _probe(path)
     created = None
     m = re.search(r"creation_time\s*:\s*(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z?", info)
@@ -59,22 +58,47 @@ def recording_start(path: str, duration: float) -> Tuple[float, str]:
                 created = dt.timestamp()
         except ValueError:
             pass
-    tc = _timecode_seconds(info)
-    if tc is not None:
-        # Timecode only has the time of day: take the day from the metadata/file date
-        anchor = created if created is not None else os.path.getmtime(path) - duration
-        midnight = anchor - (anchor % 86400)
-        start = midnight + tc
-        # Pick the day that keeps it closest to the anchor (recordings around midnight)
-        start = min((start - 86400, start, start + 86400), key=lambda x: abs(x - anchor))
-        return start, "timecode"
-    if created is not None:
-        return created, "metadata"
-    # Camera files are written when recording stops, so the file date minus the length is the start
     try:
-        return os.path.getmtime(path) - duration, "file date"
+        mtime = os.path.getmtime(path)
     except OSError:
-        return 0.0, "unknown"
+        mtime = None
+    return {"created": created, "tc": _timecode_seconds(info), "mtime": mtime}
+
+
+def _timecode_is_clock(clips: List[Dict[str, Any]]) -> bool:
+    """True when a camera's timecode is "time of day" (a real clock): then timecode minus the camera clock is
+    the same for every clip (0 or a time-zone difference). REC RUN timecode only counts recorded minutes,
+    so that difference wanders from clip to clip - even if a few clips happen to line up."""
+    both = [c for c in clips if c["_times"]["tc"] is not None and c["_times"]["created"] is not None]
+    if len(both) < max(2, 0.8 * len(clips)):
+        return False
+    diffs = sorted(((c["_times"]["tc"] - c["_times"]["created"] % 86400 + 43200) % 86400) - 43200 for c in both)
+    med = diffs[len(diffs) // 2]
+    spread = sorted(abs(d - med) for d in diffs)[len(diffs) // 2]
+    zone = med % 1800
+    return spread <= 30 and min(zone, 1800 - zone) <= 120
+
+
+def _clip_start(c: Dict[str, Any], use_tc: bool) -> Tuple[float, str]:
+    t = c["_times"]
+    dur = float(c.get("duration", 0))
+    if use_tc and t["tc"] is not None:
+        anchor = t["created"] if t["created"] is not None else (t["mtime"] or 0) - dur
+        start = anchor - (anchor % 86400) + t["tc"]
+        return min((start - 86400, start, start + 86400), key=lambda x: abs(x - anchor)), "timecode"
+    if t["created"] is not None:
+        return t["created"], "metadata (rec-run timecode ignored)" if t["tc"] is not None else "metadata"
+    if t["tc"] is not None and t["mtime"]:
+        start = (t["mtime"] - dur) - ((t["mtime"] - dur) % 86400) + t["tc"]
+        return start, "timecode"
+    # Camera files are written when recording stops, so the file date minus the length is the start
+    return (t["mtime"] or 0) - dur, "file date"
+
+
+def recording_start(path: str, duration: float) -> Tuple[float, str]:
+    """Start time of a single clip (timecode only when it agrees with the camera clock)."""
+    c = {"_times": probe_times(path), "duration": duration}
+    return _clip_start(c, _timecode_is_clock([c]))
 
 
 def camera_of(path: str, root: str) -> str:
@@ -217,20 +241,51 @@ def sync(analyzed: List[Dict[str, Any]], root: str) -> Dict[str, Any]:
     """Adds `camera` and `abs_start` (synced unix seconds) to every clip. Returns a report per camera."""
     for clip in analyzed:
         clip["camera"] = camera_of(clip["file_path"], root)
-        clip["rec_start"], clip["time_source"] = recording_start(clip["file_path"], float(clip.get("duration", 0)))
+        clip["_times"] = probe_times(clip["file_path"])
 
     cams: Dict[str, List[Dict[str, Any]]] = {}
     for clip in analyzed:
         cams.setdefault(clip["camera"], []).append(clip)
+    for cam_clips in cams.values():
+        use_tc = _timecode_is_clock(cam_clips)
+        for clip in cam_clips:
+            clip["rec_start"], clip["time_source"] = _clip_start(clip, use_tc)
+            clip["timecode_sec"] = clip["_times"]["tc"]
+            clip.pop("_times", None)
+
+    # Cameras whose clock was never set (e.g. 1 Jan 2018) or resets every time: their times mean nothing
+    def recorded(cs): return sum(float(c.get("duration", 0)) for c in cs)
+    main = max(cams, key=lambda c: recorded(cams[c]))
+    main_mid = sorted(c["rec_start"] for c in cams[main])[len(cams[main]) // 2]
+    no_clock = set()
+    for cam, cs in cams.items():
+        starts = sorted(c["rec_start"] for c in cs)
+        far_off = abs(starts[len(starts) // 2] - main_mid) > 2 * 86400
+        stuck = len(cs) > 3 and (starts[-1] - starts[0]) < 0.3 * recorded(cs)
+        if cam != main and (far_off or stuck):
+            no_clock.add(cam)
+            for c in cs:
+                c["time_source"] = "none (camera clock not set)"
 
     flashes = {cam: [c["rec_start"] + t for c in clips for t in c.get("flash_times", [])] for cam, clips in cams.items()}
     # Reference = the camera that recorded the most (usually the main camera)
-    ref_cam = max(cams, key=lambda c: (sum(float(x.get("duration", 0)) for x in cams[c]), len(flashes[c])))
+    ref_cam = main
     ref_iv = _intervals(cams[ref_cam], 0.0)
     report: Dict[str, Any] = {"reference": ref_cam, "cameras": {}}
 
     for cam, clips in cams.items():
         offset, matches, method, check = 0.0, 0, "same camera", False
+        if cam in no_clock:
+            # Placed by their sound later (audio_place_wedding); park them at the main camera's start for now
+            order = sorted(clips, key=lambda c: (c["rec_start"], c["file_path"]))
+            t = main_mid
+            for c in order:
+                c["abs_start"] = t
+                t += float(c.get("duration", 0)) + 1.0
+            report["cameras"][cam] = {"clips": len(clips), "offset_sec": 0.0, "method": "no camera clock",
+                                      "flash_matches": 0, "time_source": clips[0]["time_source"], "overlap_sec": 0.0,
+                                      "please_check": True, "no_clock": True}
+            continue
         if cam != ref_cam:
             enough = lambda m: m >= 3 and m >= 0.25 * min(len(flashes[cam]), len(flashes[ref_cam]))
             both_tc = clips[0]["time_source"] == "timecode" and cams[ref_cam][0]["time_source"] == "timecode"
@@ -239,6 +294,16 @@ def sync(analyzed: List[Dict[str, Any]], root: str) -> Dict[str, Any]:
             if f_off is not None and enough(f_m):
                 candidates.append(("flash sync", f_off, f_m))
             p_off, p_m = _pattern_offset(ref_iv, _intervals(clips, 0.0))
+            # Wedding cameras shoot short, scattered clips: compare the shooting *periods*, not clip-by-clip overlap
+            r_lo, r_hi = ref_iv[0][0], max(e for _, e in ref_iv)
+            c_iv = _intervals(clips, 0.0)
+            c_lo, c_hi = c_iv[0][0], max(e for _, e in c_iv)
+            shared = max(0.0, min(r_hi, c_hi) - max(r_lo, c_lo))
+            clock_plausible = shared >= 0.3 * min(r_hi - r_lo, c_hi - c_lo) or r_lo - 1800 <= c_lo <= r_hi + 1800
+            zone_like = p_off is not None and abs(p_off) >= 1700 and \
+                abs(p_off - round(p_off / 1800) * 1800) <= 90
+            if p_off is not None and not zone_like and clock_plausible:
+                p_off = None  # the clock already puts this camera in the same shoot: don't trust a pattern guess over it
             if p_off is not None and p_m >= max(1, 0.3 * len(clips)):
                 r_off, r_m = _best_offset(flashes[ref_cam], flashes[cam], center=p_off, window=90)
                 if r_off is not None and r_m >= 2:
@@ -531,3 +596,119 @@ def audio_sync_clips(analyzed: List[Dict[str, Any]], root: str, song_path: Optio
             moved += 1
     report.update(mode="cameras", synced=moved, total=len(analyzed) - len(ref_clips))
     return report
+
+
+def _verified_match(grid, env, k: int) -> bool:
+    """The candidate spot must really sound like the clip, not just win on a mostly silent grid."""
+    import numpy as np
+    if k < 0 or k + len(env) > len(grid):
+        return False
+    seg = grid[k:k + len(env)]
+    live = seg > -3.9
+    if live.mean() < 0.6:
+        return False
+    a, b = seg[live] - seg[live].mean(), env[live] - env[live].mean()
+    den = np.sqrt((a * a).sum() * (b * b).sum())
+    return den > 0 and (a * b).sum() / den >= 0.5
+
+
+def audio_place_wedding(analyzed: List[Dict[str, Any]], report: Dict[str, Any],
+                        min_confidence: float = 8.0, window: float = 600.0) -> Dict[str, int]:
+    """Wedding cameras all hear the same room (songs, speeches, crowd). Each clip is placed where its sound
+    matches the main camera: within +-10 min for cameras with a clock, anywhere for cameras without one."""
+    import numpy as np
+    from packages.ai_engine.audio_io import load_audio
+
+    def env_of(c):
+        if "_env" not in c:
+            try:
+                y, sr = load_audio(c["file_path"], 16000)
+                c["_env"] = audio_envelope(y, sr)
+            except Exception:
+                c["_env"] = None
+        return c["_env"]
+
+    ref = report["reference"]
+    no_clock = {cam for cam, r in report["cameras"].items() if r.get("no_clock")}
+    timed = [c for c in analyzed if c["camera"] not in no_clock]
+    t0 = min(c["abs_start"] for c in timed) - window
+    t1 = max(c["abs_start"] + float(c.get("duration", 0)) for c in timed) + window
+    grid = np.full(int((t1 - t0) * ENV_RATE) + 1, -4.0)
+
+    def add(c):
+        env = env_of(c)
+        if env is None:
+            return
+        i = int(round((c["abs_start"] - t0) * ENV_RATE))
+        j = min(len(grid), i + len(env))
+        if j > i >= 0:
+            grid[i:j] = np.maximum(grid[i:j], env[: j - i])
+
+    for c in analyzed:
+        c["audio_placed"] = c["camera"] == ref
+        if c["camera"] == ref:
+            add(c)
+
+    placed = {cam: 0 for cam in report["cameras"]}
+    # 1) Cameras with a clock: fine-tune every clip near where the clock put it
+    for c in timed:
+        env = env_of(c)
+        if c["camera"] == ref or env is None or len(env) < 2 * ENV_RATE:
+            continue
+        i0 = int((c["abs_start"] - t0 - window) * ENV_RATE)
+        lo, hi = max(0, i0), min(len(grid), i0 + int((2 * window) * ENV_RATE) + len(env))
+        if hi - lo <= len(env):
+            continue
+        lag, conf = audio_lag(grid[lo:hi], env)
+        k = lo + int(round(lag * ENV_RATE))
+        if conf >= min_confidence and _verified_match(grid, env, k):
+            c["abs_start"] = t0 + k / ENV_RATE
+            c["audio_placed"] = True
+            placed[c["camera"]] += 1
+    for c in timed:
+        if c["camera"] != ref:
+            add(c)
+
+    # 2) Cameras without a clock: keep their clips together in recording order (one block) and find
+    #    where the block belongs from clips whose sound clearly matches; otherwise put it after the rest
+    end_timed = max(c["abs_start"] + float(c.get("duration", 0)) for c in timed)
+    for cam in no_clock:
+        order = sorted((c for c in analyzed if c["camera"] == cam), key=lambda c: os.path.basename(c["file_path"]))
+        rel, pos = [], 0.0
+        tc0 = order[0].get("timecode_sec")
+        for c in order:
+            tc = c.get("timecode_sec")
+            # REC RUN timecode keeps the recording order and lengths; fall back to back-to-back
+            r = (tc - tc0) % 86400 if tc is not None and tc0 is not None else pos
+            rel.append(max(r, pos))
+            pos = rel[-1] + float(c.get("duration", 0)) + 0.5
+        anchors = []
+        for c, r in zip(order, rel):
+            env = env_of(c)
+            if env is None or len(env) < 2 * ENV_RATE:
+                continue
+            lag, conf = audio_lag(grid, env)
+            k = int(round(lag * ENV_RATE))
+            if conf >= min_confidence and _verified_match(grid, env, k):
+                anchors.append(t0 + k / ENV_RATE - r)
+        anchors.sort()
+        anchor, agreeing = None, 0
+        if anchors:
+            med = anchors[len(anchors) // 2]
+            agreeing = sum(1 for a in anchors if abs(a - med) <= 120)
+            if agreeing >= 2:
+                anchor = med
+        placement = "by sound" if anchor is not None else "after the other cameras"
+        if anchor is None:
+            anchor = end_timed + 60.0
+        for c, r in zip(order, rel):
+            c["abs_start"] = anchor + r
+            c["audio_placed"] = placement == "by sound"
+        placed[cam] = agreeing if placement == "by sound" else 0
+        report["cameras"][cam]["placement"] = placement
+
+    for c in analyzed:
+        c.pop("_env", None)
+    for cam, r in report["cameras"].items():
+        r["audio_placed"] = placed.get(cam, 0) if cam != ref else r["clips"]
+    return placed

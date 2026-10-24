@@ -63,6 +63,10 @@
             <span class="status-dot dot-yellow"></span>
             <span class="status-label">DaVinci Resolve: Checking...</span>
           </div>
+          <div class="status-pill" id="status-premiere">
+            <span class="status-dot dot-yellow"></span>
+            <span class="status-label">Premiere Pro: Checking...</span>
+          </div>
           <div class="status-pill" id="status-claude">
             <span class="status-dot dot-green"></span>
             <span class="status-label">Claude AI: Configured</span>
@@ -138,6 +142,27 @@
               <div class="metric-row">
                 <span>Timeline Count:</span>
                 <strong id="metric-timelines">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="card-header">
+              <span class="card-title">Adobe Premiere Pro Bridge</span>
+              <span class="badge badge-premiere" id="premiere-edition-badge">Auto-Detect</span>
+            </div>
+            <div class="card-body">
+              <p class="card-desc">FCP XML sequence interchange & automated project timeline delivery.</p>
+              <div class="metric-row">
+                <span>Installed Version:</span>
+                <strong id="metric-premiere-version">Scanning...</strong>
+              </div>
+              <div class="metric-row">
+                <span>App Status:</span>
+                <strong id="metric-premiere-status">Checking...</strong>
+              </div>
+              <div class="card-actions" style="margin-top:14px">
+                <button class="btn btn-secondary btn-block" id="btn-launch-premiere">🚀 Launch / Focus Premiere</button>
               </div>
             </div>
           </div>
@@ -237,11 +262,23 @@
               </div>
             </div>
 
+            <div class="form-group">
+              <label>Target Editing Software</label>
+              <div class="radio-row">
+                <label><input type="radio" name="target_nle" value="resolve" checked> 🎬 DaVinci Resolve (Live Media Pool & Timelines)</label>
+                <label><input type="radio" name="target_nle" value="premiere"> 🟣 Adobe Premiere Pro (Native XML & Project Sequence)</label>
+                <label><input type="radio" name="target_nle" value="both"> ⚡ Both (DaVinci Resolve + Premiere Pro)</label>
+              </div>
+            </div>
+
             <button class="btn btn-primary btn-block" id="btn-run-wedding-ai">
               ✨ Start AI In-Clip Trimming & Build Timelines
             </button>
             <div class="progress" id="wedding-progress"><div class="progress-bar"></div></div>
-            <button class="btn btn-secondary btn-block" id="btn-open-output" style="margin-top:12px">📂 Open Output Folder</button>
+            <div style="display:flex;gap:10px;margin-top:12px;">
+              <button class="btn btn-secondary" id="btn-open-output" style="flex:1">📂 Output Folder</button>
+              <button class="btn btn-secondary" id="btn-open-premiere-xml" style="flex:1">🟣 Send to Premiere</button>
+            </div>
           </div>
 
           <div class="panel-box">

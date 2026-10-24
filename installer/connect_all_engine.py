@@ -72,8 +72,18 @@ class ConnectAllEngine:
         results["davinci_resolve"]["edition"] = resolve_status.get("edition")
         results["steps"].append(f"DaVinci Resolve Running: {results['davinci_resolve']['running']}")
 
-        if not results["davinci_resolve"]["running"]:
-            results["guidance"].append("DaVinci Resolve is not running. Please open DaVinci Resolve to enable live editing.")
+        # Step 2b: Detect Adobe Premiere Pro
+        try:
+            from packages.core_premiere.premiere_adapter import premiere_adapter
+            premiere_status = premiere_adapter.get_status()
+            results["premiere_pro"] = premiere_status
+            ver_str = f" ({premiere_status['version']})" if premiere_status.get("version") else ""
+            results["steps"].append(f"Adobe Premiere Pro Detected: {premiere_status['installed']}{ver_str}, Running: {premiere_status['running']}")
+        except Exception as e:
+            results["premiere_pro"] = {"installed": False, "running": False, "error": str(e)}
+
+        if not results["davinci_resolve"]["running"] and not results["premiere_pro"]["running"]:
+            results["guidance"].append("Neither DaVinci Resolve nor Premiere Pro is running. Open your preferred NLE to begin.")
 
         # Step 3: Check Claude Desktop installation & directory
         claude_dir = os.path.dirname(self.claude_config_path)
@@ -84,7 +94,17 @@ class ConnectAllEngine:
         # Step 4: Register MCP Server into Claude Desktop config
         # On macOS, Claude Desktop is sandboxed and blocked from ~/Documents.
         # We route through ~/.ai-video-flow/app/ which has full access permissions.
-        if self.system_os == "Darwin":
+        if getattr(sys, "frozen", False):
+            # Standalone build: the bundled MCP helper exe sits next to the app exe
+            exe_dir = os.path.dirname(sys.executable)
+            mcp_name = "ai-video-flow-mcp.exe" if self.system_os == "Windows" else "ai-video-flow-mcp"
+            mcp_exe = os.path.join(exe_dir, mcp_name)
+            if os.path.exists(mcp_exe):
+                python_exec, server_script = mcp_exe, None
+            else:
+                python_exec, server_script = sys.executable, "--mcp"
+            target_pythonpath = None
+        elif self.system_os == "Darwin":
             app_dir = os.path.expanduser("~/.ai-video-flow/app")
             os.makedirs(app_dir, exist_ok=True)
             workspace_packages = os.path.join(self.project_root, "packages")
@@ -108,12 +128,12 @@ class ConnectAllEngine:
             python_exec = sys.executable
             target_pythonpath = self.project_root
 
-        results["mcp_server"]["path"] = server_script
+        results["mcp_server"]["path"] = server_script or python_exec
 
         registration_success = self._register_claude_mcp(
             server_name="ai-video-flow-resolve",
             command=python_exec,
-            args=[server_script],
+            args=[server_script] if server_script else [],
             pythonpath=target_pythonpath
         )
         results["claude_desktop"]["configured"] = registration_success
@@ -136,13 +156,20 @@ class ConnectAllEngine:
             pass
         claude_dir = os.path.dirname(self.claude_config_path)
         resolve_installed, _ = self._detect_resolve_installed()
+        premiere_status = {"installed": False, "running": False}
+        try:
+            from packages.core_premiere.premiere_adapter import premiere_adapter
+            premiere_status = premiere_adapter.get_status()
+        except Exception:
+            pass
         return {
             "claude_desktop": {
                 "installed": os.path.exists(claude_dir),
                 "configured": configured,
                 "config_path": self.claude_config_path
             },
-            "davinci_resolve": {"installed": resolve_installed}
+            "davinci_resolve": {"installed": resolve_installed},
+            "premiere_pro": premiere_status
         }
 
     def _detect_resolve_installed(self) -> (bool, list):
@@ -194,13 +221,9 @@ class ConnectAllEngine:
                 existing_config["mcpServers"] = {}
 
             # Add / update ai-video-flow-resolve without touching any other servers
-            existing_config["mcpServers"][server_name] = {
-                "command": command,
-                "args": args,
-                "env": {
-                    "PYTHONPATH": pythonpath or self.project_root
-                }
-            }
+            existing_config["mcpServers"][server_name] = {"command": command, "args": args}
+            if pythonpath:
+                existing_config["mcpServers"][server_name]["env"] = {"PYTHONPATH": pythonpath}
 
             with open(self.claude_config_path, "w", encoding="utf-8") as f:
                 json.dump(existing_config, f, indent=2)

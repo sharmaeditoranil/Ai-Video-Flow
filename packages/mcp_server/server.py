@@ -680,6 +680,29 @@ MCP_TOOLS = [
             },
             "required": []
         }
+    },
+
+    # 12. Adobe Premiere Pro Bridge Tools
+    {
+        "name": "premiere_get_status",
+        "description": "Checks Adobe Premiere Pro installation (version, installed paths), running state, and bridge availability.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "premiere_launch",
+        "description": "Launches or focuses Adobe Premiere Pro on the editing system.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "premiere_open_timeline",
+        "description": "Opens an exported XML timeline sequence directly inside Adobe Premiere Pro.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "xml_path": {"type": "string", "description": "Absolute path to the Premiere-compatible XML timeline file"}
+            },
+            "required": ["xml_path"]
+        }
     }
 ]
 
@@ -1041,6 +1064,19 @@ def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
         return resolve_adapter.add_cinematic_letterbox(
             aspect_ratio=arguments.get("aspect_ratio", "2.39:1")
         )
+
+    # 12. Adobe Premiere Pro Bridge
+    elif tool_name == "premiere_get_status":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.get_status()
+
+    elif tool_name == "premiere_launch":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.launch()
+
+    elif tool_name == "premiere_open_timeline":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.open_timeline(arguments.get("xml_path", ""))
 
     else:
         raise ValueError(f"Unknown tool: '{tool_name}'")

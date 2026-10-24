@@ -81,6 +81,35 @@ document.addEventListener("DOMContentLoaded", () => {
       if (metricProject) metricProject.textContent = "Open DaVinci Resolve";
     }
 
+    // Adobe Premiere Pro Status
+    const premiereStatus = data.premiere || {};
+    const premiereLabel = document.querySelector("#status-premiere .status-label");
+    const premiereDot = document.querySelector("#status-premiere .status-dot");
+    const premiereBadge = document.getElementById("premiere-edition-badge");
+    const metricPremiereVer = document.getElementById("metric-premiere-version");
+    const metricPremiereStatus = document.getElementById("metric-premiere-status");
+
+    if (premiereStatus.installed) {
+      const verText = premiereStatus.version ? ` (${premiereStatus.version})` : "";
+      if (premiereLabel) premiereLabel.textContent = premiereStatus.running ? `Premiere Pro: Running${verText}` : `Premiere Pro: Standby${verText}`;
+      if (premiereDot) premiereDot.className = `status-dot ${premiereStatus.running ? "dot-green" : "dot-yellow"}`;
+      if (premiereBadge) {
+        premiereBadge.textContent = premiereStatus.running ? "Running" : "Installed";
+        premiereBadge.className = `badge ${premiereStatus.running ? "badge-success" : "badge-premiere"}`;
+      }
+      if (metricPremiereVer) metricPremiereVer.textContent = premiereStatus.app_name || `Premiere Pro ${premiereStatus.version || ""}`;
+      if (metricPremiereStatus) metricPremiereStatus.textContent = premiereStatus.running ? "🟢 Running & Active" : "🟡 Standby (Ready to launch)";
+    } else {
+      if (premiereLabel) premiereLabel.textContent = "Premiere Pro: Not Found";
+      if (premiereDot) premiereDot.className = "status-dot dot-yellow";
+      if (premiereBadge) {
+        premiereBadge.textContent = "Not Installed";
+        premiereBadge.className = "badge badge-warning";
+      }
+      if (metricPremiereVer) metricPremiereVer.textContent = "Not Detected";
+      if (metricPremiereStatus) metricPremiereStatus.textContent = "Install Premiere Pro";
+    }
+
     // Claude Desktop & MCP Status
     const claudeStatus = data.claude || {};
     const claudeLabel = document.querySelector("#status-claude .status-label");
@@ -135,6 +164,20 @@ document.addEventListener("DOMContentLoaded", () => {
         updateLiveUI({ resolve: status });
       } catch (e) {
         appendLog("Backend not reachable.", "error");
+      }
+    });
+  }
+
+  const btnLaunchPremiere = document.getElementById("btn-launch-premiere");
+  if (btnLaunchPremiere) {
+    btnLaunchPremiere.addEventListener("click", async () => {
+      appendLog("Launching / focusing Adobe Premiere Pro...", "info");
+      try {
+        const res = await api("/api/premiere/launch", {});
+        appendLog(res.message || (res.success ? "Premiere Pro launched" : res.error), res.success ? "info" : "error");
+        await fetchStatus();
+      } catch (e) {
+        appendLog("Backend error launching Premiere.", "error");
       }
     });
   }
@@ -265,19 +308,36 @@ document.addEventListener("DOMContentLoaded", () => {
       if (document.getElementById("chk-fullfilm").checked) formats.push("full_film");
       if (!formats.length) return alert("Select at least one output sequence.");
 
+      const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
+      const target_nle = targetNleInput ? targetNleInput.value : "resolve";
+
       store.set("avf.audio", audioInput.value.trim());
       btnRunWedding.disabled = true;
       progress.classList.add("active");
       const bar = progress.querySelector(".progress-bar");
       bar.style.width = "0%";
       try {
-        const { job_id } = await api("/api/run-wedding", { folder: loadedFolder, audio: audioInput.value.trim(), formats });
+        const { job_id } = await api("/api/run-wedding", { folder: loadedFolder, audio: audioInput.value.trim(), formats, target_nle });
         await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
         fetchStatus();
       } catch (e) {
         appendLog("Backend not reachable.", "error");
       } finally {
         btnRunWedding.disabled = false;
+      }
+    });
+  }
+
+  const btnOpenPremiereXml = document.getElementById("btn-open-premiere-xml");
+  if (btnOpenPremiereXml) {
+    btnOpenPremiereXml.addEventListener("click", async () => {
+      try {
+        appendLog("Launching Adobe Premiere Pro...", "info");
+        const res = await api("/api/premiere/launch", {});
+        appendLog(res.message || "Premiere Pro ready.", "info");
+        await api("/api/open-folder", { path: "" });
+      } catch (e) {
+        appendLog("Error launching Premiere: " + e, "error");
       }
     });
   }

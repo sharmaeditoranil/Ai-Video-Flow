@@ -29,6 +29,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from packages.core_resolve.resolve_adapter import resolve_adapter
+from packages.core_premiere.premiere_adapter import premiere_adapter
 from packages.hyperframes_engine.hyperframes_service import hyperframes_service
 from installer.connect_all_engine import ConnectAllEngine
 
@@ -258,7 +259,7 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
     return len(entries) if resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")) else 0
 
 
-def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str]) -> None:
+def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
@@ -319,37 +320,63 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str]) -
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         plan_file = os.path.join(OUTPUT_DIR, f"wedding_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
         with open(plan_file, "w", encoding="utf-8") as f:
-            json.dump({"folder": folder, "audio": audio_path, "analyzed": analyzed, "plans": plans}, f, indent=2, default=str)
+            json.dump({"folder": folder, "audio": audio_path, "analyzed": analyzed, "plans": plans, "target_nle": target_nle}, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        # 5. Build timelines in Resolve
-        created = []
-        if resolve_adapter.is_connected():
-            _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
-            used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
-            items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
-            items_by_path = {}
-            for it in items:
-                try:
-                    items_by_path[os.path.normpath(it.GetClipProperty("File Path"))] = it
-                except Exception:
-                    pass
-            _log(job_id, f"Imported {len(items)} clips.")
+        # 5. Build timelines in DaVinci Resolve
+        created_resolve = []
+        if target_nle in ("resolve", "both"):
+            if resolve_adapter.is_connected():
+                _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
+                used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
+                items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
+                items_by_path = {}
+                for it in items:
+                    try:
+                        items_by_path[os.path.normpath(it.GetClipProperty("File Path"))] = it
+                    except Exception:
+                        pass
+                _log(job_id, f"Imported {len(items)} clips into Resolve.")
+                for p in plans.values():
+                    name = p.get("sequence_name")
+                    if resolve_adapter.create_timeline(name):
+                        placed = _append_plan_to_resolve(p, items_by_path)
+                        created_resolve.append(name)
+                        _log(job_id, f"  ✨ DaVinci Resolve: {name} created with {placed} trimmed clips", "info")
+                resolve_adapter.save_project()
+            else:
+                _log(job_id, "DaVinci Resolve is not connected — skipped Resolve timeline build.", "warning")
+
+        # 6. Build timelines for Adobe Premiere Pro
+        created_premiere = []
+        if target_nle in ("premiere", "both"):
+            _log(job_id, "Generating FCP XML sequences for Adobe Premiere Pro...", "info")
             for p in plans.values():
-                name = p.get("sequence_name")
-                if resolve_adapter.create_timeline(name):
-                    placed = _append_plan_to_resolve(p, items_by_path)
-                    created.append(name)
-                    _log(job_id, f"  ✨ {name} created with {placed} trimmed clips", "info")
-            resolve_adapter.save_project()
-        else:
-            _log(job_id, "DaVinci Resolve is not connected — timelines not built. Open Resolve with a project "
-                         "(External scripting = Local) and run again. Plan file is saved.", "warning")
+                res = premiere_adapter.export_plan_to_premiere_xml(p)
+                if res.get("success"):
+                    xml_path = res["xml_path"]
+                    created_premiere.append(xml_path)
+                    _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} generated ({res.get('clip_count', 0)} clips)", "info")
+                    # Auto-open in Premiere Pro if Premiere is target or already running
+                    if target_nle == "premiere" or premiere_adapter.is_running():
+                        premiere_adapter.open_timeline(xml_path)
+                        _log(job_id, f"  🚀 Sent to Adobe Premiere Pro: {os.path.basename(xml_path)}", "info")
 
         _progress(job_id, 100)
-        _log(job_id, "Done! Open DaVinci Resolve to review your timelines." if created else "Analysis complete.", "info")
+        summary = []
+        if created_resolve:
+            summary.append(f"{len(created_resolve)} in DaVinci Resolve")
+        if created_premiere:
+            summary.append(f"{len(created_premiere)} XMLs in Adobe Premiere Pro")
+        final_msg = f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready."
+        _log(job_id, final_msg, "info")
         with JOBS_LOCK:
-            JOBS[job_id].update(status="done", result={"timelines_created": created, "plan_file": plan_file, "plans": plans})
+            JOBS[job_id].update(status="done", result={
+                "timelines_created": created_resolve,
+                "premiere_xmls": created_premiere,
+                "plan_file": plan_file,
+                "plans": plans
+            })
     except Exception as e:
         logger.error(traceback.format_exc())
         _log(job_id, f"ERROR: {e}", "error")
@@ -408,6 +435,7 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         if self.path == "/api/status":
             self._json({
                 "resolve": resolve_adapter.get_status(),
+                "premiere": premiere_adapter.get_status(),
                 "hyperframes": hyperframes_service.is_available(),
                 "claude": ConnectAllEngine(root_dir).check_status()
             })
@@ -415,6 +443,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/version":
             self._json({"app": "ai-video-flow", "version": APP_VERSION})
+            return
+
+        if self.path == "/api/premiere/status":
+            self._json(premiere_adapter.get_status())
             return
 
         if self.path == "/api/tools":
@@ -425,6 +457,7 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self._json({
                 "environment": dependency_report(),
                 "resolve": resolve_adapter.get_status(),
+                "premiere": premiere_adapter.get_status(),
                 "hyperframes": hyperframes_service.is_available(),
                 "claude": ConnectAllEngine(root_dir).check_status()
             })
@@ -449,6 +482,12 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/test-resolve":
             self._json(resolve_adapter.get_status())
 
+        elif self.path == "/api/premiere/launch":
+            self._json(premiere_adapter.launch())
+
+        elif self.path == "/api/premiere/open":
+            self._json(premiere_adapter.open_timeline(data.get("xml_path", "")))
+
         elif self.path == "/api/browse":
             self._json(browse(data.get("kind", "folder"), data.get("prompt", "Select")))
 
@@ -462,7 +501,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/run-wedding":
             formats = data.get("formats") or ["teaser", "highlight", "full_film"]
-            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats)
+            target_nle = data.get("target_nle") or "resolve"
+            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle)
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/tool":

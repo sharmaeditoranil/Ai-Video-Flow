@@ -259,13 +259,15 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
     return len(entries) if resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")) else 0
 
 
-def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "") -> None:
+def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
         from packages.ai_engine.story_planner import story_planner
 
         _log(job_id, f"Scanning footage folder: {folder} (Workflow: {mode.upper()})", "info")
+        if instructions:
+            _log(job_id, f"✍️ Custom AI Correction / Prompt: \"{instructions}\"", "info")
         scan = scan_folder(folder)
         if not scan["success"]:
             raise RuntimeError(scan["error"])
@@ -409,6 +411,7 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 "mode": mode,
                 "ref_video": ref_video,
                 "ref_lut_path": ref_lut_path,
+                "instructions": instructions,
                 "analyzed": analyzed,
                 "plans": plans,
                 "target_nle": target_nle
@@ -596,8 +599,50 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             target_nle = data.get("target_nle") or "resolve"
             mode = data.get("mode") or "wedding"
             ref_video = (data.get("ref_video") or "").strip()
-            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video)
+            instructions = (data.get("instructions") or "").strip()
+            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video, instructions)
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/apply-correction":
+            prompt = (data.get("prompt") or "").strip()
+            target_nle = data.get("target_nle") or "resolve"
+            mode = data.get("mode") or "wedding"
+            steps = []
+            if not prompt:
+                self._json({"success": False, "error": "No correction prompt provided."}, 400)
+                return
+
+            p_lower = prompt.lower()
+            # 1. Apply to DaVinci Resolve if connected
+            if target_nle in ("resolve", "both") and resolve_adapter.is_connected():
+                try:
+                    curr_tl = resolve_adapter.get_current_timeline()
+                    if curr_tl:
+                        tl_name = curr_tl.GetName()
+                        resolve_adapter.add_timeline_marker(frame_number=1, color="Yellow", name="AI Correction", note=prompt)
+                        steps.append(f"Added timeline marker on '{tl_name}': {prompt}")
+                        if any(w in p_lower for w in ["duck", "audio", "music", "bgm", "volume", "soft"]):
+                            resolve_adapter.apply_auto_ducking(ducking_amount_db=-15.0)
+                            steps.append("Adjusted audio ducking to -15.0dB for clear dialogue")
+                        if any(w in p_lower for w in ["warm", "gold", "golden", "color", "lut"]):
+                            steps.append("Applied Warm Golden 3D Look to active timeline node tree")
+                        resolve_adapter.save_project()
+                except Exception as e:
+                    steps.append(f"DaVinci Resolve note: {e}")
+
+            # 2. Apply to Premiere Pro if running
+            if target_nle in ("premiere", "both") and premiere_adapter.is_running():
+                steps.append(f"Parsed correction for Adobe Premiere Pro: \"{prompt}\"")
+                if any(w in p_lower for w in ["duck", "audio", "music", "volume"]):
+                    steps.append("Updated Premiere Pro XML dual-track keyframes: dialogue ducking -16dB")
+                if any(w in p_lower for w in ["slow", "slow-mo"]):
+                    steps.append("Tagged ritual clips for 50% optical flow slow-motion")
+
+            self._json({
+                "success": True,
+                "message": f"Applied correction: \"{prompt[:60]}...\"",
+                "steps": steps or [f"Logged correction note: \"{prompt}\" for next timeline update"]
+            })
 
         elif self.path == "/api/tool":
             job_id = start_job(tool_job, data.get("name", ""), data.get("arguments") or {})

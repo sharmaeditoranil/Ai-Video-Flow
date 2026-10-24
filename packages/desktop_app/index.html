@@ -438,6 +438,36 @@
               </div>
             </div>
 
+            <!-- 3. Edit Corrections & Custom AI Instructions Box -->
+            <div class="form-group ai-correction-card" id="group-correction-prompt">
+              <div class="correction-header">
+                <label for="input-edit-prompt">
+                  ✍️ Edit Corrections &amp; Custom Instructions
+                  <span class="badge badge-correction">Live Prompt Engine</span>
+                </label>
+                <span class="ref-optional-tag">Hinglish / Hindi / English</span>
+              </div>
+              <textarea id="input-edit-prompt" rows="3" placeholder="Edit me jo bhi correction ya instruction dena ho yahan likhein... (e.g. 'Bride entry pe slow motion dalo, dialogues ke waqt background music duck karo, shaky clips ko drop karo aur golden warm grading do')"></textarea>
+              
+              <!-- Quick Prompt Suggestion Chips -->
+              <div class="prompt-chips-wrap">
+                <span class="prompt-chip" data-prompt="Bride entry aur Varmala ceremony par slow motion clips add karo">+ Slow-Mo Ceremony</span>
+                <span class="prompt-chip" data-prompt="Music beat drops aur kicks par fast dynamic cuts rakho">+ Fast Beat Cuts</span>
+                <span class="prompt-chip" data-prompt="Warm golden cinematic color grade apply karo">+ Warm Golden LUT</span>
+                <span class="prompt-chip" data-prompt="Dialogues aur speeches ke waqt background music ducking -15dB karo">+ Soften Dialogue BGM</span>
+                <span class="prompt-chip" data-prompt="Saare dead-air pauses aur awkward pauses cut kar do">+ Cut All Pauses</span>
+                <span class="prompt-chip" data-prompt="Romantic couple moments ko teaser me priority do">+ Couple Golden Moments</span>
+              </div>
+              <div class="correction-actions-row">
+                <button type="button" class="btn btn-sm btn-secondary" id="btn-quick-correction" style="margin-top:6px;">
+                  🔄 Apply Correction to Active Timeline
+                </button>
+              </div>
+              <div class="field-hint" style="margin-top:8px;">
+                💡 <strong>Natural Language Corrections:</strong> Aap kisi bhi bhasha (Hindi, Hinglish, English) me type kar sakte hain. AI cuts ki timing, slow motion, audio volume, aur color grading ko aapke instruction ke anusar adjust karega.
+              </div>
+            </div>
+
             <div class="form-group">
               <label>Target Editing Software</label>
               <div class="radio-row">

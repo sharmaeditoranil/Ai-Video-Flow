@@ -422,6 +422,49 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const inputEditPrompt = document.getElementById("input-edit-prompt");
+  const promptChips = document.querySelectorAll(".prompt-chip");
+  const btnQuickCorrection = document.getElementById("btn-quick-correction");
+
+  promptChips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const text = chip.dataset.prompt || chip.textContent.trim().replace(/^\+\s*/, "");
+      if (!inputEditPrompt) return;
+      const current = inputEditPrompt.value.trim();
+      inputEditPrompt.value = current ? `${current}, ${text}` : text;
+      inputEditPrompt.focus();
+    });
+  });
+
+  if (btnQuickCorrection) {
+    btnQuickCorrection.addEventListener("click", async () => {
+      const prompt = inputEditPrompt ? inputEditPrompt.value.trim() : "";
+      if (!prompt) return alert("Pehle correction box me apna badlav ya instruction type karein.");
+      const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
+      const target_nle = targetNleInput ? targetNleInput.value : "resolve";
+      appendLog(`🔄 Applying Edit Correction: "${prompt}"...`, "info", weddingConsole);
+      btnQuickCorrection.disabled = true;
+      try {
+        const res = await api("/api/apply-correction", {
+          prompt,
+          target_nle,
+          mode: currentWorkflowMode,
+          folder: loadedFolder || ""
+        });
+        if (res.success) {
+          appendLog(`✅ Correction Applied: ${res.message || "Timeline updated"}`, "info", weddingConsole);
+          (res.steps || []).forEach(s => appendLog(`  • ${s}`, "info", weddingConsole));
+        } else {
+          appendLog(`⚠️ Correction note: ${res.error || res.message}`, "warning", weddingConsole);
+        }
+      } catch (e) {
+        appendLog("Error applying correction: " + e, "error", weddingConsole);
+      } finally {
+        btnQuickCorrection.disabled = false;
+      }
+    });
+  }
+
   if (btnRunWedding) {
     btnRunWedding.addEventListener("click", async () => {
       if (!loadedFolder || loadedFolder !== folderInput.value.trim()) {
@@ -436,6 +479,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
       const target_nle = targetNleInput ? targetNleInput.value : "resolve";
       const ref_video = refVideoInput ? refVideoInput.value.trim() : "";
+      const instructions = inputEditPrompt ? inputEditPrompt.value.trim() : "";
 
       store.set("avf.audio", audioInput.value.trim());
       btnRunWedding.disabled = true;
@@ -449,7 +493,8 @@ document.addEventListener("DOMContentLoaded", () => {
           formats,
           target_nle,
           mode: currentWorkflowMode,
-          ref_video
+          ref_video,
+          instructions
         });
         await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
         fetchStatus();

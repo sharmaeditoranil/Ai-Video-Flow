@@ -21,7 +21,7 @@ def _pathurl(path: str) -> str:
 
 
 def write_track_sequence(xml_path: str, name: str, tracks: List[List[Dict[str, Any]]], fps: float = 25.0,
-                         vertical: bool = False) -> int:
+                         vertical: bool = False, music_path: str = "", music_seconds: float = 0.0) -> int:
     """`tracks[i]` holds the clips of video track i+1 with timeline_start / in_seconds / out_seconds.
     Returns the number of clips written."""
     fps_i = int(round(fps))
@@ -81,6 +81,10 @@ def write_track_sequence(xml_path: str, name: str, tracks: List[List[Dict[str, A
         t_el = ET.SubElement(audio, "track")
         for ci, clip in enumerate(track, 1):
             clipitem(t_el, clip, f"a{ti}-{ci}", "audio")
+    if music_path and music_seconds > 0:
+        # The song on its own audio track from 0:00 - the takes above are placed in song time
+        clipitem(ET.SubElement(audio, "track"), {"file_path": music_path, "timeline_start": 0.0, "in_seconds": 0.0,
+                                                 "out_seconds": music_seconds}, "music-1", "audio")
 
     os.makedirs(os.path.dirname(xml_path) or ".", exist_ok=True)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)

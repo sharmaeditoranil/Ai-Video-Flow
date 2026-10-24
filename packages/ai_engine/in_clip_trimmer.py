@@ -175,7 +175,14 @@ class InClipTrimmer:
             "quality_score": round(best_score, 1),
             "shot_type": shot_type,
             "flash_times": self._flash_times(luma, native_fps),
+            "luma_curve": self._luma_curve(luma, native_fps),
         }
+
+    @staticmethod
+    def _luma_curve(luma: List[float], fps: float, rate: float = 5.0) -> List[float]:
+        """Scene brightness at 5 samples per second, for light-change sync between cameras."""
+        step = max(1, int(round(fps / rate)))
+        return [round(sum(luma[i:i + step]) / len(luma[i:i + step]), 2) for i in range(0, len(luma), step)]
 
     @staticmethod
     def _flash_times(luma: List[float], fps: float) -> List[float]:

@@ -30,7 +30,7 @@ from packages.licensing.public_key import LICENSE_PUBLIC_KEY_B64
 
 logger = logging.getLogger("ai_video_flow.licensing")
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://flow.aiphotoflow.in/index.php").rstrip("/")
 _CONFIG_DIR = os.path.expanduser("~/.ai-video-flow")
 _LICENSE_FILE = os.path.join(_CONFIG_DIR, "license.json")

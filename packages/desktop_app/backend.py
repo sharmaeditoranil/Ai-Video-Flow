@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.0"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.1"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -296,7 +296,8 @@ def _append_tracks_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any
         return 0
     while tl.GetTrackCount("video") < len(plan["tracks"]):
         tl.AddTrack("video")
-    while tl.GetTrackCount("audio") < len(plan["tracks"]):
+    need_audio = len(plan["tracks"]) + (1 if plan.get("audio") else 0)
+    while tl.GetTrackCount("audio") < need_audio:
         tl.AddTrack("audio", "stereo")
     tl_fps = float(project.GetSetting("timelineFrameRate") or 25.0)
     start = int(tl.GetStartFrame() or 0)
@@ -308,6 +309,12 @@ def _append_tracks_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any
                 continue
             entries.append({"mediaPoolItem": item, "startFrame": int(c["in_frame"]), "endFrame": max(int(c["in_frame"]) + 1, int(c["out_frame"]) - 1),
                             "trackIndex": t_index, "recordFrame": start + int(round(c["timeline_start"] * tl_fps))})
+    song = plan.get("audio")
+    if song and plan.get("audio_duration"):
+        items = resolve_adapter.import_media_files([song], bin_name="03_MUSIC")
+        if items:
+            entries.append({"mediaPoolItem": items[0], "startFrame": 0, "endFrame": int(float(plan["audio_duration"]) * tl_fps) - 1,
+                            "trackIndex": len(plan["tracks"]) + 1, "recordFrame": start, "mediaType": 2})
     if not entries:
         return 0
     try:
@@ -536,6 +543,32 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
             raise RuntimeError("No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).")
         _log(job_id, f"{label} mode · {len(videos)} recording(s) · silence cutting: {'Tight' if cut_level == 'tight' else 'Normal'}", "info")
 
+        # 2-3 cameras (sub-folders or camera models): the camera that recorded longest decides the cuts,
+        # the others are lined up to it by their audio
+        from packages.ai_engine import multicam_sync
+
+        def _dur_fps(path: str):
+            cap = cv2.VideoCapture(path)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+            cap.release()
+            return frames / fps, fps
+
+        groups: Dict[str, List[str]] = {}
+        for v in videos:
+            groups.setdefault(multicam_sync.camera_of(v, folder), []).append(v)
+        other_cams: Dict[str, List[str]] = {}
+        ref_cam = None
+        if len(groups) > 1:
+            totals = {cam: sum(_dur_fps(v)[0] for v in vs) for cam, vs in groups.items()}
+            ref_cam = max(totals, key=totals.get)
+            other_cams = {cam: vs for cam, vs in groups.items() if cam != ref_cam}
+            videos = groups[ref_cam]
+            _log(job_id, f"{len(groups)} cameras found: {', '.join(groups)}. {ref_cam} decides the cuts; "
+                         "the others are synced to it by audio.", "info")
+
+        env_ref: List[Any] = []
+        stream_pos = 0.0
         clean_clips: List[Dict[str, Any]] = []
         pauses: List[float] = []          # edited-timeline seconds where a long pause was removed
         energy: List[tuple] = []          # (edited_start_sec, rms) per kept second, for picking short clips
@@ -554,6 +587,8 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
                 continue
             dur = len(y) / sr
             total_src += dur
+            if other_cams:
+                env_ref.append(multicam_sync.audio_envelope(y, sr))
             intervals = librosa.effects.split(y, top_db=top_db, frame_length=2048, hop_length=512)
 
             # Merge speech parts separated by very short gaps so words are never clipped
@@ -579,8 +614,10 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
                     "timeline_start": round(timeline_pos, 2), "timeline_end": round(timeline_pos + s1 - s0, 2),
                     "in_frame": int(s0 * fps), "out_frame": int(s1 * fps), "duration": round(s1 - s0, 2),
                     "in_seconds": round(s0, 2), "out_seconds": round(s1, 2), "has_dialogue": True,
+                    "stream_start": stream_pos + s0, "camera": ref_cam or "",
                 })
                 timeline_pos += s1 - s0
+            stream_pos += dur
             _progress(job_id, int(i / len(videos) * 70))
 
         if not clean_clips:
@@ -592,10 +629,49 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
         fps0 = cv2.VideoCapture(videos[0]).get(cv2.CAP_PROP_FPS) or 25.0
         plans: Dict[str, Dict[str, Any]] = {}
         markers: Dict[str, List[Dict[str, Any]]] = {}
+
+        # Other cameras: same cuts, lined up by audio, each on its own track
+        extra_tracks: List[List[Dict[str, Any]]] = []
+        if other_cams:
+            ref_env = np.concatenate(env_ref) if env_ref else np.zeros(0)
+            for cam, vs in other_cams.items():
+                files, envs, pos = [], [], 0.0
+                for v in vs:
+                    try:
+                        yv, srv = load_audio(v, 16000)
+                    except Exception as e:
+                        _log(job_id, f"  {cam}: skipped {os.path.basename(v)} (no audio): {e}", "warning")
+                        continue
+                    _, fpsv = _dur_fps(v)
+                    files.append((v, pos, len(yv) / srv, fpsv))
+                    envs.append(multicam_sync.audio_envelope(yv, srv))
+                    pos += len(yv) / srv
+                if not files or not len(ref_env):
+                    continue
+                lag, conf = multicam_sync.audio_lag(ref_env, np.concatenate(envs))
+                track = []
+                for c in clean_clips:
+                    o0 = c["stream_start"] - lag
+                    for path, src_in, src_out, off, fpsv in multicam_sync.map_segment(o0, o0 + c["duration"], files):
+                        track.append({
+                            "clip_name": os.path.basename(path), "file_path": path, "camera": cam,
+                            "timeline_start": round(c["timeline_start"] + off, 3),
+                            "timeline_end": round(c["timeline_start"] + off + src_out - src_in, 3),
+                            "in_seconds": round(src_in, 3), "out_seconds": round(src_out, 3),
+                            "in_frame": int(src_in * fpsv), "out_frame": int(src_out * fpsv),
+                            "duration": round(src_out - src_in, 2),
+                        })
+                extra_tracks.append(track)
+                sure = "" if conf >= 8 else " · low confidence, please check"
+                _log(job_id, f"  {cam}: synced by audio ({lag:+.2f} s){sure}", "info" if not sure else "warning")
+        multicam_tracks = [clean_clips] + extra_tracks if extra_tracks else None
         if "clean" in formats:
             plans["clean"] = {"sequence_name": f"01_{label}_Clean_Edit", "format": f"{label} clean edit",
                               "aspect_ratio": "16:9", "fps": fps0, "total_duration": round(timeline_pos, 2),
                               "clip_count": len(clean_clips), "clips": clean_clips}
+            if multicam_tracks:
+                plans["clean"].update(tracks=multicam_tracks, multicam=True)
+                _log(job_id, f"  Clean edit: every camera on its own track (V1–V{len(multicam_tracks)}), cut at the same moments.", "info")
 
         # Chapters: split at long pauses, at least 2 minutes apart
         chapters = [0.0]
@@ -708,18 +784,49 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if not analyzed:
             raise RuntimeError("None of the clips could be analysed.")
 
-        # Multi-camera sync: real recording time per clip, camera clocks lined up with photo flashes
+        # Wedding only: put every camera's footage in real shoot-time order (other modes follow the music)
         from packages.ai_engine import multicam_sync
-        sync_report = multicam_sync.sync(analyzed, folder)
-        analyzed.sort(key=lambda c: c["abs_start"])
-        multicam = len(sync_report["cameras"]) > 1
+        multicam = False
+        if mode == "wedding":
+            sync_report = multicam_sync.sync(analyzed, folder)
+            analyzed.sort(key=lambda c: c["abs_start"])
+            multicam = len(sync_report["cameras"]) > 1
+        audio_synced_plan = None
+        if mode in ("youtube", "music_video"):
+            song = audio_path if (mode == "music_video" and audio_path and os.path.isfile(audio_path)) else None
+            _log(job_id, "Syncing clips by their sound" + (" to the song…" if song else "…"), "info")
+            arep = multicam_sync.audio_sync_clips(analyzed, folder, song)
+            if arep["mode"] == "song" and arep["synced"]:
+                takes = [c for c in analyzed if c["audio_synced"]]
+                audio_synced_plan = multicam_sync.plan_multicam_tracks(takes, max_gap=None, by="stack")
+                audio_synced_plan.update(sequence_name="03_Music_Video_Synced_Takes", audio=song,
+                                         audio_duration=arep["song_duration"])
+                _log(job_id, f"  {arep['synced']} of {arep['total']} clips matched the song - placed in song time on "
+                             f"{len(audio_synced_plan['tracks'])} track(s) above the song.", "info")
+            elif arep["mode"] == "song":
+                _log(job_id, "  No clip's sound matched the song (clips without playback audio stay in the beat edit).", "warning")
+            elif len(arep.get("cameras", {})) > 1:
+                audio_synced_plan = multicam_sync.plan_multicam_tracks(analyzed)
+                audio_synced_plan["sequence_name"] = "03_YouTube_Multicam_Synced"
+                _log(job_id, f"  {len(arep['cameras'])} cameras lined up by audio ({arep['synced']} clips moved) - "
+                             "one track per camera.", "info")
+        for c in analyzed:
+            c.pop("luma_curve", None)  # only needed for syncing; keeps the saved plan small
         if multicam:
             _log(job_id, f"Multi-camera footage: {len(sync_report['cameras'])} cameras found.", "info")
             for cam, r in sync_report["cameras"].items():
-                how = ("reference camera" if cam == sync_report["reference"]
-                       else f"clock {r['offset_sec']:+.1f} s, synced by {r['flash_matches']} flashes" if r["method"] == "flash sync"
-                       else "camera clock (no matching flashes)")
-                _log(job_id, f"  • {cam}: {r['clips']} clips · {how}")
+                if cam == sync_report["reference"]:
+                    how = "reference camera"
+                elif r["method"] == "timecode":
+                    how = "synced by timecode"
+                elif r["method"] == "camera clock":
+                    how = "camera clock used (no matching flashes or recording pattern)"
+                else:
+                    how = f"clock corrected {r['offset_sec']:+.1f} s by {r['method']}" + (
+                        f" ({r['flash_matches']} flashes)" if r["flash_matches"] else "")
+                _log(job_id, f"  • {cam}: {r['clips']} clips · {how} · time from {r['time_source']}"
+                             + (" · please check this camera's position" if r.get("please_check") else ""),
+                     "warning" if r.get("please_check") else "normal")
 
         # 1.5. Analyze Reference Video (if provided by editor)
         ref_lut_path = None
@@ -813,6 +920,20 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 else:
                     plans["full_film"] = story_planner.plan_full_film(analyzed)
 
+        if audio_synced_plan:
+            plans["audio_synced"] = audio_synced_plan
+
+        # YouTube, Music Video and Reels: the music leads - every cut lands on a beat
+        if mode in ("youtube", "music_video", "reels"):
+            if beat_times:
+                for p in plans.values():
+                    if p.get("tracks"):
+                        continue  # synced takes keep their real (song) positions
+                    n = _snap_to_beats(p, beat_times)
+                    _log(job_id, f"  🎵 {p.get('sequence_name')}: {n} cuts placed on the beat", "info")
+            else:
+                _log(job_id, "Add a song in AI Studio to cut this edit on the beat.", "warning")
+
         # 3.5. Intelligent B-Roll Cutaway Generation for Track V2 (Ambar AI Feature)
         from packages.ai_engine.broll_placer import broll_placer
         for p_key, p in plans.items():
@@ -861,6 +982,43 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         _log(job_id, f"ERROR: {e}", "error")
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(e))
+
+
+def _snap_to_beats(plan: Dict[str, Any], beat_times: List[float]) -> int:
+    """Shortens each clip so every cut lands on a beat of the song (at least one beat per clip).
+    Returns how many cuts were moved onto the beat."""
+    import bisect
+    beats = sorted(float(b) for b in beat_times if b > 0)
+    if len(beats) < 4:
+        return 0
+    t, moved, out = 0.0, 0, []
+    for c in plan.get("clips", []):
+        dur = float(c.get("duration", 0))
+        if dur <= 0:
+            continue
+        # last beat that still fits inside this clip, otherwise the first beat after `t`
+        i = bisect.bisect_right(beats, t + dur) - 1
+        if i < 0 or beats[i] <= t + 0.3:
+            i = bisect.bisect_right(beats, t + 0.3)
+            if i >= len(beats):
+                break  # song is over
+        new_dur = beats[i] - t
+        if new_dur > dur + 0.01:
+            new_dur = dur  # the clip is too short to reach the next beat: keep it whole
+        else:
+            moved += 1
+        fps = (c["out_frame"] - c["in_frame"]) / dur if dur else 25.0
+        c = dict(c, duration=round(new_dur, 3), timeline_start=round(t, 3), timeline_end=round(t + new_dur, 3),
+                 out_frame=int(c["in_frame"] + new_dur * fps))
+        if "in_seconds" in c:
+            c["out_seconds"] = round(float(c["in_seconds"]) + new_dur, 3)
+        out.append(c)
+        t += new_dur
+    plan["clips"] = out
+    plan["clip_count"] = len(out)
+    plan["total_duration"] = round(t, 2)
+    plan["beat_synced"] = True
+    return moved
 
 
 def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:

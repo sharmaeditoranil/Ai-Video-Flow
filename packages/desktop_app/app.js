@@ -375,6 +375,14 @@
     if (!loadedFolder) $("folder-info").textContent = long
       ? "Put the full podcast / class recording here. Several files are joined in name order."
       : "Choose the folder with your raw clips (subfolders are included).";
+    $("mode-hint").textContent = {
+      wedding: "2-3 cameras are lined up by shoot time (timecode, camera clock, flashes) — one track per camera.",
+      reels: "Cuts follow the beat of your song.",
+      youtube: "Cuts follow the beat of your song. 2-3 cameras are synced by their audio (03_YouTube_Multicam_Synced).",
+      music_video: "Cuts follow the beat. Takes shot to playback are placed in the song by their audio (03_Music_Video_Synced_Takes).",
+      podcast: "2-3 cameras are synced by their audio and cut at the same moments, one track per camera.",
+      tutorial: "2-3 cameras are synced by their audio and cut at the same moments, one track per camera.",
+    }[mode] || "";
     renderOutputs();
   }
   document.querySelectorAll(".mode").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
@@ -725,7 +733,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.1 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

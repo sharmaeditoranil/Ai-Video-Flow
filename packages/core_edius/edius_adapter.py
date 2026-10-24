@@ -144,7 +144,8 @@ class EdiusAdapter:
                 # Multi-camera: one track per camera at its synced time
                 from packages.ai_engine.fcp_xml import write_track_sequence
                 seq_name = sequence_name or plan.get("sequence_name") or "EDIUS_Multicam"
-                n = write_track_sequence(output_xml_path, seq_name, plan["tracks"], fps=fps)
+                n = write_track_sequence(output_xml_path, seq_name, plan["tracks"], fps=fps, music_path=plan.get("audio") or "",
+                                         music_seconds=float(plan.get("audio_duration") or 0))
                 self.write_edius_instructions(os.path.dirname(os.path.abspath(output_xml_path)))
                 return {"success": True, "xml_path": output_xml_path, "sequence_name": seq_name, "clip_count": n,
                         "tracks": len(plan["tracks"]), "fps": fps, "target_nle": "edius"}

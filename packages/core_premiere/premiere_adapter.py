@@ -491,7 +491,8 @@ class PremiereAdapter:
             # Multi-camera: V1/V2/V3 = camera 1/2/3 at their synced time (plus matching camera audio)
             try:
                 from packages.ai_engine.fcp_xml import write_track_sequence
-                n = write_track_sequence(xml_file, name, plan["tracks"], fps=fps)
+                n = write_track_sequence(xml_file, name, plan["tracks"], fps=fps, music_path=plan.get("audio") or "",
+                                         music_seconds=float(plan.get("audio_duration") or 0))
                 return {"success": True, "xml_path": xml_file, "timeline_name": name, "clip_count": n,
                         "tracks": len(plan["tracks"])}
             except Exception as e:

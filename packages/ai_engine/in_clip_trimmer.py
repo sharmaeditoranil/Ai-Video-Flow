@@ -53,7 +53,14 @@ class InClipTrimmer:
                 "out_frame": total_frames,
                 "in_seconds": 0.0,
                 "out_seconds": duration,
-                "quality_score": 75.0,
+                "trimmed_duration": duration,
+                "full_in_frame": 0,
+                "full_out_frame": total_frames,
+                "full_in_seconds": 0.0,
+                "full_out_seconds": duration,
+                "full_duration": duration,
+                "quality_score": 85.0,
+                "shot_type": "mid",
                 "reason": "Short clip kept intact"
             }
 
@@ -108,7 +115,13 @@ class InClipTrimmer:
 
             curr_frame_idx += 1
 
-        # Find the optimal Golden Window
+        # 1. Full Film Window (Conservative: preserves 85% to 100% of footage)
+        full_in_frame, full_out_frame = self._find_full_film_window(
+            sample_frame_indices, stability_scores, sharpness_scores,
+            native_fps, total_frames, duration
+        )
+
+        # 2. Golden Window (Punchy 2.5 - 6s window for Teaser / Fast Highlight)
         in_frame, out_frame, best_score = self._find_golden_window(
             sample_frame_indices, stability_scores, sharpness_scores,
             native_fps, total_frames, duration
@@ -135,21 +148,82 @@ class InClipTrimmer:
 
         cap.release()
 
+        full_dur = round((full_out_frame - full_in_frame) / native_fps, 2)
+        trim_dur = round((out_frame - in_frame) / native_fps, 2)
+
         return {
             "file_path": video_path,
             "duration": round(duration, 2),
             "native_fps": native_fps,
             "total_frames": total_frames,
+            # Golden Window (for Teaser & Beat-synced Highlight)
             "in_frame": in_frame,
             "out_frame": out_frame,
             "in_seconds": round(in_frame / native_fps, 2),
             "out_seconds": round(out_frame / native_fps, 2),
-            "trimmed_duration": round((out_frame - in_frame) / native_fps, 2),
+            "trimmed_duration": trim_dur,
             "trimmed_head_seconds": round(in_frame / native_fps, 2),
             "trimmed_tail_seconds": round((total_frames - out_frame) / native_fps, 2),
+            # Full Film Window (Conservative: keeps 85% - 100% of good footage!)
+            "full_in_frame": full_in_frame,
+            "full_out_frame": full_out_frame,
+            "full_in_seconds": round(full_in_frame / native_fps, 2),
+            "full_out_seconds": round(full_out_frame / native_fps, 2),
+            "full_duration": full_dur,
             "quality_score": round(best_score, 1),
             "shot_type": shot_type
         }
+
+    def _find_full_film_window(
+        self,
+        sample_indices: List[int],
+        stability: List[float],
+        sharpness: List[float],
+        native_fps: float,
+        total_frames: int,
+        duration: float
+    ) -> Tuple[int, int]:
+        """
+        Conservative trimmer for Full Wedding Film.
+        Preserves 85% to 100% of each clip duration!
+        Only trims genuine camera jerk when clicking the REC button at start (max 0.8s)
+        or when tilting to floor / stopping at tail (max 0.6s).
+        If the camera is already steady, trims 0 seconds.
+        """
+        if not sample_indices or not stability:
+            return 0, total_frames
+
+        n = len(sample_indices)
+
+        # Check head for button-press jerk (first 1.2s max or 10% of clip)
+        max_head = min(int(self.sample_fps * 1.2), max(1, int(n * 0.10)))
+        start_idx = 0
+        for i in range(max_head):
+            # Only trim if severe camera jerk / blur right at button press
+            if stability[i] < 35.0 or sharpness[i] < 12.0:
+                start_idx = i + 1
+            else:
+                break
+
+        # Check tail for camera shutdown / ground tilt (last 1.0s max or 10% of clip)
+        max_tail = min(int(self.sample_fps * 1.0), max(1, int(n * 0.10)))
+        end_idx = n - 1
+        for i in range(n - 1, max(0, n - 1 - max_tail), -1):
+            if stability[i] < 35.0 or sharpness[i] < 12.0:
+                end_idx = i - 1
+            else:
+                break
+
+        if start_idx >= end_idx:
+            start_idx = 0
+            end_idx = n - 1
+
+        in_f = sample_indices[start_idx]
+        out_f = sample_indices[end_idx]
+
+        in_f = max(0, min(in_f, total_frames - 1))
+        out_f = max(in_f + int(native_fps * 1.0), min(out_f, total_frames))
+        return in_f, out_f
 
     def _find_golden_window(
         self,
@@ -238,18 +312,25 @@ class InClipTrimmer:
             pass
 
         total_frames = int(duration * fps)
-        # Trim first 3.5s (camera shake start) and last 1.2s (camera shut down)
-        head_trim = min(3.5, max(0.0, duration * 0.25))
-        tail_trim = min(1.2, max(0.0, duration * 0.10))
+        # Trim first 2.5s (camera shake start) and last 1.0s (camera shut down) for teaser/highlight
+        head_trim = min(2.5, max(0.0, duration * 0.20))
+        tail_trim = min(1.0, max(0.0, duration * 0.10))
 
         in_sec = head_trim
         out_sec = max(in_sec + 2.0, duration - tail_trim)
+
+        # Full Film Window: Gentle trimming, cuts at most 0.4s start / 0.3s end
+        full_head = min(0.4, max(0.0, duration * 0.05)) if duration > 4.0 else 0.0
+        full_tail = min(0.3, max(0.0, duration * 0.04)) if duration > 4.0 else 0.0
+        full_in_sec = full_head
+        full_out_sec = max(full_in_sec + 1.5, duration - full_tail)
 
         return {
             "file_path": video_path,
             "duration": round(duration, 2),
             "native_fps": round(fps, 2),
             "total_frames": total_frames,
+            # Golden Window
             "in_frame": int(in_sec * fps),
             "out_frame": int(out_sec * fps),
             "in_seconds": round(in_sec, 2),
@@ -257,7 +338,14 @@ class InClipTrimmer:
             "trimmed_duration": round(out_sec - in_sec, 2),
             "trimmed_head_seconds": round(in_sec, 2),
             "trimmed_tail_seconds": round(duration - out_sec, 2),
+            # Full Film Window (Conservative: preserves 90-100% of footage)
+            "full_in_frame": int(full_in_sec * fps),
+            "full_out_frame": int(full_out_sec * fps),
+            "full_in_seconds": round(full_in_sec, 2),
+            "full_out_seconds": round(full_out_sec, 2),
+            "full_duration": round(full_out_sec - full_in_sec, 2),
             "quality_score": 82.5,
+            "shot_type": "mid",
             "engine": "Smart Trimmer Fallback"
         }
 

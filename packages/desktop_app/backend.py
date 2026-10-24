@@ -386,9 +386,11 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             try:
                 res = in_clip_trimmer.analyze_clip(vp)
                 analyzed.append(res)
-                _log(job_id, f"[{i}/{len(videos)}] {os.path.basename(vp)} → keep "
-                             f"{res.get('in_seconds', 0):.1f}s–{res.get('out_seconds', 0):.1f}s "
-                             f"(score {res.get('quality_score', 0):.0f})")
+                full_kept = res.get('full_duration', res.get('duration', 0))
+                total_dur = res.get('duration', 0)
+                _log(job_id, f"[{i}/{len(videos)}] {os.path.basename(vp)} ({total_dur:.1f}s) → "
+                             f"Full Film: {full_kept:.1f}s kept (shake trimmed) | "
+                             f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})")
             except Exception as e:
                 _log(job_id, f"[{i}/{len(videos)}] Skipped {os.path.basename(vp)}: {e}", "warning")
             _progress(job_id, int(i / len(videos) * 65))
@@ -496,7 +498,9 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             if "teaser" in formats:
                 plans["teaser"] = story_planner.plan_teaser(analyzed)
             if "highlight" in formats:
-                plans["highlight"] = story_planner.plan_highlight(analyzed, beat_times=beat_times)
+                plans["highlight"] = story_planner.plan_highlight(
+                    analyzed, beat_times=beat_times, ref_video_path=ref_video
+                )
             if "full_film" in formats:
                 plans["full_film"] = story_planner.plan_full_film(analyzed)
 

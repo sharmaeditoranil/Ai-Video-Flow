@@ -180,28 +180,19 @@ class PremiereAdapter:
 
         safe_name = "".join(c for c in name if c.isalnum() or c in ("_", "-"))
         xml_file = os.path.join(output_dir, f"{safe_name}_Premiere.xml")
+        audio_path = plan.get("audio_path") or plan.get("audio") or ""
 
-        # Try OpenTimelineIO first
+        # Directly generate authentic Apple FCP7 XML (<xmeml version="4">)
         try:
-            from packages.ai_engine.otio_exporter import otio_exporter
-            res = otio_exporter.export_timeline(name, clips, fps=fps, output_format="xml")
-            if res.get("success") and os.path.exists(res.get("file_path", "")):
-                # Return the exported xml
-                return {
-                    "success": True,
-                    "xml_path": res["file_path"],
-                    "timeline_name": name,
-                    "clip_count": len(clips)
-                }
-        except Exception as e:
-            logger.warning(f"OTIO exporter hit error: {e}. Using native XML generator.")
+            self._write_native_premiere_xml(xml_file, name, clips, fps, audio_path=audio_path)
+            
+            # Generate accompanying AI Color & Light Balance 3D LUT for Premiere Lumetri Color
+            lut_file = self.generate_premiere_color_look(output_dir)
 
-        # Native bulletproof FCP XML generator for Premiere Pro
-        try:
-            self._write_native_premiere_xml(xml_file, name, clips, fps)
             return {
                 "success": True,
                 "xml_path": xml_file,
+                "lut_path": lut_file,
                 "timeline_name": name,
                 "clip_count": len(clips)
             }
@@ -209,12 +200,59 @@ class PremiereAdapter:
             logger.error(f"Native Premiere XML generation failed: {e}")
             return {"success": False, "error": str(e)}
 
+    def generate_premiere_color_look(self, output_dir: str) -> str:
+        """
+        Generates an industry-standard 33x33x33 .cube 3D LUT for Adobe Premiere Pro's
+        Lumetri Color panel. Optimizes dynamic range, soft highlights, shadow lift,
+        and wedding skin tone warmth.
+        """
+        lut_path = os.path.join(output_dir, "AI_Wedding_Light_Balanced_Look.cube")
+        if os.path.exists(lut_path):
+            return lut_path
+
+        size = 33
+        grid = [i / (size - 1) for i in range(size)]
+
+        with open(lut_path, "w", encoding="utf-8") as f:
+            f.write("# AI Video Flow - Balanced Wedding Light & Color LUT for Adobe Premiere Pro\n")
+            f.write("TITLE \"AI_Wedding_Light_Balanced_Look\"\n")
+            f.write(f"LUT_3D_SIZE {size}\n")
+            f.write("DOMAIN_MIN 0.0 0.0 0.0\n")
+            f.write("DOMAIN_MAX 1.0 1.0 1.0\n\n")
+
+            for b in grid:
+                for g in grid:
+                    for r in grid:
+                        # 1. Shadow lift (prevents crushed tuxedo/dark hall blacks)
+                        r_out = r ** 0.92
+                        g_out = g ** 0.92
+                        b_out = b ** 0.95
+
+                        # 2. Filmic highlight shoulder (preserves wedding dress & stage light detail)
+                        if r_out > 0.7:
+                            r_out = 0.7 + (r_out - 0.7) * 0.85
+                        if g_out > 0.7:
+                            g_out = 0.7 + (g_out - 0.7) * 0.85
+                        if b_out > 0.7:
+                            b_out = 0.7 + (b_out - 0.7) * 0.80
+
+                        # 3. Warm wedding tone balance (subtle golden skin-tone protection)
+                        r_final = min(max(r_out * 1.02, 0.0), 1.0)
+                        g_final = min(max(g_out * 1.00, 0.0), 1.0)
+                        b_final = min(max(b_out * 0.98, 0.0), 1.0)
+
+                        f.write(f"{r_final:.6f} {g_final:.6f} {b_final:.6f}\n")
+
+        logger.info(f"Generated Premiere Lumetri 3D LUT: {lut_path}")
+        return lut_path
+
     def _write_native_premiere_xml(
         self,
         output_path: str,
         sequence_name: str,
         clips: List[Dict[str, Any]],
-        fps: float = 25.0
+        fps: float = 25.0,
+        audio_path: str = ""
     ) -> None:
         """
         Directly writes an authentic Apple FCP7 XML (<xmeml version="4">)
@@ -246,7 +284,7 @@ class PremiereAdapter:
             out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
             dur_frames = max(out_frame - in_frame, int(fps * 0.5))
 
-            clipitem = ET.SubElement(vtrack, "clipitem", id=f"clipitem-{idx}")
+            clipitem = ET.SubElement(vtrack, "clipitem", id=f"clipitem-v-{idx}")
             ET.SubElement(clipitem, "name").text = os.path.basename(file_path)
             ET.SubElement(clipitem, "duration").text = str(dur_frames)
 
@@ -260,9 +298,8 @@ class PremiereAdapter:
             ET.SubElement(clipitem, "out").text = str(out_frame)
 
             # File node
-            file_elem = ET.SubElement(clipitem, "file", id=f"file-{idx}")
+            file_elem = ET.SubElement(clipitem, "file", id=f"file-v-{idx}")
             ET.SubElement(file_elem, "name").text = os.path.basename(file_path)
-            # URL format file://localhost/...
             norm_p = os.path.abspath(file_path).replace("\\", "/")
             url = f"file://localhost/{norm_p.lstrip('/')}"
             ET.SubElement(file_elem, "pathurl").text = url
@@ -272,6 +309,33 @@ class PremiereAdapter:
             ET.SubElement(frate, "ntsc").text = "FALSE"
 
             curr_frame += dur_frames
+
+        # Audio Track (if background wedding song is provided)
+        if audio_path and os.path.exists(audio_path) and curr_frame > 0:
+            audio_elem = ET.SubElement(media, "audio")
+            atrack = ET.SubElement(audio_elem, "track")
+            aclipitem = ET.SubElement(atrack, "clipitem", id="clipitem-a-1")
+            ET.SubElement(aclipitem, "name").text = os.path.basename(audio_path)
+            ET.SubElement(aclipitem, "duration").text = str(curr_frame)
+
+            arate = ET.SubElement(aclipitem, "rate")
+            ET.SubElement(arate, "timebase").text = str(int(fps))
+            ET.SubElement(arate, "ntsc").text = "FALSE"
+
+            ET.SubElement(aclipitem, "start").text = "0"
+            ET.SubElement(aclipitem, "end").text = str(curr_frame)
+            ET.SubElement(aclipitem, "in").text = "0"
+            ET.SubElement(aclipitem, "out").text = str(curr_frame)
+
+            afile_elem = ET.SubElement(aclipitem, "file", id="file-a-1")
+            ET.SubElement(afile_elem, "name").text = os.path.basename(audio_path)
+            norm_ap = os.path.abspath(audio_path).replace("\\", "/")
+            aurl = f"file://localhost/{norm_ap.lstrip('/')}"
+            ET.SubElement(afile_elem, "pathurl").text = aurl
+
+            afrate = ET.SubElement(afile_elem, "rate")
+            ET.SubElement(afrate, "timebase").text = str(int(fps))
+            ET.SubElement(afrate, "ntsc").text = "FALSE"
 
         ET.SubElement(sequence, "duration").text = str(curr_frame)
 

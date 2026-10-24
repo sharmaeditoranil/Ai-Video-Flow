@@ -14,7 +14,7 @@ WINDOWS 10 / 11
   3. Open "AI Video Flow" from the Desktop or Start Menu.
 
 FIRST USE
-  - The free plan works right away (1 project per day, no internet needed).
+  - The free plan works right away (1 project per day; internet is needed to start a project).
   - DaVinci Resolve: Preferences -> System -> General ->
     "External scripting using" = Local -> Save -> restart Resolve.
   - Premiere Pro and EDIUS: timelines are saved as XML in the "AI-Video-Flow-Output"
@@ -37,7 +37,7 @@ WINDOWS
   3. Desktop ya Start Menu se "AI Video Flow" kholiye.
 
 SHURUAAT
-  - Free plan turant chalta hai (roz 1 project, internet ki zaroorat nahi).
+  - Free plan turant chalta hai (roz 1 project; project shuru karne ke liye internet chahiye).
   - DaVinci Resolve: Preferences -> System -> General ->
     "External scripting using" = Local -> Save -> Resolve dobara kholiye.
   - Plan khareeda hai? "My Profile" me license key daalkar Activate dabaiye.

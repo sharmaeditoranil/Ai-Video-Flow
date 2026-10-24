@@ -187,7 +187,7 @@
     $("chip-name").textContent = name;
     $("plan-chip").textContent = "My Profile";
     const creditsText = !l.is_premium ? "" : (l.plan_type === "local" ? "Unlimited editing" : (l.unlimited ? "Unlimited Smart AI" : `${l.credits_remaining} Smart AI weddings left`));
-    $("chip-credits").textContent = l.is_premium ? creditsText : (l.free_left_today === 0 ? "Free · today's project used" : "Free · 1 project per day");
+    $("chip-credits").textContent = l.is_premium ? creditsText : (l.free_left_today === 0 ? "Free · used for today" : `Free · ${l.free_limit ?? 1} per day`);
     $("chip-avatar").textContent = initial;
     document.querySelector(".side-profile").classList.toggle("premium", !!l.is_premium);
     $("pf-avatar").textContent = initial;
@@ -227,9 +227,11 @@
     } else {
       quota.hidden = false;
       quota.innerHTML = "";
-      const left = l.free_left_today ?? 1;
+      const left = l.free_left_today;
       const txt = document.createElement("span");
-      txt.textContent = left > 0 ? `Free plan · ${limitText} (${left} left today).` : (limit ? "Today's free projects are used. They reset tomorrow." : "The free plan is paused.");
+      txt.textContent = l.free_offline ? `Free plan · ${limitText} · needs an internet connection to start a project.`
+        : left == null || left > 0 ? `Free plan · ${limitText}` + (left == null ? "." : ` (${left} left today).`)
+        : (limit ? "Today's free projects are used. They reset at midnight." : "The free plan is paused.");
       const go = document.createElement("button");
       go.className = "link";
       go.dataset.goto = "pricing";
@@ -744,7 +746,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.4 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.5 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

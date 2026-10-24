@@ -30,7 +30,7 @@ from packages.licensing.public_key import LICENSE_PUBLIC_KEY_B64
 
 logger = logging.getLogger("ai_video_flow.licensing")
 
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://flow.aiphotoflow.in/index.php").rstrip("/")
 RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"
@@ -94,6 +94,8 @@ class LicenseManager:
         if claims.get("machine_id") != self.machine_id:
             logger.warning("License token belongs to another computer.")
             return None
+        if claims.get("v") != 1 or not claims.get("license_key"):
+            return None  # e.g. a free-project grant is never a license
         return claims
 
     def _load(self) -> None:
@@ -106,7 +108,8 @@ class LicenseManager:
             return
         self._license_key = data.get("license_key", "")
         if data.get("token") and data.get("signature"):
-            self._claims = self._verify(data["token"], data["signature"])
+            claims = self._verify(data["token"], data["signature"])
+            self._claims = claims if claims and claims.get("license_key") == self._license_key else None
 
     def _store(self, license_key: str, token: str, signature: str) -> bool:
         claims = self._verify(token, signature)
@@ -224,6 +227,31 @@ class LicenseManager:
                 st = self.get_status()
                 return {"success": True, "credits_remaining": st["credits_remaining"], "unlimited": st["unlimited"]}
         return {"success": False, "error": data.get("error", "Could not use a credit.")}
+
+    # ---------------- free plan (counted on the server, per computer per day) ----------------
+    def free_status(self) -> Dict[str, Any]:
+        status, data = self._post("/api/v1/free/status", {"machine_id": self.machine_id})
+        if status == 200 and data.get("success"):
+            return data
+        return {"success": False, "offline": status == 0,
+                "error": "The free plan needs an internet connection to start a project." if status == 0 else data.get("error", "")}
+
+    def free_claim(self, job_name: str) -> Dict[str, Any]:
+        """Uses one of today's free projects. Only a grant signed by the server for this computer counts."""
+        status, data = self._post("/api/v1/free/claim", {"machine_id": self.machine_id, "job_name": job_name[:120]})
+        if status == 0:
+            return {"success": False, "error": "The free plan needs an internet connection to finish a project."}
+        if status != 200 or not data.get("success"):
+            return {"success": False, "error": data.get("error", "Could not start a free project."), "limit": True}
+        try:
+            payload = _b64url_decode(data.get("grant", ""))
+            _PUBLIC_KEY.verify(_b64url_decode(data.get("signature", "")), payload)
+            grant = json.loads(payload.decode("utf-8"))
+        except (InvalidSignature, ValueError, TypeError):
+            return {"success": False, "error": "The server sent an invalid free-project permission."}
+        if grant.get("v") != "free" or grant.get("machine_id") != self.machine_id or float(grant.get("valid_until", 0)) < time.time():
+            return {"success": False, "error": "The free-project permission is not valid for this computer."}
+        return {"success": True, "left": max(0, int(grant["limit"]) - int(grant["used"])), "limit": int(grant["limit"])}
 
     def plans(self) -> Dict[str, Any]:
         """Public plan list for the Pricing page."""

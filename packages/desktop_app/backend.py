@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.4"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.5"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -55,7 +55,6 @@ ALLOWED_HOSTS: set = set()
 # Free plan: projects per day (any paid plan removes the limit). The admin portal can change it;
 # the last plan list from the server is cached so prices and the limit also show offline.
 FREE_DAILY_PROJECTS = 1
-USAGE_FILE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "usage.json")
 PLANS_CACHE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "plans.json")
 
 
@@ -95,32 +94,40 @@ def price_from() -> Dict[str, int]:
 
 
 def license_status() -> Dict[str, Any]:
-    return {**license_manager.get_status(), "free_left_today": free_projects_left(),
-            "free_limit": free_daily_limit(), "price_from": price_from()}
+    fs = free_status()
+    return {**license_manager.get_status(),
+            "free_left_today": int(fs["left"]) if fs and fs.get("success") else None,
+            "free_limit": int(fs["limit"]) if fs and fs.get("success") else free_daily_limit(),
+            "free_offline": bool(fs and not fs.get("success")), "price_from": price_from()}
 
 
-def _usage_today() -> int:
-    try:
-        with open(USAGE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return int(data.get("count", 0)) if data.get("date") == time.strftime("%Y-%m-%d") else 0
-    except Exception:
-        return 0
+_FREE_CACHE: Dict[str, Any] = {"t": 0.0, "data": None}
 
 
-def _count_project() -> None:
+def free_status(force: bool = False) -> Optional[Dict[str, Any]]:
+    """Today's free projects for this computer, as counted by the server. None = paid plan (no limit)."""
     if license_manager.get_status().get("local_unlimited"):
-        return
-    os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
-    with open(USAGE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"date": time.strftime("%Y-%m-%d"), "count": _usage_today() + 1}, f)
+        return None
+    if force or not _FREE_CACHE["data"] or time.time() - _FREE_CACHE["t"] > 30:
+        _FREE_CACHE.update(t=time.time(), data=license_manager.free_status())
+    return _FREE_CACHE["data"]
 
 
 def free_projects_left() -> Optional[int]:
-    """None = unlimited (paid plan)."""
+    """None = unlimited (paid plan) or unknown (offline)."""
+    st = free_status()
+    return int(st["left"]) if st and st.get("success") else None
+
+
+def _claim_free_project(job_id: str, job_name: str) -> None:
+    """Free plan: the server must sign off one of today's projects before any timeline is made."""
     if license_manager.get_status().get("local_unlimited"):
-        return None
-    return max(0, free_daily_limit() - _usage_today())
+        return
+    r = license_manager.free_claim(job_name)
+    _FREE_CACHE["data"] = None
+    if not r.get("success"):
+        raise RuntimeError(r.get("error"))
+    _log(job_id, f"Free plan: project counted · {r['left']} left today.", "info")
 
 
 # AI assistant conversation (one chat per app session)
@@ -754,6 +761,8 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
                 plans["clean"].update(tracks=multicam_tracks, multicam=True)
                 _log(job_id, f"  Clean edit: every camera on its own track (V1–V{len(multicam_tracks)}), cut at the same moments.", "info")
 
+        _claim_free_project(job_id, f"{label}: {os.path.basename(folder)}")
+
         # Chapters: split at long pauses, at least 2 minutes apart
         chapters = [0.0]
         for t in pauses:
@@ -809,7 +818,6 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
 
         result = _export_plans(job_id, plans, target_nle, "", markers)
         result["plan_file"] = plan_file
-        _count_project()
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
     except Exception as e:
@@ -1072,7 +1080,8 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                          f"{p.get('total_duration', 0)}s ({p.get('aspect_ratio', '16:9')})")
         _progress(job_id, 80)
 
-        # 4. Save plan to disk
+        # 4. Save plan to disk (free plan: only after the server has counted the project)
+        _claim_free_project(job_id, f"{mode.replace('_', ' ').title()}: {os.path.basename(folder)}")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
         with open(plan_file, "w", encoding="utf-8") as f:
@@ -1091,7 +1100,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         result = _export_plans(job_id, plans, target_nle, audio_path)
         result["plan_file"] = plan_file
-        _count_project()
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
     except Exception as e:
@@ -1486,8 +1494,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 res.pop("videos")
             self._json(res)
 
+        elif self.path == "/api/run-wedding" and (free_status(force=True) or {"success": True}).get("success") is False:
+            self._json({"success": False, "error": free_status()["error"] or "Could not check the free plan. Try again."})
+
         elif self.path == "/api/run-wedding" and free_projects_left() == 0:
-            n = free_daily_limit()
+            n = (free_status() or {}).get("limit", free_daily_limit())
             self._json({"success": False, "limit": True,
                         "error": (f"The free plan includes {n} project{'s' if n != 1 else ''} per day. " if n else "The free plan is paused. ")
                         + f"Go unlimited with AI Editing from ₹{price_from()['local']:,}/month"

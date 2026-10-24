@@ -168,6 +168,7 @@ function migrate(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS rate_limits (bucket TEXT, ts INTEGER);
         CREATE INDEX IF NOT EXISTS idx_rl ON rate_limits(bucket, ts);
         CREATE INDEX IF NOT EXISTS idx_ai_usage ON ai_usage(license_key, created_at);
+        CREATE TABLE IF NOT EXISTS free_usage (machine_id TEXT, day TEXT, count INTEGER, PRIMARY KEY (machine_id, day));
     ");
 
     $cols = array_column($pdo->query('PRAGMA table_info(licenses)')->fetchAll(), 'name');
@@ -449,6 +450,39 @@ function signed_token(array $lic, string $machineId): array
     return ['token' => b64url($payload), 'signature' => b64url($sig)];
 }
 
+/** Free plan: projects are counted here per computer per day (India time), never on the computer itself. */
+function free_day(): string
+{
+    return (new DateTime('now', new DateTimeZone('Asia/Kolkata')))->format('Y-m-d');
+}
+
+function free_machine_id(array $b): string
+{
+    $mid = strtoupper((string)($b['machine_id'] ?? ''));
+    if (!preg_match('/^[0-9A-F]{32}$/', $mid)) {
+        json_out(['success' => false, 'error' => 'Invalid computer id.'], 400);
+    }
+    return $mid;
+}
+
+function free_used(PDO $pdo, string $mid): int
+{
+    $st = $pdo->prepare('SELECT count FROM free_usage WHERE machine_id = ? AND day = ?');
+    $st->execute([$mid, free_day()]);
+    return (int)$st->fetchColumn();
+}
+
+/** Signed permission for one free project on one computer; the app checks it with the public key. */
+function free_grant(string $mid, int $used, int $limit): array
+{
+    global $CONFIG;
+    $now = time();
+    $payload = json_encode(['v' => 'free', 'machine_id' => $mid, 'day' => free_day(), 'used' => $used, 'limit' => $limit,
+        'nonce' => bin2hex(random_bytes(8)), 'issued_at' => $now, 'valid_until' => $now + 3600], JSON_UNESCAPED_SLASHES);
+    $sig = sodium_crypto_sign_detached($payload, base64_decode($CONFIG['signing_secret_key']));
+    return ['grant' => b64url($payload), 'signature' => b64url($sig)];
+}
+
 /** Validates key + machine for desktop calls. Binds the machine on first activation. */
 function check_license(PDO $pdo, string $key, string $machineId, bool $bind): array
 {
@@ -695,6 +729,39 @@ if (str_starts_with($PATH, '/api/v1/')) {
         json_out(['success' => true, 'latest' => get_setting($pdo, 'app_latest_version'),
             'download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
             'notes' => get_setting($pdo, 'app_update_notes')]);
+    }
+
+    if ($PATH === '/api/v1/free/status' && $METHOD === 'POST') {
+        rate_limit($pdo, 'freestatus:' . client_ip(), 600, 3600);
+        $mid = free_machine_id(body_json());
+        $limit = (int)get_setting($pdo, 'free_daily_projects', '1');
+        $used = free_used($pdo, $mid);
+        json_out(['success' => true, 'used' => $used, 'limit' => $limit, 'left' => max(0, $limit - $used)]);
+    }
+
+    if ($PATH === '/api/v1/free/claim' && $METHOD === 'POST') {
+        $b = body_json();
+        $mid = free_machine_id($b);
+        $limit = (int)get_setting($pdo, 'free_daily_projects', '1');
+        if ($limit <= 0) {
+            json_out(['success' => false, 'limit' => 0, 'left' => 0, 'error' => 'The free plan is paused. Please choose a plan.'], 403);
+        }
+        // Many made-up computer ids from one connection are capped too
+        rate_limit($pdo, 'freeclaim:' . client_ip(), max(6, $limit * 4), 86400);
+        $pdo->exec('BEGIN IMMEDIATE');
+        $used = free_used($pdo, $mid);
+        if ($used >= $limit) {
+            $pdo->exec('ROLLBACK');
+            json_out(['success' => false, 'used' => $used, 'limit' => $limit, 'left' => 0,
+                'error' => "Today's free project" . ($limit > 1 ? 's are' : ' is') . ' used. Choose a plan, or come back tomorrow.'], 429);
+        }
+        $pdo->prepare('DELETE FROM free_usage WHERE day < ?')->execute([date('Y-m-d', time() - 86400 * 40)]);
+        $pdo->prepare('INSERT INTO free_usage (machine_id, day, count) VALUES (?, ?, 1) ON CONFLICT(machine_id, day) DO UPDATE SET count = count + 1')
+            ->execute([$mid, free_day()]);
+        $pdo->prepare('INSERT INTO usage_logs (license_key, machine_id, job_name, timestamp) VALUES (?, ?, ?, ?)')
+            ->execute(['FREE', $mid, substr((string)($b['job_name'] ?? 'Free project'), 0, 120), time()]);
+        $pdo->exec('COMMIT');
+        json_out(['success' => true, 'used' => $used + 1, 'limit' => $limit, 'left' => $limit - $used - 1] + free_grant($mid, $used + 1, $limit));
     }
 
     if ($PATH === '/api/v1/license/activate' && $METHOD === 'POST') {

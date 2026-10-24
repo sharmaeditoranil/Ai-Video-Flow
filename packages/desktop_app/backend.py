@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.7"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.8"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -1087,20 +1087,10 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             else:
                 _log(job_id, "Add a song in AI Studio to cut this edit on the beat.", "warning")
 
-        # 3.5. Intelligent B-Roll Cutaway Generation for Track V2 (Ambar AI Feature)
-        from packages.ai_engine.broll_placer import broll_placer
-        for p_key, p in plans.items():
-            if p.get("multicam"):
-                p["broll_clips"] = []  # the camera tracks already use V2 and above
-                continue
-            broll_cuts = broll_placer.suggest_broll_cutaways(
-                primary_clips=p.get("clips", []),
-                all_analyzed_clips=analyzed,
-                target_track=2
-            )
-            p["broll_clips"] = broll_cuts
-            if broll_cuts:
-                _log(job_id, f"  🎬 Video Track V2: Generated {len(broll_cuts)} intelligent B-Roll cutaways for {p.get('sequence_name')}", "info")
+        # 3.5. Every editor gets the same arrangement as the DaVinci Resolve timeline, which has no
+        # extra B-roll overlay track - so none is added to the Premiere / EDIUS XML either
+        for p in plans.values():
+            p["broll_clips"] = []
 
         for p in plans.values():
             _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips "

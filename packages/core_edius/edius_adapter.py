@@ -225,6 +225,9 @@ class EdiusAdapter:
         aspect_ratio: str = "16:9"
     ) -> str:
         """Constructs XML tree structured for EDIUS Pro 7/8/9/X/11."""
+        from packages.ai_engine.fcp_xml import at_timebase
+        clips = at_timebase(clips, fps, sequential=True)  # e.g. 50 fps footage on a 25 fps sequence
+        broll_clips = at_timebase(broll_clips or [], fps)
         is_vertical = "9:16" in aspect_ratio or "vertical" in aspect_ratio.lower()
         width = 1080 if is_vertical else 1920
         height = 1920 if is_vertical else 1080
@@ -264,7 +267,7 @@ class EdiusAdapter:
 
             in_frame = int(clip.get("in_frame", 0))
             out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
-            dur_frames = max(out_frame - in_frame, int(fps * 0.5))
+            dur_frames = max(out_frame - in_frame, 1)
 
             clipitem = ET.SubElement(vtrack1, "clipitem", id=f"clipitem-v1-{idx}")
             ET.SubElement(clipitem, "name").text = os.path.basename(file_path)
@@ -342,7 +345,7 @@ class EdiusAdapter:
 
             in_frame = int(clip.get("in_frame", 0))
             out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
-            dur_frames = max(out_frame - in_frame, int(fps * 0.5))
+            dur_frames = max(out_frame - in_frame, 1)
 
             aclipitem = ET.SubElement(atrack1, "clipitem", id=f"clipitem-a1-{idx}")
             ET.SubElement(aclipitem, "name").text = os.path.basename(file_path)

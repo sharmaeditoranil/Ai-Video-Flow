@@ -61,6 +61,31 @@ def media_info(path: str) -> Dict[str, Any]:
     return info
 
 
+def at_timebase(clips: List[Dict[str, Any]], fps: float, sequential: bool = False) -> List[Dict[str, Any]]:
+    """Plans count in_frame / out_frame in each camera's own frame rate (what Resolve needs). An XML
+    sequence counts every clip in its own timebase, so a 50 fps clip on a 25 fps timeline must be halved -
+    otherwise it runs twice as long and from the wrong place in the clip. `sequential`: the clips are laid
+    end to end, so lengths are rounded against the running total and the cuts never drift from Resolve's."""
+    out = []
+    exact = placed = 0.0
+    for c in clips:
+        path = c.get("file_path") or c.get("path") or ""
+        src = float(c.get("native_fps") or 0) or (media_info(path)["fps"] if path else 0) or fps
+        c = dict(c)
+        if c.get("in_frame") is not None and c.get("out_frame") is not None:
+            seconds = (int(c["out_frame"]) - int(c["in_frame"])) / src
+            c["in_frame"] = int(round(int(c["in_frame"]) * fps / src))
+            if sequential:
+                exact += seconds
+                length = max(1, int(round(exact * fps)) - int(placed))
+                placed += length
+            else:
+                length = max(1, int(round(seconds * fps)))
+            c["out_frame"] = c["in_frame"] + length
+        out.append(c)
+    return out
+
+
 def describe_files(root: ET.Element) -> None:
     """Premiere Pro drops a whole sequence when a <file> does not describe its media, so every
     file definition gets its duration and video/audio characteristics. Clips on audio tracks whose

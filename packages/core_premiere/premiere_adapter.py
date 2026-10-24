@@ -552,12 +552,22 @@ class PremiereAdapter:
             if (app.projects[k].path == projPath) {{ proj = app.projects[k]; }}
         }}
         var before = proj.sequences.numSequences;
-        var ok = proj.importFiles(xmls, true, proj.rootItem, false);
+        var missed = [];
+        // One XML at a time: Premiere can drop sequences when several XMLs are imported in one call
+        for (var x = 0; x < xmls.length; x++) {{
+            var n0 = proj.sequences.numSequences;
+            proj.importFiles([xmls[x]], true, proj.rootItem, false);
+            if (proj.sequences.numSequences == n0) {{
+                $.sleep(500);
+                proj.importFiles([xmls[x]], true, proj.rootItem, false);
+                if (proj.sequences.numSequences == n0) {{ missed.push(xmls[x]); }}
+            }}
+        }}
         proj.save();
         var names = [];
         for (var i = 0; i < proj.sequences.numSequences; i++) {{ names.push(proj.sequences[i].name); }}
         if (proj.sequences.numSequences > 0) {{ proj.activeSequence = proj.sequences[proj.sequences.numSequences - 1]; }}
-        return JSON.stringify({{success: proj.sequences.numSequences > before, project: proj.path, sequences: names,
+        return JSON.stringify({{success: proj.sequences.numSequences > before, project: proj.path, sequences: names, missed: missed,
                                 error: proj.sequences.numSequences > before ? '' : 'Premiere imported no sequence from the XML.'}});
         """
         res = self.run_bridge(jsx, label=name, timeout=180)
@@ -565,6 +575,8 @@ class PremiereAdapter:
             if self._system_os == "Darwin":
                 subprocess.Popen(["open", "-a", self._active_app["path"]])
             res["message"] = f"Premiere Pro project created with {len(res.get('sequences', []))} sequence(s): {res.get('project')}"
+            if res.get("missed"):
+                res["message"] += " · Not imported (File > Import): " + ", ".join(os.path.basename(m) for m in res["missed"])
         return res
 
     def export_plan_to_premiere_xml(
@@ -686,7 +698,10 @@ class PremiereAdapter:
         Supports multi-track video (V1 A-Roll + V2 B-Roll Cutaways) and dual audio tracks.
         """
         import xml.etree.ElementTree as ET
+        from packages.ai_engine.fcp_xml import at_timebase
 
+        clips = at_timebase(clips, fps, sequential=True)  # e.g. 50 fps footage on a 25 fps sequence
+        broll_clips = at_timebase(broll_clips or [], fps)
         xmeml = ET.Element("xmeml", version="4")
         sequence = ET.SubElement(xmeml, "sequence")
         ET.SubElement(sequence, "name").text = sequence_name
@@ -731,7 +746,7 @@ class PremiereAdapter:
 
             in_frame = int(clip.get("in_frame", 0))
             out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
-            dur_frames = max(out_frame - in_frame, int(fps * 0.5))
+            dur_frames = max(out_frame - in_frame, 1)
 
             clipitem = ET.SubElement(vtrack, "clipitem", id=f"clipitem-v-{idx}")
             ET.SubElement(clipitem, "name").text = os.path.basename(file_path)
@@ -810,7 +825,7 @@ class PremiereAdapter:
 
             in_frame = int(clip.get("in_frame", 0))
             out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
-            dur_frames = max(out_frame - in_frame, int(fps * 0.5))
+            dur_frames = max(out_frame - in_frame, 1)
 
             aclipitem = ET.SubElement(atrack1, "clipitem", id=f"clipitem-a1-{idx}")
             ET.SubElement(aclipitem, "name").text = os.path.basename(file_path)

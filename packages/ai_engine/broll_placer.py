@@ -51,8 +51,15 @@ class BrollPlacer:
         if not candidates:
             return []
 
-        # Sort candidate pool by quality score
+        # Sort candidate pool by quality score; a cutaway never runs past the end of its clip
+        def usable(c: Dict[str, Any]) -> float:
+            start = float(c.get("in_seconds") or 0.0)
+            end = float(c.get("out_seconds") or c.get("duration") or 0.0)
+            return end - start
+        candidates = [c for c in candidates if usable(c) >= 1.0]
         candidates.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+        if not candidates:
+            return []
 
         # 3. Schedule cutaways over the primary timeline duration
         total_v1_duration = primary_clips[-1].get("timeline_end", 0.0) if primary_clips else 0.0
@@ -65,18 +72,19 @@ class BrollPlacer:
 
         while curr_time + cutaway_duration_sec < total_v1_duration - 2.0:
             cand = candidates[cand_idx % len(candidates)]
-            in_sec = cand.get("in_seconds", 0.0)
-            fps = cand.get("native_fps", 25.0)
+            in_sec = float(cand.get("in_seconds") or 0.0)
+            fps = float(cand.get("native_fps") or 25.0)
+            length = round(min(cutaway_duration_sec, usable(cand)), 2)
 
             placements.append({
                 "clip_name": os.path.basename(cand.get("file_path", "")),
                 "file_path": cand.get("file_path"),
                 "track_index": target_track,
                 "timeline_start": round(curr_time, 2),
-                "timeline_end": round(curr_time + cutaway_duration_sec, 2),
+                "timeline_end": round(curr_time + length, 2),
                 "in_frame": int(in_sec * fps),
-                "out_frame": int((in_sec + cutaway_duration_sec) * fps),
-                "duration": cutaway_duration_sec,
+                "out_frame": int((in_sec + length) * fps),
+                "duration": length,
                 "role": "B-Roll Cutaway Overlay (V2)"
             })
 

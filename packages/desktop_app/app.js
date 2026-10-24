@@ -747,7 +747,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.7 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.8 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

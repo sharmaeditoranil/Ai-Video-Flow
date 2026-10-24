@@ -12,7 +12,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 
 datas = [
     (os.path.join(ROOT, "packages", "desktop_app", "index.html"), "packages/desktop_app"),

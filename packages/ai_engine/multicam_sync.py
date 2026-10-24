@@ -422,9 +422,9 @@ def plan_multicam_film(analyzed: List[Dict[str, Any]], shot_seconds: float = 5.0
     }
 
 
-def plan_multicam_tracks(analyzed: List[Dict[str, Any]], max_gap: Optional[float] = 2.0, by: str = "camera") -> Dict[str, Any]:
+def plan_multicam_tracks(analyzed: List[Dict[str, Any]], max_gap: Optional[float] = 0.0, by: str = "camera") -> Dict[str, Any]:
     """Every camera on its own video track, all clips at their synced real time, nothing cut out.
-    Stretches where no camera was recording are shortened to `max_gap` seconds (None = keep the real
+    Stretches where no camera was recording are closed up to `max_gap` seconds (0 = no gap; None = keep the real
     timing, e.g. song time). by="stack" puts overlapping takes on the first free track instead."""
     items = []
     for c in analyzed:

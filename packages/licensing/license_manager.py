@@ -52,7 +52,7 @@ class LicenseManager:
 
     def __init__(self, license_server_url: Optional[str] = None):
         self.license_server_url = license_server_url or os.environ.get(
-            "AI_LICENSE_SERVER_URL", "https://api.aivideoflow.com/v1/license"
+            "AI_LICENSE_SERVER_URL", "https://video.aiphotoflow.in/api/v1/license"
         )
         self.machine_id = get_machine_fingerprint()
         os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -228,8 +228,19 @@ class LicenseManager:
         }
 
     def _verify_online(self, license_key: str, email: Optional[str]) -> Dict[str, Any]:
-        """HTTP POST to user's website licensing endpoint."""
-        endpoint = f"{self.license_server_url.rstrip('/')}/verify"
+        """HTTP POST to user's website licensing endpoint with auto-fallback paths."""
+        base_url = self.license_server_url.rstrip('/')
+        candidate_urls = [
+            f"{base_url}/verify",
+            f"{base_url}/index.php/verify",
+            "https://video.aiphotoflow.in/api/v1/license/verify",
+            "https://video.aiphotoflow.in/verify",
+            "https://video.aiphotoflow.in/index.php/verify"
+        ]
+        # Deduplicate while preserving order
+        seen = set()
+        endpoints = [u for u in candidate_urls if not (u in seen or seen.add(u))]
+
         req_body = json.dumps({
             "license_key": license_key,
             "machine_id": self.machine_id,
@@ -238,23 +249,32 @@ class LicenseManager:
             "platform": platform.system()
         }).encode("utf-8")
 
-        req = urllib.request.Request(
-            endpoint,
-            data=req_body,
-            headers={"Content-Type": "application/json", "User-Agent": "AIVideoFlow-Desktop/1.0"},
-            method="POST"
-        )
+        last_err = "Server unreachable"
+        for endpoint in endpoints:
+            req = urllib.request.Request(
+                endpoint,
+                data=req_body,
+                headers={"Content-Type": "application/json", "User-Agent": "AIVideoFlow-Desktop/1.0"},
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    if response.status == 200:
+                        resp_data = json.loads(response.read().decode("utf-8"))
+                        return resp_data
+            except urllib.error.HTTPError as he:
+                try:
+                    err_json = json.loads(he.read().decode("utf-8"))
+                    if "error" in err_json:
+                        return err_json
+                except Exception:
+                    pass
+                last_err = f"HTTP {he.code}"
+            except Exception as e:
+                last_err = str(e)
+                continue
 
-        try:
-            with urllib.request.urlopen(req, timeout=6) as response:
-                if response.status == 200:
-                    resp_data = json.loads(response.read().decode("utf-8"))
-                    return resp_data
-        except Exception as e:
-            logger.debug(f"Online licensing server connect error: {e}")
-            return {"success": False, "error": f"Licensing server connection failed: {e}"}
-
-        return {"success": False, "error": "Invalid response from licensing server."}
+        return {"success": False, "error": f"Connection to video.aiphotoflow.in failed ({last_err}). Check key or try offline activation."}
 
     def _verify_offline_token(self, token: str) -> Dict[str, Any]:
         """Verifies algorithmic cryptographic master tokens."""
@@ -306,19 +326,33 @@ class LicenseManager:
 
     def _sync_credit_consumption(self, license_key: str, job_name: str) -> None:
         """Notifies website API of credit deduction."""
-        endpoint = f"{self.license_server_url.rstrip('/')}/consume"
+        base_url = self.license_server_url.rstrip('/')
+        candidate_urls = [
+            f"{base_url}/consume",
+            f"{base_url}/index.php/consume",
+            "https://video.aiphotoflow.in/api/v1/license/consume",
+            "https://video.aiphotoflow.in/consume",
+            "https://video.aiphotoflow.in/index.php/consume"
+        ]
         req_body = json.dumps({
             "license_key": license_key,
             "machine_id": self.machine_id,
             "job_name": job_name,
             "timestamp": int(time.time())
         }).encode("utf-8")
-        req = urllib.request.Request(
-            endpoint, data=req_body,
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        urllib.request.urlopen(req, timeout=4)
+
+        for endpoint in candidate_urls:
+            try:
+                req = urllib.request.Request(
+                    endpoint, data=req_body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        break
+            except Exception:
+                continue
 
     def deactivate_license(self) -> Dict[str, Any]:
         """Clears stored license vault and reverts to Free Community tier."""

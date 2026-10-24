@@ -30,6 +30,7 @@ if root_dir not in sys.path:
 
 from packages.core_resolve.resolve_adapter import resolve_adapter
 from packages.core_premiere.premiere_adapter import premiere_adapter
+from packages.core_edius.edius_adapter import edius_adapter
 from packages.hyperframes_engine.hyperframes_service import hyperframes_service
 from installer.connect_all_engine import ConnectAllEngine
 
@@ -573,18 +574,42 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                         premiere_adapter.open_timeline(xml_path)
                         _log(job_id, f"  🚀 Sent to Adobe Premiere Pro: {os.path.basename(xml_path)}", "info")
 
+        # 7. Build timelines for Grass Valley EDIUS (Windows FCP XML)
+        created_edius = []
+        if target_nle in ("edius", "both"):
+            _log(job_id, "Generating EDIUS-compatible FCP XML sequences...", "info")
+            edius_dir = os.path.join(OUTPUT_DIR, "edius_timelines")
+            os.makedirs(edius_dir, exist_ok=True)
+            for p_key, p in plans.items():
+                seq_name = p.get("sequence_name") or f"EDIUS_{p_key}"
+                xml_out = os.path.join(edius_dir, f"{seq_name}_EDIUS.xml")
+                res = edius_adapter.export_plan_to_edius_xml(
+                    plan=p,
+                    output_xml_path=xml_out,
+                    audio_file_path=audio_path,
+                    sequence_name=seq_name,
+                    aspect_ratio=p.get("aspect_ratio", "16:9"),
+                    broll_clips=p.get("broll_clips")
+                )
+                if res.get("success"):
+                    created_edius.append(xml_out)
+                    _log(job_id, f"  🟡 EDIUS Timeline Exported: {os.path.basename(xml_out)} ({res.get('clip_count', 0)} clips)", "info")
+
         _progress(job_id, 100)
         summary = []
         if created_resolve:
             summary.append(f"{len(created_resolve)} in DaVinci Resolve")
         if created_premiere:
             summary.append(f"{len(created_premiere)} XMLs in Adobe Premiere Pro")
+        if created_edius:
+            summary.append(f"{len(created_edius)} XMLs for Grass Valley EDIUS")
         final_msg = f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready."
         _log(job_id, final_msg, "info")
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result={
                 "timelines_created": created_resolve,
                 "premiere_xmls": created_premiere,
+                "edius_xmls": created_edius,
                 "plan_file": plan_file,
                 "plans": plans
             })
@@ -716,6 +741,44 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/premiere/organize-bins":
             self._json(premiere_adapter.organize_bins_automatically())
+
+        elif self.path == "/api/edius/status":
+            self._json(edius_adapter.get_status())
+
+        elif self.path == "/api/edius/launch":
+            self._json(edius_adapter.launch())
+
+        elif self.path == "/api/edius/export":
+            import glob
+            plans_found = glob.glob(os.path.join(OUTPUT_DIR, "*_plan_*.json"))
+            if not plans_found:
+                self._json({"success": False, "error": "Koi edit plan nahi mila. Pehle 'Start AI Trimming' run karein."})
+            else:
+                plans_found.sort(key=os.path.getmtime, reverse=True)
+                with open(plans_found[0], "r", encoding="utf-8") as f:
+                    pdata = json.load(f)
+                edius_dir = os.path.join(OUTPUT_DIR, "edius_timelines")
+                os.makedirs(edius_dir, exist_ok=True)
+                exported = []
+                for pk, pv in pdata.get("plans", {}).items():
+                    sname = pv.get("sequence_name") or f"EDIUS_{pk}"
+                    xout = os.path.join(edius_dir, f"{sname}_EDIUS.xml")
+                    r = edius_adapter.export_plan_to_edius_xml(
+                        plan=pv,
+                        output_xml_path=xout,
+                        audio_file_path=pdata.get("audio"),
+                        sequence_name=sname,
+                        aspect_ratio=pv.get("aspect_ratio", "16:9"),
+                        broll_clips=pv.get("broll_clips")
+                    )
+                    if r.get("success"):
+                        exported.append(xout)
+                self._json({
+                    "success": True,
+                    "message": f"{len(exported)} EDIUS XML timeline(s) export ho gayi!",
+                    "xmls": exported,
+                    "edius_dir": edius_dir
+                })
 
         elif self.path == "/api/browse":
             self._json(browse(data.get("kind", "folder"), data.get("prompt", "Select")))

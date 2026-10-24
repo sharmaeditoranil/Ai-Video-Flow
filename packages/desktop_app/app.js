@@ -519,9 +519,12 @@ document.addEventListener("DOMContentLoaded", () => {
     } else if (val === "premiere") {
       btnSendToNle.innerHTML = "🟣 Send to Premiere";
       btnSendToNle.title = "Launch or focus Adobe Premiere Pro";
+    } else if (val === "edius") {
+      btnSendToNle.innerHTML = "🟡 Send to EDIUS";
+      btnSendToNle.title = "Export & Open timeline in Grass Valley EDIUS";
     } else {
-      btnSendToNle.innerHTML = "⚡ Send to Both";
-      btnSendToNle.title = "Launch both DaVinci Resolve & Adobe Premiere Pro";
+      btnSendToNle.innerHTML = "⚡ Send to All NLEs";
+      btnSendToNle.title = "Export and send to DaVinci, Premiere & EDIUS";
     }
   }
 
@@ -550,12 +553,25 @@ document.addEventListener("DOMContentLoaded", () => {
           const res = await api("/api/premiere/launch", {});
           appendLog(res.message || (res.success ? "Premiere Pro ready." : res.error), res.success ? "info" : "warning", weddingConsole);
           await api("/api/open-folder", { path: "" });
+        } else if (val === "edius") {
+          appendLog("🟡 Exporting project & timeline for Grass Valley EDIUS...", "info", weddingConsole);
+          const res = await api("/api/edius/export", {});
+          if (res.success) {
+            appendLog(`✅ EDIUS: ${res.message}`, "info", weddingConsole);
+            (res.xmls || []).forEach(x => appendLog(`  • EDIUS XML: ${x.split("/").pop()}`, "info", weddingConsole));
+            appendLog("💡 Tip for EDIUS (Windows): Open EDIUS -> File -> Import Project -> FCP XML and select this file, or drag-and-drop the XML file directly into the EDIUS bin/timeline.", "info", weddingConsole);
+            await api("/api/open-folder", { path: res.edius_dir || "" });
+          } else {
+            appendLog(`⚠️ EDIUS note: ${res.error || res.message}`, "warning", weddingConsole);
+          }
         } else {
-          appendLog("⚡ Sending AI edit to DaVinci Resolve & Adobe Premiere Pro...", "info", weddingConsole);
+          appendLog("⚡ Sending AI edit to DaVinci Resolve, Premiere Pro & EDIUS...", "info", weddingConsole);
           const resRes = await api("/api/resolve/send", {});
           const resPrem = await api("/api/premiere/launch", {});
+          const resEdius = await api("/api/edius/export", {});
           appendLog(`DaVinci: ${resRes.message || resRes.error}`, resRes.success ? "info" : "warning", weddingConsole);
           appendLog(`Premiere: ${resPrem.message || resPrem.error}`, resPrem.success ? "info" : "warning", weddingConsole);
+          appendLog(`EDIUS: ${resEdius.message || resEdius.error}`, resEdius.success ? "info" : "warning", weddingConsole);
           await api("/api/open-folder", { path: "" });
         }
       } catch (e) {
@@ -618,6 +634,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const GROUPS = [
     ["resolve_", "DaVinci Resolve"],
     ["premiere_", "Adobe Premiere Pro"],
+    ["edius_", "Grass Valley EDIUS"],
     ["ai_", "AI Engine"],
     ["hyperframes_", "HyperFrames"]
   ];

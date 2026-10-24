@@ -830,6 +830,30 @@ MCP_TOOLS = [
             },
             "required": ["primary_clips", "all_analyzed_clips"]
         }
+    },
+    # 13. Grass Valley EDIUS Bridge Tools (Windows)
+    {
+        "name": "edius_get_status",
+        "description": "Checks Grass Valley EDIUS installation, versions (Pro 7/8/9/X/11), and Windows readiness.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "edius_launch",
+        "description": "Launches or brings Grass Valley EDIUS to the foreground on Windows.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "edius_export_timeline_xml",
+        "description": "Exports a complete cut sequence with A-Roll, B-Roll, and audio tracks into an authentic Apple FCP XML natively supported by Grass Valley EDIUS.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plan": {"type": "object", "description": "Story plan dictionary containing clips and metadata"},
+                "output_xml_path": {"type": "string", "description": "Destination path for the EDIUS-compatible XML file"},
+                "audio_file_path": {"type": "string", "description": "Optional background music audio file path"}
+            },
+            "required": ["plan", "output_xml_path"]
+        }
     }
 ]
 
@@ -1276,6 +1300,22 @@ def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
             primary_clips=arguments.get("primary_clips", []),
             all_analyzed_clips=arguments.get("all_analyzed_clips", []),
             target_track=int(arguments.get("target_track", 2))
+        )
+
+    elif tool_name == "edius_get_status":
+        from packages.core_edius.edius_adapter import edius_adapter
+        return edius_adapter.get_status()
+
+    elif tool_name == "edius_launch":
+        from packages.core_edius.edius_adapter import edius_adapter
+        return edius_adapter.launch()
+
+    elif tool_name == "edius_export_timeline_xml":
+        from packages.core_edius.edius_adapter import edius_adapter
+        return edius_adapter.export_plan_to_edius_xml(
+            plan=arguments.get("plan", {}),
+            output_xml_path=arguments.get("output_xml_path", ""),
+            audio_file_path=arguments.get("audio_file_path")
         )
 
     else:

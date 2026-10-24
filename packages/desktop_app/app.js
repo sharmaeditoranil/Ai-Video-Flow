@@ -465,6 +465,167 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // -------------------------------------------------------------
+  // SaaS Licensing & Tier Management
+  // -------------------------------------------------------------
+  const btnLicenseModal = document.getElementById("btn-license-modal");
+  const modalTierSelect = document.getElementById("modal-tier-select");
+  const modalLicenseManager = document.getElementById("modal-license-manager");
+  const btnCloseTierModal = document.getElementById("btn-close-tier-modal");
+  const btnCloseLicenseModal = document.getElementById("btn-close-license-modal");
+  const btnSelectFree = document.getElementById("btn-select-free");
+  const btnSelectPremium = document.getElementById("btn-select-premium");
+  const btnActivateLicense = document.getElementById("btn-activate-license");
+  const btnDeactivateLicense = document.getElementById("btn-deactivate-license");
+  const btnCopyMachineId = document.getElementById("btn-copy-machine-id");
+  const topbarPlanLabel = document.getElementById("topbar-plan-label");
+  const topbarPlanIcon = document.getElementById("topbar-plan-icon");
+  const badgeTierModalCredits = document.getElementById("badge-tier-modal-credits");
+  const licCardPlan = document.getElementById("lic-card-plan");
+  const licCardCredits = document.getElementById("lic-card-credits");
+  const licCardMachineId = document.getElementById("lic-card-machine-id");
+  const txtLicenseKey = document.getElementById("txt-license-key");
+  const txtLicenseEmail = document.getElementById("txt-license-email");
+
+  let currentLicenseState = { tier: "free", is_premium: false, credits_remaining: 0 };
+  let pendingRunParams = null;
+
+  async function updateLicenseDisplay() {
+    try {
+      const lic = await api("/api/license/status");
+      currentLicenseState = lic;
+      if (topbarPlanLabel) {
+        if (lic.is_premium) {
+          topbarPlanLabel.textContent = `👑 Plan: Pro (${lic.credits_remaining} Credits)`;
+          if (topbarPlanIcon) topbarPlanIcon.textContent = "👑";
+        } else {
+          topbarPlanLabel.textContent = "Plan: Free Edition";
+          if (topbarPlanIcon) topbarPlanIcon.textContent = "🟢";
+        }
+      }
+      if (badgeTierModalCredits) {
+        badgeTierModalCredits.textContent = `CREDITS: ${lic.credits_remaining || 0}`;
+      }
+      if (licCardPlan) licCardPlan.textContent = lic.tier_display || "Free Community Edition";
+      if (licCardCredits) licCardCredits.textContent = `${lic.credits_remaining || 0} Wedding Credits`;
+      if (licCardMachineId) licCardMachineId.textContent = lic.machine_id || "...";
+      if (txtLicenseKey && lic.license_key && lic.license_key !== "FREE-COMMUNITY-TIER") {
+        txtLicenseKey.value = lic.license_key;
+      }
+      if (txtLicenseEmail && lic.email) {
+        txtLicenseEmail.value = lic.email;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch license status", e);
+    }
+  }
+
+  // Fetch license on startup
+  updateLicenseDisplay();
+
+  if (btnLicenseModal) {
+    btnLicenseModal.addEventListener("click", () => {
+      updateLicenseDisplay();
+      if (modalLicenseManager) modalLicenseManager.style.display = "flex";
+    });
+  }
+
+  if (btnCloseTierModal) {
+    btnCloseTierModal.addEventListener("click", () => {
+      if (modalTierSelect) modalTierSelect.style.display = "none";
+    });
+  }
+
+  if (btnCloseLicenseModal) {
+    btnCloseLicenseModal.addEventListener("click", () => {
+      if (modalLicenseManager) modalLicenseManager.style.display = "none";
+    });
+  }
+
+  if (btnCopyMachineId) {
+    btnCopyMachineId.addEventListener("click", () => {
+      const mid = licCardMachineId ? licCardMachineId.textContent : "";
+      if (mid && mid !== "...") {
+        navigator.clipboard.writeText(mid);
+        btnCopyMachineId.textContent = "Copied!";
+        setTimeout(() => { btnCopyMachineId.textContent = "Copy"; }, 2000);
+      }
+    });
+  }
+
+  if (btnActivateLicense) {
+    btnActivateLicense.addEventListener("click", async () => {
+      const key = (txtLicenseKey ? txtLicenseKey.value : "").trim();
+      const email = (txtLicenseEmail ? txtLicenseEmail.value : "").trim();
+      if (!key) return alert("Please enter your License Key.");
+      btnActivateLicense.disabled = true;
+      btnActivateLicense.textContent = "Verifying...";
+      try {
+        const res = await api("/api/license/activate", { license_key: key, email: email });
+        if (res.success) {
+          alert(`✅ ${res.message}`);
+          await updateLicenseDisplay();
+          if (modalLicenseManager) modalLicenseManager.style.display = "none";
+        } else {
+          alert(`❌ Activation Failed: ${res.error || "Invalid key"}`);
+        }
+      } catch (e) {
+        alert("Activation error: " + e);
+      } finally {
+        btnActivateLicense.disabled = false;
+        btnActivateLicense.textContent = "🔑 Activate License Key";
+      }
+    });
+  }
+
+  if (btnDeactivateLicense) {
+    btnDeactivateLicense.addEventListener("click", async () => {
+      if (!confirm("Deactivate this license and switch back to Free Local Edition?")) return;
+      const res = await api("/api/license/deactivate");
+      alert(res.message || "License deactivated.");
+      await updateLicenseDisplay();
+      if (modalLicenseManager) modalLicenseManager.style.display = "none";
+    });
+  }
+
+  async function executeWeddingProcessing(tier) {
+    if (!pendingRunParams) return;
+    if (modalTierSelect) modalTierSelect.style.display = "none";
+
+    const params = { ...pendingRunParams, tier: tier };
+    btnRunWedding.disabled = true;
+    progress.classList.add("active");
+    const bar = progress.querySelector(".progress-bar");
+    bar.style.width = "0%";
+
+    try {
+      const { job_id } = await api("/api/run-wedding", params);
+      await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
+      fetchStatus();
+      updateLicenseDisplay();
+    } catch (e) {
+      appendLog("Job error: " + e, "error", weddingConsole);
+    } finally {
+      btnRunWedding.disabled = false;
+    }
+  }
+
+  if (btnSelectFree) {
+    btnSelectFree.addEventListener("click", () => executeWeddingProcessing("free"));
+  }
+
+  if (btnSelectPremium) {
+    btnSelectPremium.addEventListener("click", () => {
+      if (!currentLicenseState.is_premium || currentLicenseState.credits_remaining <= 0) {
+        alert("⚠️ You need active Wedding Credits or a Pro License for AI Smart Premium.\n\nPlease activate your license key or purchase credits on our website.");
+        if (modalTierSelect) modalTierSelect.style.display = "none";
+        if (modalLicenseManager) modalLicenseManager.style.display = "flex";
+        return;
+      }
+      executeWeddingProcessing("premium");
+    });
+  }
+
   if (btnRunWedding) {
     btnRunWedding.addEventListener("click", async () => {
       if (!loadedFolder || loadedFolder !== folderInput.value.trim()) {
@@ -482,27 +643,19 @@ document.addEventListener("DOMContentLoaded", () => {
       const instructions = inputEditPrompt ? inputEditPrompt.value.trim() : "";
 
       store.set("avf.audio", audioInput.value.trim());
-      btnRunWedding.disabled = true;
-      progress.classList.add("active");
-      const bar = progress.querySelector(".progress-bar");
-      bar.style.width = "0%";
-      try {
-        const { job_id } = await api("/api/run-wedding", {
-          folder: loadedFolder,
-          audio: audioInput.value.trim(),
-          formats,
-          target_nle,
-          mode: currentWorkflowMode,
-          ref_video,
-          instructions
-        });
-        await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
-        fetchStatus();
-      } catch (e) {
-        appendLog("Backend not reachable.", "error");
-      } finally {
-        btnRunWedding.disabled = false;
-      }
+
+      pendingRunParams = {
+        folder: loadedFolder,
+        audio: audioInput.value.trim(),
+        formats,
+        target_nle,
+        mode: currentWorkflowMode,
+        ref_video,
+        instructions
+      };
+
+      await updateLicenseDisplay();
+      if (modalTierSelect) modalTierSelect.style.display = "flex";
     });
   }
 

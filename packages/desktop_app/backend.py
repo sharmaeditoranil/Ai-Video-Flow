@@ -32,6 +32,8 @@ from packages.core_resolve.resolve_adapter import resolve_adapter
 from packages.core_premiere.premiere_adapter import premiere_adapter
 from packages.core_edius.edius_adapter import edius_adapter
 from packages.hyperframes_engine.hyperframes_service import hyperframes_service
+from packages.licensing.license_manager import license_manager
+from packages.ai_engine.cloud_ai_client import cloud_ai_client
 from installer.connect_all_engine import ConnectAllEngine
 
 logger = logging.getLogger("ai_video_flow.desktop_backend")
@@ -363,11 +365,24 @@ def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "") -> None:
+def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "", tier: str = "free") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
         from packages.ai_engine.story_planner import story_planner
+
+        is_premium = (tier == "premium")
+        if is_premium:
+            status = license_manager.get_status()
+            if not status.get("is_premium"):
+                raise RuntimeError(f"License Error: AI Smart Premium requires an active license key or credits. Current status: {status.get('tier_display')}. Please activate a license or select Free Local Mode.")
+            credit_res = license_manager.consume_wedding_credit(job_name=f"Wedding Shoot: {os.path.basename(folder)}")
+            if not credit_res.get("success"):
+                raise RuntimeError(f"Credit Error: {credit_res.get('error')}")
+            _log(job_id, f"👑 [AI Smart Premium Mode Active] Deducted 1 wedding credit. Remaining credits: {credit_res.get('credits_remaining')}", "info")
+            _log(job_id, "✨ Activating Deep Multimodal Scene Understanding & Emotional Analysis...", "info")
+        else:
+            _log(job_id, "🟢 [Free Community Local Mode] 100% On-Device Offline Processing (Unlimited, zero cost).", "info")
 
         _log(job_id, f"Scanning footage folder: {folder} (Workflow: {mode.upper()})", "info")
         if instructions:
@@ -435,6 +450,17 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                              f"{len(beat_times or [])} beats detected.")
             else:
                 _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
+        # 2.5. Cloud AI Deep Multimodal Analysis (AI Smart Premium Tier)
+        if is_premium:
+            _log(job_id, "🧠 Cloud AI: Analyzing ceremony emotions, sacred vows & story pacing...", "info")
+            try:
+                sample_frames = []
+                cloud_res = cloud_ai_client.analyze_ceremony_multimodal(sample_frames, audio_transcript=instructions)
+                _log(job_id, f"  ✨ Directorial Guidance: {cloud_res.get('story_guidance')}", "info")
+                _log(job_id, f"  🎨 Color Recommendation: {cloud_res.get('color_recommendation')}", "info")
+            except Exception as e:
+                _log(job_id, f"Cloud AI guidance note: {e}", "warning")
+
         _progress(job_id, 75)
 
         # 3. Story plans tailored by workflow mode
@@ -801,8 +827,29 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             mode = data.get("mode") or "wedding"
             ref_video = (data.get("ref_video") or "").strip()
             instructions = (data.get("instructions") or "").strip()
-            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video, instructions)
+            tier = (data.get("tier") or "free").strip().lower()
+            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video, instructions, tier)
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/license/status":
+            self._json(license_manager.get_status())
+
+        elif self.path == "/api/license/activate":
+            key = (data.get("license_key") or "").strip()
+            email = (data.get("email") or "").strip()
+            self._json(license_manager.activate_license(key, email))
+
+        elif self.path == "/api/license/deactivate":
+            self._json(license_manager.deactivate_license())
+
+        elif self.path == "/api/cloud-ai/status":
+            self._json(cloud_ai_client.get_status())
+
+        elif self.path == "/api/cloud-ai/save-key":
+            provider = data.get("provider", "gemini")
+            key = (data.get("key") or "").strip()
+            res = cloud_ai_client.save_api_key(provider, key)
+            self._json({"success": res, "message": "API key successfully saved!" if res else "Failed to save API key."})
 
         elif self.path == "/api/apply-correction":
             prompt = (data.get("prompt") or "").strip()

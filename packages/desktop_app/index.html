@@ -77,7 +77,10 @@
           </div>
         </div>
 
-        <div class="topbar-actions">
+        <div class="topbar-actions" style="display:flex;align-items:center;gap:12px;">
+          <button class="btn btn-license" id="btn-license-modal" style="background:linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(168, 85, 247, 0.15));border:1px solid #eab308;color:#fde047;font-weight:700;padding:6px 14px;border-radius:20px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;" title="Manage SaaS License & Credits">
+            <span id="topbar-plan-icon">👑</span> <span id="topbar-plan-label">Plan: Free Edition</span>
+          </button>
           <button class="btn btn-primary" id="btn-connect-all">
             <span class="icon">🚀</span> CONNECT ALL
           </button>
@@ -573,6 +576,119 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Modal 1: Processing Tier Selection Popup (Free Local vs AI Smart Premium) -->
+  <div class="modal-backdrop" id="modal-tier-select" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;backdrop-filter:blur(8px);align-items:center;justify-content:center;">
+    <div class="modal-card" style="background:#121826;border:1px solid #334155;border-radius:18px;max-width:760px;width:92%;padding:28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.85);position:relative;">
+      <button class="modal-close" id="btn-close-tier-modal" style="position:absolute;top:16px;right:18px;background:none;border:none;color:#94a3b8;font-size:24px;cursor:pointer;">&times;</button>
+      
+      <div style="text-align:center;margin-bottom:24px;">
+        <h2 style="font-size:22px;margin:0 0 8px 0;background:linear-gradient(135deg, #fff, #94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Choose Your AI Processing Tier</h2>
+        <p style="color:#94a3b8;font-size:13px;margin:0;">Select between 100% Free Local processing or AI Smart Premium (Deep Multimodal Intelligence).</p>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <!-- Card 1: Free Local -->
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:22px;display:flex;flex-direction:column;justify-content:space-between;">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <span style="font-size:16px;font-weight:700;color:#38bdf8;">🟢 Free Community</span>
+              <span style="background:#0284c7;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">LOCAL OFFLINE</span>
+            </div>
+            <p style="font-size:12px;color:#94a3b8;margin:0 0 14px 0;line-height:1.4;">Zero cost, fast, runs completely on your computer without internet.</p>
+            <ul style="font-size:12px;color:#cbd5e1;padding-left:18px;margin:0 0 20px 0;line-height:1.9;">
+              <li>⚡ 100% On-Device Computer Vision</li>
+              <li>🔒 Zero upload bandwidth &amp; 100% private</li>
+              <li>✂️ In-Clip Blur &amp; Camera Shake Trimmer</li>
+              <li>🎵 Local FFT Music Beat Synchronization</li>
+              <li>🎞️ Export to DaVinci, Premiere &amp; EDIUS</li>
+              <li>♾️ Unlimited offline use forever</li>
+            </ul>
+          </div>
+          <button class="btn btn-secondary btn-block" id="btn-select-free" style="padding:12px;font-weight:700;border:1px solid #0284c7;color:#38bdf8;cursor:pointer;">
+            🚀 Start Free Processing
+          </button>
+        </div>
+
+        <!-- Card 2: AI Smart Premium -->
+        <div style="background:linear-gradient(145deg, #1e1b4b, #1e293b);border:1px solid #eab308;border-radius:14px;padding:22px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 0 25px rgba(234, 179, 8, 0.15);">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <span style="font-size:16px;font-weight:700;color:#fde047;">👑 AI Smart Premium</span>
+              <span id="badge-tier-modal-credits" style="background:#eab308;color:#000;font-size:10px;font-weight:800;padding:3px 8px;border-radius:10px;">CREDITS: 0</span>
+            </div>
+            <p style="font-size:12px;color:#cbd5e1;margin:0 0 14px 0;line-height:1.4;">Studio-grade Deep Multimodal Cloud AI for high-budget cinematic films.</p>
+            <ul style="font-size:12px;color:#fef08a;padding-left:18px;margin:0 0 20px 0;line-height:1.9;">
+              <li>🧠 Google Gemini Vision &amp; GPT-4o Multimodal</li>
+              <li>🎭 Emotional Peaks &amp; Facial Expressions (Joy/Tears)</li>
+              <li>🎙️ Speech-to-Text Ceremony Vows &amp; Mantras</li>
+              <li>🎨 Reference Reel 100% Pacing &amp; 3D LUT Tone</li>
+              <li>💳 Deducts 1 Wedding Credit per full shoot</li>
+            </ul>
+          </div>
+          <button class="btn btn-primary btn-block" id="btn-select-premium" style="padding:12px;font-weight:700;background:linear-gradient(135deg, #eab308, #ca8a04);color:#000;cursor:pointer;">
+            ✨ Start AI Smart Premium
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: SaaS License & Credits Manager -->
+  <div class="modal-backdrop" id="modal-license-manager" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;backdrop-filter:blur(8px);align-items:center;justify-content:center;">
+    <div class="modal-card" style="background:#121826;border:1px solid #334155;border-radius:18px;max-width:560px;width:92%;padding:26px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.85);position:relative;">
+      <button class="modal-close" id="btn-close-license-modal" style="position:absolute;top:16px;right:18px;background:none;border:none;color:#94a3b8;font-size:24px;cursor:pointer;">&times;</button>
+      
+      <div style="margin-bottom:20px;">
+        <h2 style="font-size:20px;margin:0 0 6px 0;color:#fde047;">👑 SaaS License &amp; Wedding Credits</h2>
+        <p style="color:#94a3b8;font-size:12px;margin:0;">Manage your AI Video Flow subscription and per-wedding credits safely.</p>
+      </div>
+
+      <!-- Current Status Card -->
+      <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px;margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+          <span style="color:#94a3b8;font-size:12px;">Active Plan:</span>
+          <strong id="lic-card-plan" style="color:#fde047;font-size:13px;">Free Community Edition</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+          <span style="color:#94a3b8;font-size:12px;">Remaining Wedding Credits:</span>
+          <strong id="lic-card-credits" style="color:#38bdf8;font-size:13px;">0 Credits</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#94a3b8;font-size:12px;">Machine Hardware ID:</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <code id="lic-card-machine-id" style="font-size:11px;background:#0f172a;padding:3px 8px;border-radius:4px;color:#a5f3fc;font-family:monospace;">...</code>
+            <button class="btn btn-secondary" id="btn-copy-machine-id" style="padding:3px 8px;font-size:10px;cursor:pointer;">Copy</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activation Form -->
+      <div class="form-group" style="margin-bottom:14px;">
+        <label style="font-size:12px;color:#e2e8f0;display:block;margin-bottom:6px;">License Key (from your website purchase)</label>
+        <input type="text" class="text-input" id="txt-license-key" placeholder="e.g. AIFLOW-PREM-50-XXXX-XXXX" style="width:100%;box-sizing:border-box;">
+      </div>
+      <div class="form-group" style="margin-bottom:18px;">
+        <label style="font-size:12px;color:#e2e8f0;display:block;margin-bottom:6px;">Registered Email (Optional)</label>
+        <input type="email" class="text-input" id="txt-license-email" placeholder="client@example.com" style="width:100%;box-sizing:border-box;">
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:18px;">
+        <button class="btn btn-primary" id="btn-activate-license" style="flex:2;padding:12px;font-weight:700;cursor:pointer;">
+          🔑 Activate License Key
+        </button>
+        <button class="btn btn-secondary" id="btn-deactivate-license" style="flex:1;padding:12px;font-size:12px;color:#ef4444;cursor:pointer;">
+          Deactivate
+        </button>
+      </div>
+
+      <div style="text-align:center;padding-top:14px;border-top:1px solid #334155;">
+        <a href="https://quickartphotography.in/master-class/" target="_blank" class="btn btn-secondary" style="display:inline-block;padding:8px 18px;font-size:12px;color:#fde047;border:1px solid #eab308;text-decoration:none;">
+          🛒 Buy Wedding Credits &amp; Plans on Website →
+        </a>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

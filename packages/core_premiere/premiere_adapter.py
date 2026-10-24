@@ -211,13 +211,17 @@ class PremiereAdapter:
             return {"success": False, "error": "The Premiere bridge package is missing from this app build."}
         try:
             with zipfile.ZipFile(BRIDGE_ZXP) as z:
-                signature = z.read("META-INF/signatures.xml")
-                try:
-                    with open(os.path.join(target, "META-INF", "signatures.xml"), "rb") as f:
-                        if f.read() == signature:
-                            return {"success": True, "changed": False, "path": target}
-                except OSError:
-                    pass
+                # Same bridge code already installed (each build re-signs it): keep it, so an app update
+                # does not ask for another Premiere restart
+                def same(name: str) -> bool:
+                    try:
+                        with open(os.path.join(target, name), "rb") as f:
+                            return f.read() == z.read(name)
+                    except OSError:
+                        return False
+                code = [n for n in z.namelist() if not n.endswith("/") and not n.startswith("META-INF/")]
+                if os.path.isfile(os.path.join(target, "META-INF", "signatures.xml")) and all(same(n) for n in code):
+                    return {"success": True, "changed": False, "path": target}
                 shutil.rmtree(target, ignore_errors=True)  # a stale file would break the signature check
                 z.extractall(target)
             return {"success": True, "changed": True, "path": target}
@@ -502,8 +506,10 @@ class PremiereAdapter:
     def open_timeline(self, xml_path: str) -> Dict[str, Any]:
         return self.open_timelines([xml_path])
 
-    def open_timelines(self, xml_paths: List[str], project_name: str = "", project_dir: str = "") -> Dict[str, Any]:
-        """Creates a new Premiere Pro project and imports the XML timelines into it (works in Premiere 2022+)."""
+    def open_timelines(self, xml_paths: List[str], project_name: str = "", project_dir: str = "",
+                       on_wait: Optional[Any] = None) -> Dict[str, Any]:
+        """Creates a new Premiere Pro project and imports the XML timelines into it (works in Premiere 2022+).
+        `on_wait(message)` is told when the editor has to restart Premiere; this then waits for it."""
         xml_paths = [os.path.abspath(p) for p in xml_paths if p and os.path.isfile(p)]
         if not xml_paths:
             return {"success": False, "error": "Timeline file not found."}
@@ -514,13 +520,18 @@ class PremiereAdapter:
         if not installed.get("success"):
             return installed
         was_running = self.is_running()
-        if was_running and installed.get("changed") and not self.bridge_alive():
-            return {"success": False, "restart_needed": True,
-                    "error": "AI Video Flow bridge installed. Close and reopen Premiere Pro once, then press 'Send again'."}
-        if not was_running:
+        wait = 10.0
+        if was_running and not self.bridge_alive():
+            # Premiere was opened before the bridge was installed: it loads the bridge on its next start
+            message = "Close Premiere Pro (save your work) and open it again - needed only once for AI Video Flow."
+            if not on_wait:
+                return {"success": False, "restart_needed": True, "error": message + " Then press 'Send again'."}
+            on_wait(message + " The timelines are sent as soon as Premiere is back.")
+            wait = 300.0
+        elif not was_running:
             self.launch()
-        # Wait for Premiere to start and the bridge to check in (Premiere can take a minute to open)
-        deadline = time.time() + (150 if not was_running else 10)
+            wait = 150.0  # Premiere can take a minute or two to open
+        deadline = time.time() + wait
         while not self.bridge_alive() and time.time() < deadline:
             time.sleep(1)
         if not self.bridge_alive():

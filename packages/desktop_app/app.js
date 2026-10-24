@@ -516,8 +516,9 @@
         if (r.success) api("/api/open-folder", { path: r.edius_dir || "" });
       }
       if (nle === "premiere" || nle === "both") {
-        const r = await api("/api/premiere/launch", {});
-        log(consoleBox, (r.message || r.error || "Premiere Pro opened.") + " Import the XML from the output folder.", r.success ? "info" : "warning");
+        log(consoleBox, "Sending the last timelines to Premiere Pro as a new project (it opens if it is closed)…", "info");
+        const r = await api("/api/premiere/send", {});
+        log(consoleBox, r.success ? r.message : r.error, r.success ? "info" : "warning");
       }
     } catch (e) {
       log(consoleBox, e.message, "error");
@@ -746,7 +747,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.6 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.7 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

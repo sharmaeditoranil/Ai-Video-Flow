@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.6"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.7"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -563,9 +563,12 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
                 created_premiere.append(xml_path)
                 _add_voiceover_xml(job_id, p, xml_path)
                 _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} ({res.get('clip_count', 0)} clips)", "info")
+        if created_premiere:
+            _save_last_premiere(created_premiere, project_name)
         if created_premiere and (target_nle == "premiere" or premiere_adapter.is_running()):
             _log(job_id, "Creating the Premiere Pro project (Premiere opens if it is closed - this can take a minute)…", "info")
-            opened = premiere_adapter.open_timelines(created_premiere, project_name=project_name or "AI_Video_Flow")
+            opened = premiere_adapter.open_timelines(created_premiere, project_name=project_name or "AI_Video_Flow",
+                                                     on_wait=lambda msg: _log(job_id, "  ⏳ " + msg, "warning"))
             if opened.get("success"):
                 _log(job_id, f"  🚀 {opened['message']}", "info")
             else:
@@ -599,6 +602,27 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
         summary.append(f"{len(created_edius)} XMLs for Grass Valley EDIUS")
     _log(job_id, f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready.", "info")
     return {"timelines_created": created_resolve, "premiere_xmls": created_premiere, "edius_xmls": created_edius, "plans": plans}
+
+
+LAST_PREMIERE = "last_premiere.json"
+
+
+def _save_last_premiere(xmls: List[str], project_name: str) -> None:
+    try:
+        with open(os.path.join(OUTPUT_DIR, LAST_PREMIERE), "w", encoding="utf-8") as f:
+            json.dump({"xmls": xmls, "project_name": project_name}, f)
+    except OSError:
+        pass
+
+
+def send_to_premiere() -> Dict[str, Any]:
+    """'Send again': the last job's timelines as a new Premiere Pro project."""
+    try:
+        with open(os.path.join(OUTPUT_DIR, LAST_PREMIERE), encoding="utf-8") as f:
+            last = json.load(f)
+    except (OSError, ValueError):
+        return {"success": False, "error": "No Premiere Pro timelines yet. Build timelines with Premiere Pro selected first."}
+    return premiere_adapter.open_timelines(last.get("xmls") or [], project_name=last.get("project_name") or "AI_Video_Flow")
 
 
 def _add_voiceover_xml(job_id: str, plan: Dict[str, Any], xml_path: str) -> None:
@@ -1434,6 +1458,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/resolve/organize-bins":
             self._json(resolve_adapter.organize_bins_automatically())
 
+        elif self.path == "/api/premiere/send":
+            self._json(send_to_premiere())
+
         elif self.path == "/api/premiere/launch":
             self._json(premiere_adapter.launch())
 
@@ -1595,6 +1622,8 @@ def start_server(port: int = 5678, token: Optional[str] = None):
     ALLOWED_HOSTS.update({f"127.0.0.1:{port}", f"localhost:{port}"})
     server = ThreadingHTTPServer(("127.0.0.1", port), AppRequestHandler)
     threading.Thread(target=fetch_plans, daemon=True).start()  # latest prices / free limit from the admin portal
+    if premiere_adapter.get_status().get("installed"):  # ready before the first export, so Premiere loads it on its next start
+        threading.Thread(target=premiere_adapter.install_bridge, daemon=True).start()
     logger.info(f"AI Video Flow desktop backend running on http://127.0.0.1:{port}")
     try:
         server.serve_forever()

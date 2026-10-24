@@ -468,3 +468,116 @@ body {
 .prompt-action code {
   color: #c084fc;
 }
+
+/* Folder loading, progress, tools & diagnostics */
+.folder-info {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.folder-info.ok { color: var(--success); }
+.folder-info.err { color: var(--danger); }
+
+.folder-info ul {
+  margin: 6px 0 0 18px;
+  max-height: 110px;
+  overflow-y: auto;
+  color: var(--text-muted);
+}
+
+.console-line.warning { color: var(--warning); }
+.console-line.error { color: var(--danger); }
+
+.progress {
+  height: 6px;
+  margin-top: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  display: none;
+}
+
+.progress.active { display: block; }
+
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--primary), var(--accent-cyan));
+  transition: width 0.3s ease;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.text-input,
+#tool-form input,
+#tool-form select,
+#tool-form textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+#tool-form .input-action input { flex: 1; width: auto; }
+
+#tool-form input[type="checkbox"] { width: auto; }
+
+.tool-list {
+  max-height: 520px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-item {
+  text-align: left;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text-main);
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.tool-item:hover,
+.tool-item.active {
+  border-color: var(--border-hover);
+  background: rgba(121, 40, 202, 0.15);
+}
+
+.tool-group {
+  margin: 10px 0 2px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.muted { color: var(--text-muted); font-size: 0.85rem; }
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.diag-grid pre {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-muted);
+}

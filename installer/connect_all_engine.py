@@ -89,12 +89,14 @@ class ConnectAllEngine:
             os.makedirs(app_dir, exist_ok=True)
             workspace_packages = os.path.join(self.project_root, "packages")
             target_packages = os.path.join(app_dir, "packages")
-            try:
-                if os.path.exists(target_packages):
-                    shutil.rmtree(target_packages)
-                shutil.copytree(workspace_packages, target_packages)
-            except Exception as e:
-                logger.warning(f"Failed to sync packages to ~/.ai-video-flow: {e}")
+            # Skip when already running from ~/.ai-video-flow/app (source == target would delete itself)
+            if os.path.realpath(workspace_packages) != os.path.realpath(target_packages):
+                try:
+                    if os.path.exists(target_packages):
+                        shutil.rmtree(target_packages)
+                    shutil.copytree(workspace_packages, target_packages)
+                except Exception as e:
+                    logger.warning(f"Failed to sync packages to ~/.ai-video-flow: {e}")
 
             server_script = os.path.join(app_dir, "packages", "mcp_server", "server.py")
             python_exec = os.path.expanduser("~/.ai-video-flow/venv/bin/python")
@@ -123,6 +125,25 @@ class ConnectAllEngine:
 
         results["success"] = registration_success
         return results
+
+    def check_status(self, server_name: str = "ai-video-flow-resolve") -> Dict[str, Any]:
+        """Read-only status for dashboard polling (never rewrites Claude config)."""
+        configured = False
+        try:
+            with open(self.claude_config_path, "r", encoding="utf-8") as f:
+                configured = server_name in (json.load(f).get("mcpServers") or {})
+        except Exception:
+            pass
+        claude_dir = os.path.dirname(self.claude_config_path)
+        resolve_installed, _ = self._detect_resolve_installed()
+        return {
+            "claude_desktop": {
+                "installed": os.path.exists(claude_dir),
+                "configured": configured,
+                "config_path": self.claude_config_path
+            },
+            "davinci_resolve": {"installed": resolve_installed}
+        }
 
     def _detect_resolve_installed(self) -> (bool, list):
         """Checks default installation paths for DaVinci Resolve."""

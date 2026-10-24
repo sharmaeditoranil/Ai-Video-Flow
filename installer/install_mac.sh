@@ -23,10 +23,11 @@ VENV_DIR="$HOME/.ai-video-flow/venv"
 
 echo "[2/4] Setting up isolated AI Video Flow runtime in $HOME/.ai-video-flow..."
 mkdir -p "$APP_DIR"
-rm -rf "$APP_DIR/packages" "$APP_DIR/installer" "$APP_DIR/requirements.txt"
+rm -rf "$APP_DIR/packages" "$APP_DIR/installer" "$APP_DIR/assets" "$APP_DIR/requirements.txt" "$APP_DIR/launch_app.py"
 cp -R packages "$APP_DIR/"
 cp -R installer "$APP_DIR/"
-cp requirements.txt "$APP_DIR/"
+cp -R assets "$APP_DIR/"
+cp requirements.txt launch_app.py "$APP_DIR/"
 
 if [ ! -d "$VENV_DIR" ]; then
     "$PY_BIN" -m venv "$VENV_DIR"

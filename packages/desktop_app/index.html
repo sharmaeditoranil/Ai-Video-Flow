@@ -32,6 +32,9 @@
         <button class="nav-item" data-tab="wedding">
           <span class="icon">💍</span> Wedding AI Engine
         </button>
+        <button class="nav-item" data-tab="tools">
+          <span class="icon">🧰</span> All AI Tools
+        </button>
         <button class="nav-item" data-tab="commands">
           <span class="icon">💬</span> Claude AI Assistant
         </button>
@@ -161,16 +164,18 @@
             <div class="form-group">
               <label>Wedding Raw Clips Folder</label>
               <div class="input-action">
-                <input type="text" id="input-folder-path" placeholder="/Volumes/HardDrive/Wedding_Shoot_Rohit" value="/Volumes/Wedding_Sample_Footage">
-                <button class="btn btn-secondary">Browse</button>
+                <input type="text" id="input-folder-path" placeholder="/Volumes/HardDrive/Wedding_Shoot_Rohit">
+                <button class="btn btn-secondary" id="btn-browse-folder">Browse</button>
+                <button class="btn btn-secondary" id="btn-load-folder">Load</button>
               </div>
+              <div class="folder-info" id="folder-info">Select or paste the folder containing your raw clips, then press Load.</div>
             </div>
 
             <div class="form-group">
               <label>Background Wedding Song (MP3 / WAV)</label>
               <div class="input-action">
-                <input type="text" id="input-audio-path" placeholder="song.mp3" value="/Music/wedding_cinematic_song.mp3">
-                <button class="btn btn-secondary">Browse</button>
+                <input type="text" id="input-audio-path" placeholder="Optional: /Music/wedding_song.mp3">
+                <button class="btn btn-secondary" id="btn-browse-audio">Browse</button>
               </div>
             </div>
 
@@ -186,18 +191,56 @@
             <button class="btn btn-primary btn-block" id="btn-run-wedding-ai">
               ✨ Start AI In-Clip Trimming & Build Timelines
             </button>
+            <div class="progress" id="wedding-progress"><div class="progress-bar"></div></div>
+            <button class="btn btn-secondary btn-block" id="btn-open-output" style="margin-top:12px">📂 Open Output Folder</button>
           </div>
 
           <div class="panel-box">
             <h3>2. Live Processing Output</h3>
             <div class="console-box" id="wedding-console">
               <div class="console-line info">[System] Ready to process raw wedding clips.</div>
-              <div class="console-line">[1] Optical Flow Camera Shake Detector: Initialized</div>
-              <div class="console-line">[2] Laplacian Sharpness & Blur Filter: Initialized</div>
-              <div class="console-line">[3] Librosa Music Beat Grid Analyzer: Ready</div>
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- Tab: All AI Tools (every MCP function, runnable directly) -->
+      <section class="tab-pane" id="pane-tools">
+        <div class="section-header">
+          <h2>🧰 All AI Tools</h2>
+          <p>Every function Claude Desktop can use, runnable directly from here. Pick a tool, fill the fields and press Run.</p>
+        </div>
+
+        <div class="workflow-grid">
+          <div class="panel-box">
+            <div class="form-group">
+              <label>Search Tools</label>
+              <input type="text" class="text-input" id="tool-search" placeholder="e.g. lut, timeline, audio, lecture">
+            </div>
+            <div class="tool-list" id="tool-list"><div class="muted">Loading tools...</div></div>
+          </div>
+
+          <div class="panel-box">
+            <h3 id="tool-title">Select a tool</h3>
+            <p class="card-desc" id="tool-desc"></p>
+            <form id="tool-form"></form>
+            <button class="btn btn-primary btn-block" id="btn-run-tool" disabled>▶ Run Tool</button>
+            <div class="console-box" id="tool-output" style="margin-top:16px"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: Diagnostics -->
+      <section class="tab-pane" id="pane-diagnostics">
+        <div class="section-header">
+          <h2>🔍 Diagnostics & Status</h2>
+          <p>Environment, installed AI libraries, DaVinci Resolve and Claude Desktop connection details.</p>
+        </div>
+        <div class="cta-group" style="margin-bottom:16px">
+          <button class="btn btn-secondary" id="btn-refresh-diag">🔄 Refresh</button>
+          <button class="btn btn-primary" id="btn-diag-connect">🚀 Re-run CONNECT ALL</button>
+        </div>
+        <div class="diag-grid" id="diag-grid"><div class="muted">Loading diagnostics...</div></div>
       </section>
 
       <!-- Tab: Claude Assistant & Natural Language -->

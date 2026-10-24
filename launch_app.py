@@ -70,6 +70,13 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"Backend Server: {APP_URL}")
 
+    # Already running (app opened twice): just bring up another window
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("127.0.0.1", PORT)) == 0:
+            open_app_window()
+            sys.exit(0)
+
     # Start backend server in a daemon thread
     server_thread = threading.Thread(target=start_backend, daemon=True)
     server_thread.start()

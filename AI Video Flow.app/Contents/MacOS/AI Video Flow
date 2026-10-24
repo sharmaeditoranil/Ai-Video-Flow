@@ -1,5 +1,16 @@
 #!/bin/bash
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../.." && pwd )"
+BUNDLE_PARENT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../.." && pwd )"
+INSTALLED_DIR="$HOME/.ai-video-flow/app"
+
+# Prefer the installed runtime; fall back to the folder next to the .app (developer checkout)
+if [ -f "$INSTALLED_DIR/launch_app.py" ]; then
+    DIR="$INSTALLED_DIR"
+elif [ -f "$BUNDLE_PARENT/launch_app.py" ]; then
+    DIR="$BUNDLE_PARENT"
+else
+    osascript -e 'display alert "AI Video Flow is not installed" message "Please open the AI Video Flow folder and double-click AI-Video-Flow-Setup-Mac.command first."'
+    exit 1
+fi
 cd "$DIR"
 
 # Preferred python environment
@@ -12,4 +23,5 @@ else
     exit 1
 fi
 
-"$PY" "$DIR/launch_app.py"
+mkdir -p "$HOME/.ai-video-flow"
+exec "$PY" "$DIR/launch_app.py" >> "$HOME/.ai-video-flow/app.log" 2>&1

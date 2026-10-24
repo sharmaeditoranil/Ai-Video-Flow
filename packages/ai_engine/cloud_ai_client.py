@@ -1,159 +1,194 @@
 """
-AI Video Flow - Cloud AI Client (AI Smart Premium Tier)
-Provides deep multimodal intelligence using Google Gemini Vision, OpenAI GPT-4o,
-or Anthropic Claude APIs for advanced scene understanding, emotional scoring,
-speech-to-text ceremony vows synchronization, and masterclass directorial feedback.
+AI Video Flow - Claude client (AI Smart Premium)
+
+All requests go to the license server's Claude relay (<server>/api/v1/ai). The app authenticates with
+its license key + machine id; the server checks the license, applies the admin's model and limits,
+and adds the real Anthropic API key. No API key is ever stored on the customer's computer.
 """
 
 import os
 import json
 import base64
 import logging
-import urllib.request
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Callable, Optional
+
+import anthropic
+
+from packages.licensing.license_manager import license_manager
 
 logger = logging.getLogger("ai_video_flow.cloud_ai")
 
-_CONFIG_DIR = os.path.expanduser("~/.ai-video-flow")
-_API_KEYS_FILE = os.path.join(_CONFIG_DIR, "cloud_ai_keys.json")
+# The relay replaces the model with the one chosen in the admin portal; this is only the default
+MODEL = "claude-opus-5-5"
+FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+ASSISTANT_SYSTEM = (
+    "You are Smart AI, the editing assistant inside AI Video Flow, a desktop app for wedding and event video editors. "
+    "You control DaVinci Resolve, Adobe Premiere Pro and Grass Valley EDIUS on the user's computer through the "
+    "provided tools, and can analyse footage, music and reference images. Users write in Hindi, Hinglish or "
+    "English - reply in the same language and style, briefly and practically. Use tools to actually do what is "
+    "asked instead of describing steps. If a tool reports that an editor is not running or a file is missing, "
+    "tell the user exactly what to open or select. Ask before deleting or overwriting anything."
+)
+
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "shots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "moment": {"type": "string"},
+                    "emotion": {"type": "integer"},
+                    "keep": {"type": "boolean"},
+                },
+                "required": ["index", "moment", "emotion", "keep"],
+                "additionalProperties": False,
+            },
+        },
+        "story_note": {"type": "string"},
+    },
+    "required": ["shots", "story_note"],
+    "additionalProperties": False,
+}
+
+
+class CloudAIError(RuntimeError):
+    pass
+
+
+def _error_message(e: anthropic.APIStatusError) -> str:
+    body = e.body if isinstance(e.body, dict) else {}
+    err = body.get("error")
+    if isinstance(err, str):  # license / limit errors come from the relay itself
+        return err
+    if isinstance(err, dict) and err.get("message"):
+        return err["message"]
+    return e.message
 
 
 class CloudAIClient:
-    """
-    Manages Cloud AI multimodal analysis for AI Smart Premium jobs.
-    Supports Google Gemini, OpenAI, or direct Studio AI proxy.
-    """
+    def _client(self) -> anthropic.Anthropic:
+        status = license_manager.get_status()
+        if not status["has_credits"]:
+            raise CloudAIError("Smart AI needs a Smart AI pack with weddings left (Pricing page).")
+        key, machine_id = license_manager.ai_credentials()
+        return anthropic.Anthropic(
+            api_key=key,
+            base_url=f"{license_manager.server_url}/api/v1/ai",
+            # Some hosting setups strip the Authorization header the SDK uses for custom base URLs
+            default_headers={"x-machine-id": machine_id, "x-api-key": key},
+            timeout=300.0,
+            max_retries=1,
+        )
 
-    def __init__(self):
-        os.makedirs(_CONFIG_DIR, exist_ok=True)
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY") or self._load_key("gemini")
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY") or self._load_key("openai")
-        if not self.gemini_api_key or not self.openai_api_key:
-            self._sync_from_admin_db()
-
-    def _sync_from_admin_db(self) -> None:
-        """Automatically synchronizes central AI keys from local admin DB if present."""
-        db_path = os.path.join(_CONFIG_DIR, "admin_licenses.db")
-        if not os.path.isfile(db_path):
-            return
+    def _create(self, **params):
         try:
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            c = conn.cursor()
-            c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-            if not self.gemini_api_key:
-                c.execute("SELECT value FROM settings WHERE key = 'gemini_api_key'")
-                row = c.fetchone()
-                if row and row[0]:
-                    self.save_api_key("gemini", row[0])
-            if not self.openai_api_key:
-                c.execute("SELECT value FROM settings WHERE key = 'openai_api_key'")
-                row = c.fetchone()
-                if row and row[0]:
-                    self.save_api_key("openai", row[0])
-            conn.close()
-        except Exception as e:
-            logger.debug(f"Could not auto-sync AI settings from admin db: {e}")
-
-    def _load_key(self, provider: str) -> Optional[str]:
-        if os.path.isfile(_API_KEYS_FILE):
-            try:
-                with open(_API_KEYS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return data.get(provider)
-            except Exception:
-                pass
-        return None
-
-    def save_api_key(self, provider: str, key: str) -> bool:
-        data = {}
-        if os.path.isfile(_API_KEYS_FILE):
-            try:
-                with open(_API_KEYS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = {}
-        data[provider] = key.strip()
-        try:
-            with open(_API_KEYS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            if provider == "gemini":
-                self.gemini_api_key = key.strip()
-            elif provider == "openai":
-                self.openai_api_key = key.strip()
-            return True
-        except Exception:
-            return False
+            return self._client().beta.messages.create(
+                model=MODEL, betas=[FALLBACK_BETA], fallbacks="default", **params
+            )
+        except CloudAIError:
+            raise
+        except anthropic.AuthenticationError as e:
+            raise CloudAIError(f"License check failed: {_error_message(e)}")
+        except anthropic.PermissionDeniedError as e:
+            raise CloudAIError(_error_message(e))
+        except anthropic.RateLimitError as e:
+            raise CloudAIError(f"Daily AI limit reached. {_error_message(e)}")
+        except anthropic.APIStatusError as e:
+            raise CloudAIError(f"AI service error ({e.status_code}): {_error_message(e)}")
+        except anthropic.APIConnectionError:
+            raise CloudAIError("No internet connection to the AI service. Check your network and try again.")
 
     def get_status(self) -> Dict[str, Any]:
+        st = license_manager.get_status()
+        return {"available": st["has_credits"], "provider": "Smart AI (via license server)"}
+
+    # ------------------------------------------------------------------
+    # AI shot review for the wedding job
+    # ------------------------------------------------------------------
+    def review_shots(self, thumbnails: List[str], context: str = "") -> Dict[str, Any]:
+        """Scores emotion / story value of one JPEG thumbnail per clip. Returns {index: {...}} + story_note."""
+        content: List[Dict[str, Any]] = []
+        for i, path in enumerate(thumbnails):
+            with open(path, "rb") as f:
+                data = base64.standard_b64encode(f.read()).decode("utf-8")
+            content.append({"type": "text", "text": f"Shot {i}"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+        content.append({"type": "text", "text": (
+            "These are frames from raw wedding/event clips (one frame per clip). For every shot give: index, a short "
+            "moment label (e.g. 'bride entry', 'varmala', 'couple portrait', 'crowd', 'decor'), an emotion/story score "
+            "0-100 for a cinematic highlight film, and keep=false only for frames that are unusable (blurred, blocked, "
+            "accidental). Then one sentence of story advice in story_note."
+            + (f"\nEditor's instructions: {context}" if context else "")
+        )})
+        response = self._create(
+            max_tokens=16000,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": REVIEW_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to review these frames.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable review.")
         return {
-            "gemini_connected": bool(self.gemini_api_key),
-            "openai_connected": bool(self.openai_api_key),
-            "available_models": ["gemini-1.5-pro", "gemini-1.5-flash", "gpt-4o"]
+            "shots": {s["index"]: s for s in data.get("shots", []) if 0 <= s.get("index", -1) < len(thumbnails)},
+            "story_note": data.get("story_note", ""),
         }
 
-    def analyze_ceremony_multimodal(
+    # ------------------------------------------------------------------
+    # AI assistant (tool use against the local editing tools)
+    # ------------------------------------------------------------------
+    def assistant_turn(
         self,
-        frames: List[str],
-        audio_transcript: Optional[str] = None,
-        couple_names: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Deep multimodal evaluation:
-        Scores emotional intensity, romance index, celebration energy,
-        and identifies the single most climactic moment for music drop.
-        """
-        # If Gemini key is available, call Gemini Flash/Pro multimodal
-        if self.gemini_api_key:
-            try:
-                return self._call_gemini_vision(frames, couple_names)
-            except Exception as e:
-                logger.warning(f"Gemini API call failed, using high-fidelity local proxy: {e}")
+        history: List[Dict[str, Any]],
+        user_text: str,
+        tools: List[Dict[str, Any]],
+        execute: Callable[[str, Dict[str, Any]], Any],
+        on_event: Optional[Callable[[str, str], None]] = None,
+        max_steps: int = 12,
+    ) -> str:
+        """Runs one user turn to completion. `history` is extended in place so the chat keeps context."""
+        history.append({"role": "user", "content": user_text})
+        for _ in range(max_steps):
+            response = self._create(
+                max_tokens=16000,
+                system=ASSISTANT_SYSTEM,
+                tools=tools,
+                messages=history,
+                cache_control={"type": "ephemeral"},
+            )
+            history.append({"role": "assistant", "content": response.content})
 
-        # High-Fidelity intelligent proxy (deterministic multimodal scoring)
-        return {
-            "success": True,
-            "engine": "Cloud AI Smart Premium Engine (Hybrid High-Precision)",
-            "emotional_peaks": [
-                {"role": "Bride Entry & Smile", "intensity": 96.5, "recommended_speed": 0.85},
-                {"role": "Varmala Garland Exchange Climax", "intensity": 99.0, "recommended_speed": 1.0},
-                {"role": "Sindoor & Sacred Fire Vows", "intensity": 94.0, "recommended_speed": 0.90},
-                {"role": "Sunset Couple Glance", "intensity": 98.0, "recommended_speed": 0.80}
-            ],
-            "story_guidance": "Opening with grand wide venue hook, building into bride glamour close-up, sync garland peak with drop.",
-            "color_recommendation": "Warm Kodak 2383 Gold-Hour highlight with soft skin glow"
-        }
+            if response.stop_reason == "refusal":
+                return "Sorry, I can't help with that request."
+            if response.stop_reason == "pause_turn":
+                continue
 
-    def _call_gemini_vision(self, frames: List[str], couple_names: Optional[str]) -> Dict[str, Any]:
-        """Calls Google Gemini Vision REST API directly."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_api_key}"
-        parts = [{"text": f"Analyze these wedding frames for a cinematic wedding highlight film for {couple_names or 'the couple'}. Identify highest emotional moments and recommended cuts."}]
+            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            if response.stop_reason != "tool_use" or not tool_uses:
+                text = "\n".join(b.text for b in response.content if b.type == "text").strip()
+                if response.stop_reason == "max_tokens":
+                    text += "\n\n(The answer was cut short - ask me to continue.)"
+                return text or "Done."
 
-        # Add up to 3 sample frames as base64
-        for fpath in frames[:3]:
-            if os.path.isfile(fpath):
-                with open(fpath, "rb") as img_f:
-                    b64 = base64.b64encode(img_f.read()).decode("utf-8")
-                    parts.append({
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": b64
-                        }
-                    })
-
-        body = json.dumps({"contents": [{"parts": parts}]}).encode("utf-8")
-        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-            return {
-                "success": True,
-                "engine": "Google Gemini 1.5 Multimodal Vision",
-                "ai_feedback": text,
-                "enhanced_cinematic_mode": True
-            }
+            results = []
+            for tu in tool_uses:
+                if on_event:
+                    on_event("tool", tu.name)
+                try:
+                    out = execute(tu.name, dict(tu.input or {}))
+                    results.append({"type": "tool_result", "tool_use_id": tu.id,
+                                    "content": json.dumps(out, ensure_ascii=False, default=str)[:20000]})
+                except Exception as e:
+                    results.append({"type": "tool_result", "tool_use_id": tu.id, "content": f"Error: {e}", "is_error": True})
+            history.append({"role": "user", "content": results})
+        return "I stopped after many steps. Tell me what to do next."
 
 
-# Global instance
 cloud_ai_client = CloudAIClient()

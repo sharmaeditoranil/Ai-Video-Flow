@@ -142,8 +142,8 @@ class HyperFramesService:
         if res.get("success") and import_to_resolve:
             try:
                 from packages.core_resolve.resolve_adapter import resolve_adapter
-                import_res = resolve_adapter.import_media([res["output_path"]])
-                res["resolve_import"] = import_res
+                items = resolve_adapter.import_media_files([res["output_path"]], bin_name="AI_Titles")
+                res["resolve_import"] = {"imported": len(items), "bin": "AI_Titles"}
             except Exception as e:
                 res["resolve_import_error"] = str(e)
 
@@ -172,8 +172,8 @@ class HyperFramesService:
         if res.get("success") and import_to_resolve:
             try:
                 from packages.core_resolve.resolve_adapter import resolve_adapter
-                import_res = resolve_adapter.import_media([res["output_path"]])
-                res["resolve_import"] = import_res
+                items = resolve_adapter.import_media_files([res["output_path"]], bin_name="AI_Titles")
+                res["resolve_import"] = {"imported": len(items), "bin": "AI_Titles"}
             except Exception as e:
                 res["resolve_import_error"] = str(e)
 

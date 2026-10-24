@@ -1,0 +1,19 @@
+# AI Video Flow server - keep secrets and data private, route everything through index.php
+Options -Indexes
+
+<FilesMatch "^(config\.php|config\.sample\.php|default\.php|.*\.(db|db-wal|db-shm|sqlite|json|log|md|txt|zip))$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule ^data - [F,L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set Strict-Transport-Security "max-age=31536000"
+</IfModule>

@@ -22,6 +22,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+InfoAfterFile=INSTALL_GUIDE.txt
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -30,6 +31,8 @@ Name: "desktopicon"; Description: "Create a &Desktop shortcut"; GroupDescription
 
 [Files]
 Source: "..\build\dist\AI Video Flow\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+Source: "INSTALL_GUIDE.txt"; DestDir: "{app}"; DestName: "Install Guide.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

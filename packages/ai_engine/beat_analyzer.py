@@ -36,7 +36,12 @@ class BeatAnalyzer:
         import librosa
         import numpy as np
 
-        y, sr = librosa.load(audio_path, sr=22050)
+        try:
+            y, sr = librosa.load(audio_path, sr=22050)
+        except Exception:
+            # m4a/aac and video files: decode with ffmpeg instead
+            from packages.ai_engine.audio_io import load_audio
+            y, sr = load_audio(audio_path, 22050)
         duration = float(librosa.get_duration(y=y, sr=sr))
 
         # 1. Tempo & Beat frames

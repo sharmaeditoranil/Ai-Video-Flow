@@ -6,12 +6,17 @@ echo "       AI VIDEO FLOW - DAVINCI RESOLVE AI CONNECTOR (MAC)"
 echo "=============================================================="
 echo ""
 
-# Find Python 3
-if command -v python3 &>/dev/null; then
-    PY_BIN=$(command -v python3)
-else
-    echo "[ERROR] Python 3 not found!"
-    echo "Please download and install Python 3.10+ from https://www.python.org/downloads/mac-osx/"
+# Find Python 3.10 or newer (the Claude SDK needs it)
+PY_BIN=""
+for cand in python3.13 python3.12 python3.11 python3.10 python3; do
+    if command -v "$cand" &>/dev/null && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+        PY_BIN=$(command -v "$cand")
+        break
+    fi
+done
+if [ -z "$PY_BIN" ]; then
+    echo "[ERROR] Python 3.10 or newer not found!"
+    echo "Please download and install Python 3.12 from https://www.python.org/downloads/mac-osx/"
     exit 1
 fi
 
@@ -29,6 +34,9 @@ cp -R installer "$APP_DIR/"
 cp -R assets "$APP_DIR/"
 cp requirements.txt launch_app.py "$APP_DIR/"
 
+if [ -x "$VENV_DIR/bin/python" ] && ! "$VENV_DIR/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+    rm -rf "$VENV_DIR"  # created by an older Python - rebuild
+fi
 if [ ! -d "$VENV_DIR" ]; then
     "$PY_BIN" -m venv "$VENV_DIR"
 fi

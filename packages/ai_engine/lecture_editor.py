@@ -42,7 +42,12 @@ class LectureEditorEngine:
         
         # Load audio (downsampled to 16kHz for ultra-fast processing of 1-2 hour files)
         try:
-            y, sr = librosa.load(video_path, sr=16000, mono=True)
+            try:
+                y, sr = librosa.load(video_path, sr=16000, mono=True)
+            except Exception:
+                # Video containers (mp4/mov/mxf) need ffmpeg
+                from packages.ai_engine.audio_io import load_audio
+                y, sr = load_audio(video_path, 16000)
             total_duration_sec = len(y) / sr
         except Exception as e:
             return {"success": False, "error": f"Failed to load audio: {e}"}
@@ -118,30 +123,26 @@ class LectureEditorEngine:
             }
 
         # 1. Import video into Media Pool
-        import_res = resolve_adapter.import_media([video_path])
-        media_pool_items = import_res.get("imported_items", [])
+        media_pool_items = resolve_adapter.import_media_files([video_path], bin_name="Lecture_Recordings")
         if not media_pool_items:
-            # Fallback to searching item in Media Pool
-            media_pool_items = resolve_adapter.get_media_pool_clips()
-            media_pool_items = [i for i in media_pool_items if os.path.basename(video_path) in str(i)]
+            return {"success": False, "error": "DaVinci Resolve could not import the recording.", "analysis_ready": analysis}
 
         # 2. Create clean lecture timeline
         tl = resolve_adapter.create_timeline(timeline_name)
         if not tl:
             return {"success": False, "error": f"Failed to create timeline '{timeline_name}' in Resolve"}
 
-        # 3. Append speech segments
+        # 3. Append speech segments at the recording's own frame rate
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        cap.release()
         segments = analysis.get("speech_segments", [])
-        appended_count = 0
-        for seg in segments:
-            item_info = {
-                "mediaPoolItem": media_pool_items[0] if media_pool_items else None,
-                "startFrame": int(seg["in_point"] * 25.0),
-                "endFrame": int(seg["out_point"] * 25.0)
-            }
-            if item_info["mediaPoolItem"]:
-                resolve_adapter.append_clip_to_timeline([item_info])
-                appended_count += 1
+        entries = [{
+            "mediaPoolItem": media_pool_items[0],
+            "startFrame": int(seg["in_point"] * fps),
+            "endFrame": max(int(seg["in_point"] * fps) + 1, int(seg["out_point"] * fps) - 1),
+        } for seg in segments]
+        appended_count = len(entries) if entries and resolve_adapter.append_clips_to_timeline(entries, timeline_name) else 0
 
         # 4. Dynamic Multi-Cam Punch-Ins (Alternating 1.0x wide and 1.12x medium close-up)
         punch_in_count = 0
@@ -157,8 +158,7 @@ class LectureEditorEngine:
         b_roll_count = 0
         if b_roll_paths:
             try:
-                b_roll_import = resolve_adapter.import_media(b_roll_paths)
-                b_items = b_roll_import.get("imported_items", [])
+                b_items = resolve_adapter.import_media_files(b_roll_paths, bin_name="B-Roll")
                 if b_items:
                     # Place B-roll on Track 2 as overlay
                     b_roll_count = len(b_items)

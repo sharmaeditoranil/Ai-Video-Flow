@@ -3,701 +3,374 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Video Flow – DaVinci Resolve AI Connector</title>
+  <title>AI Video Flow</title>
   <link rel="icon" type="image/png" href="logo.png">
-  <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
-<body class="dark-theme">
-  <div class="app-layout">
-    <!-- Sidebar Navigation -->
+<body>
+  <div class="app">
+    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-logo" src="logo.png" alt="AI Video Flow">
-        <div class="brand-text">
-          <h2>AI Video Flow</h2>
-          <span>Resolve AI Connector</span>
+        <img class="brand-logo" src="logo.png" alt="">
+        <div>
+          <div class="brand-name">AI Video Flow</div>
+          <div class="brand-sub">v1.1 · AI editing assistant</div>
         </div>
       </div>
 
-      <nav class="nav-menu">
-        <button class="nav-item active" data-tab="home">
-          <span class="icon">⚡</span> Dashboard
-        </button>
-        <button class="nav-item" data-tab="wedding">
-          <span class="icon">🎬</span> AI Studio & Timelines
-        </button>
-        <button class="nav-item" data-tab="tools">
-          <span class="icon">🧰</span> All AI Tools
-        </button>
-        <button class="nav-item" data-tab="commands">
-          <span class="icon">💬</span> Claude AI Assistant
-        </button>
-        <button class="nav-item" data-tab="diagnostics">
-          <span class="icon">🔍</span> Diagnostics & Status
-        </button>
+      <nav class="nav">
+        <button class="nav-item active" data-tab="home"><span class="nav-ico">⌂</span>Home</button>
+        <button class="nav-item" data-tab="studio"><span class="nav-ico">✦</span>AI Studio</button>
+        <button class="nav-item" data-tab="assistant"><span class="nav-ico">◎</span>AI Assistant</button>
+        <button class="nav-item" data-tab="tools"><span class="nav-ico">⚒</span>Tools</button>
+        <button class="nav-item" data-tab="profile"><span class="nav-ico">☺</span>My Profile</button>
+        <button class="nav-item" data-tab="pricing"><span class="nav-ico">₹</span>Pricing</button>
+        <button class="nav-item" data-tab="settings"><span class="nav-ico">⚙</span>Settings</button>
       </nav>
 
-      <div class="sidebar-footer">
-        <a class="qa-ad qa-ad-side" href="https://quickartphotography.in/master-class/" data-ad="sidebar">
-          <div class="qa-ad-brand">
-            <img src="ads/qa-logo.webp" alt="Quick Art Photography Academy">
-            <span>Quick Art Photography Academy</span>
-          </div>
-          <strong>14-Week Wedding Filmmaking Master Class</strong>
-          <span class="qa-ad-meta">EMI from ₹2,500/month · Classes in Hindi</span>
-          <span class="qa-ad-cta">Book a Free Demo Class →</span>
-        </a>
-        <div class="version-badge">v1.0.0 Commercial Edition</div>
-      </div>
+      <button class="side-profile" data-goto="profile" title="My Profile">
+        <span class="avatar" id="chip-avatar">?</span>
+        <span class="chip-text">
+          <b id="chip-name">Guest</b>
+          <span id="plan-chip">My Profile</span>
+          <small id="chip-credits"></small>
+        </span>
+      </button>
     </aside>
 
-    <!-- Main Content Area -->
-    <main class="main-content">
-      <!-- Top Bar -->
+    <!-- Main -->
+    <main class="main">
       <header class="topbar">
-        <div class="status-indicators">
-          <div class="status-pill" id="status-resolve">
-            <span class="status-dot dot-yellow"></span>
-            <span class="status-label">DaVinci Resolve: Checking...</span>
-          </div>
-          <div class="status-pill" id="status-premiere">
-            <span class="status-dot dot-yellow"></span>
-            <span class="status-label">Premiere Pro: Checking...</span>
-          </div>
-          <div class="status-pill" id="status-claude">
-            <span class="status-dot dot-green"></span>
-            <span class="status-label">Claude AI: Configured</span>
-          </div>
-          <div class="status-pill" id="status-mcp">
-            <span class="status-dot dot-green"></span>
-            <span class="status-label">MCP Server: Active</span>
-          </div>
+        <div class="page-title">
+          <h1 id="page-title">Home</h1>
+          <p id="page-sub">Your editors, footage and AI in one place</p>
         </div>
-
-        <div class="topbar-actions" style="display:flex;align-items:center;gap:12px;">
-          <button class="btn btn-license" id="btn-license-modal" style="background:linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(168, 85, 247, 0.15));border:1px solid #eab308;color:#fde047;font-weight:700;padding:6px 14px;border-radius:20px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;" title="Manage SaaS License & Credits">
-            <span id="topbar-plan-icon">👑</span> <span id="topbar-plan-label">Plan: Free Edition</span>
-          </button>
-          <button class="btn btn-primary" id="btn-connect-all">
-            <span class="icon">🚀</span> CONNECT ALL
-          </button>
+        <div class="topbar-right">
+          <div class="status-group" title="Live connection status">
+            <span class="status" id="st-resolve"><i class="dot"></i><span>DaVinci</span></span>
+            <span class="status" id="st-premiere"><i class="dot"></i><span>Premiere</span></span>
+            <span class="status" id="st-claude"><i class="dot"></i><span>Claude Desktop</span></span>
+          </div>
         </div>
       </header>
 
-      <!-- Tab: Home Dashboard -->
-      <section class="tab-pane active" id="pane-home">
-        <div class="hero-card">
-          <div class="hero-content">
-            <div class="badge">Next-Gen Video Automation</div>
-            <h1>From 1500 Raw Wedding Clips to a Beat-Synced Masterpiece.</h1>
-            <p>Direct live integration between Claude Desktop and DaVinci Resolve. Trims camera shake, extracts in-focus golden moments, and assembles ready-to-color timelines.</p>
-            
-            <div class="cta-group">
-              <button class="btn btn-lg btn-glow" id="btn-quick-connect">
-                ⚡ CONNECT ALL SERVICES
-              </button>
-              <button class="btn btn-lg btn-secondary" id="btn-test-connection">
-                🔄 Test Connection
-              </button>
+      <div class="content">
+        <!-- HOME -->
+        <section class="pane active" id="pane-home">
+          <div class="welcome card">
+            <div>
+              <h2>From raw wedding footage to ready timelines</h2>
+              <p class="muted">AI Video Flow trims shaky starts and soft focus, syncs cuts to your music and builds Teaser, Highlight and Full Film timelines in DaVinci Resolve, Premiere Pro or EDIUS.</p>
             </div>
-          </div>
-        </div>
-
-        <!-- Quick Art Photography Academy - Master Class ad -->
-        <a class="qa-ad qa-ad-banner" href="https://quickartphotography.in/master-class/" data-ad="dashboard">
-          <img class="qa-ad-photo" src="ads/anil-sharma.webp" alt="Anil Sharma, Quick Art Photography Academy">
-          <div class="qa-ad-body">
-            <div class="qa-ad-brand">
-              <img src="ads/qa-logo.webp" alt="">
-              <span>Quick Art Photography Academy · Sponsored</span>
-            </div>
-            <h2>14-Week Wedding Filmmaking Master Class</h2>
-            <p>Learn the complete wedding workflow in one course. Four skills. One unstoppable career.</p>
-            <ul class="qa-ad-skills">
-              <li>Wedding Film-making</li>
-              <li>Video Editing using AI</li>
-              <li>AI Photo Editing</li>
-              <li>Marketing &amp; Automation</li>
-            </ul>
-            <div class="qa-ad-meta">
-              With Anil Sharma · Classes in Hindi · Offline, Siwan campus · Seat booking ₹500 · EMI from ₹2,500/month
-            </div>
-            <span class="btn btn-glow qa-ad-cta">Book a Free Demo Class →</span>
-          </div>
-        </a>
-
-        <!-- 3 Core Status Cards -->
-        <div class="card-grid">
-          <div class="stat-card">
-            <div class="card-header">
-              <span class="card-title">DaVinci Resolve Bridge</span>
-              <span class="badge badge-studio" id="resolve-edition-badge">Auto-Detect</span>
-            </div>
-            <div class="card-body">
-              <p class="card-desc">Official Blackmagic Design Scripting API connection.</p>
-              <div class="metric-row">
-                <span>Active Project:</span>
-                <strong id="metric-project">Scanning...</strong>
-              </div>
-              <div class="metric-row">
-                <span>Timeline Count:</span>
-                <strong id="metric-timelines">0</strong>
-              </div>
+            <ol class="steps">
+              <li><b>My Profile</b> → activate your license for the AI features</li>
+              <li><b>AI Studio</b> → choose the footage folder and song</li>
+              <li><b>Review</b> the timelines in your editor and finish the grade</li>
+            </ol>
+            <div class="row-actions">
+              <button class="btn btn-primary" data-goto="studio">Open AI Studio</button>
+              <button class="btn" data-goto="assistant">Ask the AI Assistant</button>
             </div>
           </div>
 
-          <div class="stat-card">
-            <div class="card-header">
-              <span class="card-title">Adobe Premiere Pro Bridge</span>
-              <span class="badge badge-premiere" id="premiere-edition-badge">Auto-Detect</span>
+          <a class="qa-ad ad-banner" href="https://quickartphotography.in/master-class/">
+            <img class="ad-photo" src="ads/anil-sharma.webp" alt="Anil Sharma, Quick Art Photography Academy">
+            <div class="ad-body">
+              <div class="ad-brand"><img src="ads/qa-logo.webp" alt=""><span>Quick Art Photography Academy</span></div>
+              <h2>AI Advanced Video Editing Course</h2>
+              <p>Wedding films, reels and AI editing in DaVinci Resolve, Premiere Pro &amp; EDIUS — learn from Anil Sharma in Hindi.</p>
+              <div class="ad-meta">14 weeks · Siwan campus · EMI from ₹2,500/month</div>
             </div>
-            <div class="card-body">
-              <p class="card-desc">FCP XML sequence interchange & automated project timeline delivery.</p>
-              <div class="metric-row">
-                <span>Installed Version:</span>
-                <strong id="metric-premiere-version">Scanning...</strong>
-              </div>
-              <div class="metric-row">
-                <span>App Status:</span>
-                <strong id="metric-premiere-status">Checking...</strong>
-              </div>
-              <div class="card-actions" style="margin-top:14px">
-                <button class="btn btn-secondary btn-block" id="btn-launch-premiere">🚀 Launch / Focus Premiere</button>
-              </div>
+            <span class="btn btn-gold ad-join">Join the course →</span>
+          </a>
+
+          <div class="cards-3">
+            <div class="card stat-card">
+              <div class="stat-head"><span>DaVinci Resolve</span><span class="badge" id="home-resolve-badge">Checking</span></div>
+              <div class="kv"><span>Project</span><b id="home-resolve-project">—</b></div>
+              <div class="kv"><span>Timelines</span><b id="home-resolve-timelines">—</b></div>
+            </div>
+            <div class="card stat-card">
+              <div class="stat-head"><span>Adobe Premiere Pro</span><span class="badge" id="home-premiere-badge">Checking</span></div>
+              <div class="kv"><span>Version</span><b id="home-premiere-version">—</b></div>
+              <div class="kv"><span>Timelines</span><b>FCP XML export</b></div>
+            </div>
+            <div class="card stat-card">
+              <div class="stat-head"><span>Claude Desktop</span><span class="badge" id="home-claude-badge">Checking</span></div>
+              <div class="kv"><span>Editing tools</span><b id="home-tool-count">—</b></div>
+              <div class="kv"><span>Languages</span><b>Hindi · Hinglish · English</b></div>
             </div>
           </div>
+        </section>
 
-          <div class="stat-card">
-            <div class="card-header">
-              <span class="card-title">Claude Desktop MCP</span>
-              <span class="badge badge-success">Registered</span>
-            </div>
-            <div class="card-body">
-              <p class="card-desc">Model Context Protocol server registered in Claude config.</p>
-              <div class="metric-row">
-                <span>Protocol:</span>
-                <strong>JSON-RPC 2.0 Stdio</strong>
-              </div>
-              <div class="metric-row">
-                <span>Available Tools:</span>
-                <strong id="metric-tools">Loading...</strong>
-              </div>
-            </div>
-          </div>
+        <!-- AI STUDIO -->
+        <section class="pane" id="pane-studio">
+          <a class="qa-ad ad-strip" href="https://quickartphotography.in/master-class/">
+            <img src="ads/qa-logo.webp" alt="">
+            <span><b>AI Advanced Video Editing Course</b> — wedding films, reels &amp; AI editing in DaVinci, Premiere &amp; EDIUS with Anil Sharma.</span>
+            <span class="ad-cta">Join the course →</span>
+          </a>
 
-          <div class="stat-card">
-            <div class="card-header">
-              <span class="card-title">Wedding AI Intelligence</span>
-              <span class="badge badge-purple">Ready</span>
-            </div>
-            <div class="card-body">
-              <p class="card-desc">Optical Flow Shake Trimmer & Librosa Beat Sync Engine.</p>
-              <div class="metric-row">
-                <span>Supported Formats:</span>
-                <strong>Teaser, Highlight, Full Film</strong>
-              </div>
-              <div class="metric-row">
-                <span>Languages:</span>
-                <strong>Hindi, Hinglish, English</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Tab: AI Video Studio & Timelines -->
-      <section class="tab-pane" id="pane-wedding">
-        <div class="section-header">
-          <h2>🎬 Smart AI Timeline Studio</h2>
-          <p>Choose your editing workflow — Instagram Reels, Wedding Film, or YouTube Video. AI intelligently trims shake/silence, beat-syncs, and creates ready-to-edit timelines.</p>
-        </div>
-
-        <!-- 1. Workflow Mode Selection Cards -->
-        <div class="edit-modes-container">
-          <div class="edit-modes-header">
-            <span class="step-num">Step 1</span>
-            <span class="step-title">Select Editing Workflow</span>
-            <span class="step-hint">Click a card to auto-configure aspect ratio, pacing &amp; timeline targets</span>
-          </div>
-          <div class="edit-modes-grid">
-            <!-- Mode 1: Instagram Reels / Shorts -->
-            <div class="edit-mode-card" data-mode="reels" id="mode-card-reels">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-reels">📱 9:16 Vertical</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">⚡</span>
-                <div class="mode-titles">
-                  <h4>Instagram Reels &amp; Shorts</h4>
-                  <span class="mode-duration">30s – 60s High Retention</span>
+          <div class="studio">
+            <div class="card form-card">
+              <div class="step">
+                <div class="step-title"><span class="step-n">1</span>Workflow</div>
+                <div class="modes" id="modes">
+                  <button class="mode active" data-mode="wedding"><b>Wedding Film</b><span>Teaser · Highlight · Full film</span></button>
+                  <button class="mode" data-mode="reels"><b>Reels &amp; Shorts</b><span>9:16 vertical, fast cuts</span></button>
+                  <button class="mode" data-mode="youtube"><b>YouTube</b><span>Main edit + Shorts</span></button>
+                  <button class="mode" data-mode="music_video"><b>Music Video</b><span>Beat-synced montage</span></button>
+                  <button class="mode" data-mode="podcast"><b>Podcast · long</b><span>Cut silences + 9:16 shorts</span></button>
+                  <button class="mode" data-mode="tutorial"><b>Tutorial / Class · long</b><span>Cut dead air + chapters</span></button>
                 </div>
               </div>
-              <p class="mode-desc">Fast 3-second hook selection, beat-synced rapid cuts, and optional reference reel rhythm &amp; color matching.</p>
-              <div class="mode-tags">
-                <span>Hook Trimmer</span>
-                <span>Beat Drops</span>
-                <span>Reference Reel Match</span>
-              </div>
-            </div>
 
-            <!-- Mode 2: Wedding Cinematic Film (Default) -->
-            <div class="edit-mode-card active" data-mode="wedding" id="mode-card-wedding">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-wedding">💍 16:9 Cinema &amp; 9:16</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">🎬</span>
-                <div class="mode-titles">
-                  <h4>Wedding Cinematic Film</h4>
-                  <span class="mode-duration">1000+ Raw Clips Culling</span>
+              <div class="step">
+                <div class="step-title"><span class="step-n">2</span><span id="step2-title">Footage &amp; music</span></div>
+                <label class="lbl" for="in-folder" id="lbl-folder">Raw footage folder</label>
+                <div class="input-row">
+                  <input id="in-folder" type="text" placeholder="/Volumes/Drive/Wedding_Rohit_Priya" spellcheck="false">
+                  <button class="btn" id="btn-browse-folder">Browse</button>
+                  <button class="btn" id="btn-load-folder">Load</button>
+                </div>
+                <div class="hint" id="folder-info">Choose the folder with your raw clips (subfolders are included).</div>
+
+                <div class="short-only">
+                <label class="lbl" for="in-audio">Song for beat sync <span class="opt">optional</span></label>
+                <div class="input-row">
+                  <input id="in-audio" type="text" placeholder="/Music/wedding_song.mp3" spellcheck="false">
+                  <button class="btn" id="btn-browse-audio">Browse</button>
+                </div>
+
+                <label class="lbl" for="in-ref">Reference video for the colour look <span class="opt">optional</span></label>
+                <div class="input-row">
+                  <input id="in-ref" type="text" placeholder="A reel or film whose colours you like" spellcheck="false">
+                  <button class="btn" id="btn-browse-ref">Browse</button>
+                </div>
+                <div class="hint">A matching 3D LUT (.cube) is created in the output folder.</div>
+                </div>
+                <div class="long-only" hidden>
+                  <label class="lbl">Silence cutting</label>
+                  <div class="segmented" id="cut-level">
+                    <button data-cut="normal" class="active">Normal — keeps natural pauses</button>
+                    <button data-cut="tight">Tight — removes every hesitation</button>
+                  </div>
                 </div>
               </div>
-              <p class="mode-desc">Removes camera shakes &amp; blur, keeps sharp in-focus moments, and generates 3 timelines (Teaser, Highlight &amp; Full Film).</p>
-              <div class="mode-tags">
-                <span>Shaky Start Cull</span>
-                <span>3 Timelines</span>
-                <span>Natural Audio Ducking</span>
-              </div>
-            </div>
 
-            <!-- Mode 3: YouTube & Vlog -->
-            <div class="edit-mode-card" data-mode="youtube" id="mode-card-youtube">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-youtube">🎥 16:9 Landscape</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">🎙️</span>
-                <div class="mode-titles">
-                  <h4>YouTube Video &amp; Vlog</h4>
-                  <span class="mode-duration">Dead-Air &amp; Voice Focus</span>
+              <div class="step">
+                <div class="step-title"><span class="step-n">3</span>Timelines</div>
+                <div class="checks" id="outputs"></div>
+                <label class="lbl">Send to</label>
+                <div class="nle-picker" id="nle">
+                  <button data-nle="resolve" class="active" title="DaVinci Resolve">
+                    <img src="nle/resolve.png" alt=""><span>DaVinci Resolve</span>
+                  </button>
+                  <button data-nle="premiere" title="Adobe Premiere Pro">
+                    <img src="nle/premiere.png" alt=""><span>Premiere Pro</span>
+                  </button>
+                  <button data-nle="edius" title="Grass Valley EDIUS">
+                    <i class="nle-tile">ED</i><span>EDIUS</span>
+                  </button>
+                  <button data-nle="both" title="All editors">
+                    <span class="nle-stack"><img src="nle/resolve.png" alt=""><img src="nle/premiere.png" alt=""><i class="nle-tile">ED</i></span><span>All</span>
+                  </button>
                 </div>
               </div>
-              <p class="mode-desc">Automatically removes pauses &amp; silences, creates seamless jump cuts, and normalizes voice to -14 LUFS broadcast standard.</p>
-              <div class="mode-tags">
-                <span>Silence Cutter</span>
-                <span>-14 LUFS Voice</span>
-                <span>Jump-Cut Polish</span>
-              </div>
-            </div>
 
-            <!-- Mode 4: Podcast & Multi-Cam Interview -->
-            <div class="edit-mode-card" data-mode="podcast" id="mode-card-podcast">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-podcast">🎙️ 16:9 &amp; 9:16 Shorts</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">👥</span>
-                <div class="mode-titles">
-                  <h4>Podcast &amp; Interview</h4>
-                  <span class="mode-duration">Multi-Camera Speaker Switch</span>
-                </div>
-              </div>
-              <p class="mode-desc">Detects active speaker from audio waveforms, auto-switches multi-camera angles, and extracts viral vertical moments.</p>
-              <div class="mode-tags">
-                <span>Active Speaker Cut</span>
-                <span>Multi-Cam Sync</span>
-                <span>Voice Gate &amp; EQ</span>
-              </div>
-            </div>
-
-            <!-- Mode 5: Commercial Brand Ad & Promo -->
-            <div class="edit-mode-card" data-mode="commercial" id="mode-card-commercial">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-commercial">⚡ 15s / 30s TV &amp; Web</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">💎</span>
-                <div class="mode-titles">
-                  <h4>Commercial Ad &amp; Promo</h4>
-                  <span class="mode-duration">High-Impact Brand Film</span>
-                </div>
-              </div>
-              <p class="mode-desc">Ultra high-energy rhythm, punchy product close-ups, dynamic speed ramps, and reference commercial color grading.</p>
-              <div class="mode-tags">
-                <span>Speed Ramping</span>
-                <span>Reference Mood LUT</span>
-                <span>Punchy 15s/30s</span>
-              </div>
-            </div>
-
-            <!-- Mode 6: Course, Tutorial & Lecture -->
-            <div class="edit-mode-card" data-mode="lecture" id="mode-card-lecture">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-lecture">📚 16:9 Screen &amp; Cam</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">🎓</span>
-                <div class="mode-titles">
-                  <h4>Course &amp; Masterclass</h4>
-                  <span class="mode-duration">Slide &amp; Screen Sync</span>
-                </div>
-              </div>
-              <p class="mode-desc">Syncs presenter camera with screen recording slides, removes retakes and false starts, and builds timeline chapters.</p>
-              <div class="mode-tags">
-                <span>Slide Cut Detection</span>
-                <span>Retake Trimmer</span>
-                <span>Chapter Markers</span>
-              </div>
-            </div>
-
-            <!-- Mode 7: Music Video & Cinematic Montage -->
-            <div class="edit-mode-card" data-mode="music_video" id="mode-card-music_video">
-              <div class="mode-card-top">
-                <span class="mode-badge badge-music">🎵 2.39:1 Cinema &amp; 9:16</span>
-                <span class="mode-check-indicator">✓</span>
-              </div>
-              <div class="mode-icon-title">
-                <span class="mode-icon">🎸</span>
-                <div class="mode-titles">
-                  <h4>Music Video &amp; Montage</h4>
-                  <span class="mode-duration">Audio Beat-Drop Grid</span>
-                </div>
-              </div>
-              <p class="mode-desc">Cuts video footage exactly on drum snares and kick drops, with reference video color palette matching.</p>
-              <div class="mode-tags">
-                <span>Kick/Snare Drops</span>
-                <span>Reference Look Match</span>
-                <span>Speed-Ramp Transitions</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <a class="qa-ad qa-ad-strip" href="https://quickartphotography.in/master-class/" data-ad="wedding" target="_blank" rel="noopener">
-          <div class="qa-ad-strip-left">
-            <div class="qa-ad-strip-logo-wrap">
-              <img src="ads/qa-logo.webp" alt="Quick Art Photography Academy">
-            </div>
-            <div class="qa-ad-strip-content">
-              <div class="qa-ad-strip-header">
-                <span class="qa-ad-badge">🎓 Master Class Academy</span>
-                <span class="qa-ad-strip-title">Master Professional Wedding Filmmaking &amp; Colour Grading</span>
-              </div>
-              <p class="qa-ad-strip-desc">
-                Learn DaVinci Resolve, Premiere Pro &amp; AI-assisted workflows · 14-Week Master Class by <strong>Quick Art Photography Academy</strong>
-              </p>
-            </div>
-          </div>
-          <div class="qa-ad-strip-right">
-            <span class="btn btn-sm btn-glow qa-ad-cta-btn">Book Free Demo Class →</span>
-          </div>
-        </a>
-
-        <div class="workflow-grid">
-          <div class="panel-box">
-            <h3>2. Footage, Audio &amp; Reference</h3>
-            
-            <div class="form-group">
-              <label id="label-folder-path">Raw Video Footage Folder</label>
-              <div class="input-action">
-                <input type="text" id="input-folder-path" placeholder="/Volumes/HardDrive/Wedding_Shoot_Rohit">
-                <button class="btn btn-secondary" id="btn-browse-folder">Browse</button>
-                <button class="btn btn-secondary" id="btn-load-folder">Load</button>
-              </div>
-              <div class="folder-info" id="folder-info">Select or paste the folder containing your raw clips, then press Load.</div>
-            </div>
-
-            <!-- Reference Video Box (Especially for Reels & Matching Moods) -->
-            <div class="form-group ref-video-card" id="group-ref-video">
-              <div class="ref-video-header">
-                <label for="input-ref-video">
-                  🎯 Reference Video / Reel
-                  <span class="badge badge-accent" id="badge-ref-video">AI Pacing &amp; Color Match</span>
+              <div class="step premium-step short-only">
+                <label class="switch">
+                  <input type="checkbox" id="chk-ai-review">
+                  <span class="switch-ui"></span>
+                  <span><b>Smart AI shot review</b> <span class="pill-gold">Premium</span><br>
+                    <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot and picks the most emotional moments. Uses 1 wedding credit.</span></span>
                 </label>
-                <span class="ref-optional-tag">Optional</span>
+                <textarea id="in-notes" rows="2" placeholder="Notes for the AI (optional) — e.g. 'Bride entry and varmala ko teaser me zaroor rakho'"></textarea>
               </div>
-              <div class="input-action">
-                <input type="text" id="input-ref-video" placeholder="Optional: Select reference Reel (MP4/MOV) to match cut rhythm & lighting look...">
-                <button class="btn btn-secondary" id="btn-browse-ref-video">Browse Reel</button>
+
+              <button class="btn btn-primary btn-lg btn-block" id="btn-run">Build timelines</button>
+              <div class="quota" id="quota" hidden></div>
+              <div class="progress" id="progress"><div class="bar"></div></div>
+            </div>
+
+            <div class="card log-card">
+              <div class="log-head">
+                <span>Activity</span>
+                <div class="row-actions">
+                  <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">Send again</button>
+                  <button class="btn btn-sm" id="btn-open-output">Output folder</button>
+                </div>
               </div>
-              <div class="field-hint" id="ref-video-hint">
-                💡 <strong>Reel Reference Engine:</strong> Agar aap koi Instagram Reel ya reference video choose karte hain, toh AI uske cut rhythm (tempo) aur lighting/color mood ko extract karke aapke project me apply karega.
+              <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- AI ASSISTANT -->
+        <section class="pane" id="pane-assistant">
+          <div class="chat card">
+            <div class="chat-lock" id="chat-lock" hidden>
+              <h3>AI Assistant is part of AI Smart Premium</h3>
+              <p class="muted">Activate your license to talk to Smart AI in Hindi, Hinglish or English. It can build timelines, add markers, grade, duck audio and more directly in your editor.</p>
+              <div class="row-actions">
+                <button class="btn btn-primary" data-goto="settings">Activate license</button>
+                <button class="btn" data-goto="pricing">See pricing</button>
+              </div>
+            </div>
+            <div class="chat-log" id="chat-log">
+              <div class="msg bot">Namaste! Main aapka AI editing assistant hoon. DaVinci Resolve, Premiere ya EDIUS me kya karna hai? Hindi, Hinglish ya English — kisi bhi bhasha me likhiye.</div>
+            </div>
+            <div class="chips" id="chips">
+              <button class="chip">DaVinci Resolve ka status batao</button>
+              <button class="chip">Is timeline par har 10 second me marker lagao</button>
+              <button class="chip">Music ko dialogue ke neeche duck karo</button>
+              <button class="chip">Warm wedding colour node tree banao</button>
+            </div>
+            <form class="chat-input" id="chat-form">
+              <textarea id="chat-text" rows="1" placeholder="Message the AI assistant…"></textarea>
+              <button class="btn btn-primary" type="submit" id="chat-send">Send</button>
+              <button class="btn" type="button" id="chat-reset" title="Start a new conversation">New chat</button>
+            </form>
+          </div>
+        </section>
+
+        <!-- TOOLS -->
+        <section class="pane" id="pane-tools">
+          <div class="tools">
+            <div class="card">
+              <input type="text" id="tool-search" placeholder="Search tools — lut, timeline, audio, marker…">
+              <div class="tool-list" id="tool-list"><div class="muted">Loading tools…</div></div>
+            </div>
+            <div class="card">
+              <h3 id="tool-title">Choose a tool</h3>
+              <p class="muted" id="tool-desc">Every editing function the AI uses, available to run by hand.</p>
+              <form id="tool-form"></form>
+              <button class="btn btn-primary btn-block" id="btn-run-tool" disabled>Run tool</button>
+              <div class="console console-sm" id="tool-output"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- MY PROFILE -->
+        <section class="pane" id="pane-profile">
+          <div class="profile-head card">
+            <span class="avatar avatar-lg" id="pf-avatar">?</span>
+            <div class="pf-id">
+              <h2 id="pf-name">Guest</h2>
+              <div class="muted" id="pf-email">Activate a license to see your account</div>
+            </div>
+            <span class="plan-badge" id="pf-plan">Free Edition</span>
+          </div>
+
+          <div class="cards-3">
+            <div class="card metric"><span class="muted">Smart AI weddings</span><b id="lic-credits">—</b></div>
+            <div class="card metric"><span class="muted">Valid until</span><b id="lic-expiry">—</b></div>
+            <div class="card metric"><span class="muted">Computer ID</span><b><code id="lic-machine">…</code> <button class="link" id="btn-copy-machine">Copy</button></b></div>
+          </div>
+
+          <div class="profile-grid">
+            <div class="card">
+              <h3>License</h3>
+              <div class="hint error" id="lic-error" hidden></div>
+              <label class="lbl" for="lic-key">License key</label>
+              <input id="lic-key" type="text" placeholder="AVF-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off">
+              <div class="row-actions" style="margin-top:12px">
+                <button class="btn btn-primary" id="btn-activate">Activate</button>
+                <button class="btn" id="btn-refresh-lic">Check again</button>
+                <button class="btn btn-ghost-danger" id="btn-remove-lic">Remove</button>
+              </div>
+              <p class="hint">A license works on one computer. To move it to a new computer, ask support to reset the computer lock.</p>
+            </div>
+            <div class="card">
+              <h3>Plans at a glance</h3>
+              <ul class="perks">
+                <li><b>Free</b> · every workflow and editor, 1 project per day</li>
+                <li><b>AI Editing</b> · unlimited projects — ₹399/month or ₹2,499/year (save 48%)</li>
+                <li><b>Smart AI Editing</b> · AI shot review + AI Assistant, unlimited editing included — from ₹999</li>
+              </ul>
+              <button class="btn btn-gold" data-goto="pricing">See plans &amp; pricing</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- PRICING -->
+        <section class="pane" id="pane-pricing">
+          <div class="pricing-intro">
+            <h2>Simple plans for every editor</h2>
+            <p class="muted">Pay with UPI, card or net banking. Your license key appears right after payment and is emailed to you.</p>
+          </div>
+
+          <div class="price-switch" id="price-switch">
+            <button data-group="local" class="active">AI Editing<span>Free · Monthly · Yearly</span></button>
+            <button data-group="ai">Smart AI Editing<span>Wedding packs · Unlimited</span></button>
+          </div>
+
+          <div class="price-group" id="group-local">
+            <div class="pg-head"><span class="muted">Automatic trimming, beat sync and silence cutting — everything runs on your computer.</span></div>
+            <div class="plans" id="plans-local">
+              <div class="plan card free-plan">
+                <h3>Free</h3>
+                <div class="price">₹0</div>
+                <div class="per">forever · with a daily limit</div>
+                <ul class="perks">
+                  <li>1 project per day</li>
+                  <li>All workflows &amp; editors</li>
+                  <li>Shake trim, beat sync, silence cut</li>
+                </ul>
+                <button class="btn btn-block" disabled>Current free plan</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="price-group" id="group-ai" hidden>
+            <div class="pg-head"><span class="muted">Smart AI watches your footage, picks the best moments and edits on your command. Unlimited AI Editing included.</span></div>
+            <div class="plans" id="plans-ai"><div class="muted">Loading plans…</div></div>
+          </div>
+
+          <div class="compare card">
+            <h3>What's included</h3>
+            <table>
+              <thead><tr><th></th><th>Free</th><th>AI Editing</th><th>Smart AI Editing</th></tr></thead>
+              <tbody>
+                <tr><td>Projects per day</td><td>1</td><td>Unlimited</td><td>Unlimited</td></tr>
+                <tr><td>Wedding, Reels, YouTube, Music, Podcast, Tutorial</td><td>✓</td><td>✓</td><td>✓</td></tr>
+                <tr><td>DaVinci Resolve · Premiere Pro · EDIUS</td><td>✓</td><td>✓</td><td>✓</td></tr>
+                <tr><td>Smart AI shot review</td><td>—</td><td>—</td><td>✓</td></tr>
+                <tr><td>Smart AI Assistant (Hindi · Hinglish · English)</td><td>—</td><td>—</td><td>✓</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="hint" id="plans-note"></p>
+        </section>
+
+        <!-- SETTINGS -->
+        <section class="pane" id="pane-settings">
+          <div class="settings">
+            <div class="card">
+              <h3>Claude Desktop <span class="opt">optional</span></h3>
+              <p class="hint" style="margin:-6px 0 10px">Only needed if you also want to control your editors from the separate Claude Desktop app. The built-in AI Assistant works without this.</p>
+              <div class="kv"><span>Claude Desktop</span><b id="set-claude">—</b></div>
+              <div class="kv"><span>DaVinci Resolve</span><b id="set-resolve">—</b></div>
+              <div class="kv"><span>Premiere Pro</span><b id="set-premiere">—</b></div>
+              <p class="hint">DaVinci Resolve → Preferences → System → General → set <b>External scripting using</b> to <b>Local</b>.</p>
+              <div class="row-actions">
+                <button class="btn" id="btn-connect-2">Connect Claude Desktop</button>
+                <button class="btn" id="btn-test-resolve">Test DaVinci</button>
               </div>
             </div>
 
-            <div class="form-group">
-              <label id="label-audio-path">Background Music / Song (MP3 / WAV)</label>
-              <div class="input-action">
-                <input type="text" id="input-audio-path" placeholder="Optional: /Music/wedding_song.mp3">
-                <button class="btn btn-secondary" id="btn-browse-audio">Browse</button>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label id="label-sequences">Output Sequences to Create</label>
-              <div class="checkbox-row" id="seq-checkboxes">
-                <label id="lbl-chk-teaser"><input type="checkbox" checked id="chk-teaser"> <span id="text-chk-teaser">01_Teaser_60s (9:16 Vertical Reel)</span></label>
-                <label id="lbl-chk-highlight"><input type="checkbox" checked id="chk-highlight"> <span id="text-chk-highlight">02_Cinematic_Highlight_4m (16:9 Cinema)</span></label>
-                <label id="lbl-chk-fullfilm"><input type="checkbox" checked id="chk-fullfilm"> <span id="text-chk-fullfilm">03_Full_Wedding_Film (Chronological Rituals)</span></label>
-              </div>
-            </div>
-
-            <!-- 3. Edit Corrections & Custom AI Instructions Box -->
-            <div class="form-group ai-correction-card" id="group-correction-prompt">
-              <div class="correction-header">
-                <label for="input-edit-prompt">
-                  ✍️ Edit Corrections &amp; Custom Instructions
-                  <span class="badge badge-correction">Live Prompt Engine</span>
-                </label>
-                <span class="ref-optional-tag">Hinglish / Hindi / English</span>
-              </div>
-              <textarea id="input-edit-prompt" rows="3" placeholder="Edit me jo bhi correction ya instruction dena ho yahan likhein... (e.g. 'Bride entry pe slow motion dalo, dialogues ke waqt background music duck karo, shaky clips ko drop karo aur golden warm grading do')"></textarea>
-              
-              <!-- Quick Prompt Suggestion Chips -->
-              <div class="prompt-chips-wrap">
-                <span class="prompt-chip" data-prompt="Bride entry aur Varmala ceremony par slow motion clips add karo">+ Slow-Mo Ceremony</span>
-                <span class="prompt-chip" data-prompt="Music beat drops aur kicks par fast dynamic cuts rakho">+ Fast Beat Cuts</span>
-                <span class="prompt-chip" data-prompt="Warm golden cinematic color grade apply karo">+ Warm Golden LUT</span>
-                <span class="prompt-chip" data-prompt="Dialogues aur speeches ke waqt background music ducking -15dB karo">+ Soften Dialogue BGM</span>
-                <span class="prompt-chip" data-prompt="Saare dead-air pauses aur awkward pauses cut kar do">+ Cut All Pauses</span>
-                <span class="prompt-chip" data-prompt="Romantic couple moments ko teaser me priority do">+ Couple Golden Moments</span>
-              </div>
-              <div class="correction-actions-row">
-                <button type="button" class="btn btn-sm btn-secondary" id="btn-quick-correction" style="margin-top:6px;">
-                  🔄 Apply Correction to Active Timeline
-                </button>
-              </div>
-              <div class="field-hint" style="margin-top:8px;">
-                💡 <strong>Natural Language Corrections:</strong> Aap kisi bhi bhasha (Hindi, Hinglish, English) me type kar sakte hain. AI cuts ki timing, slow motion, audio volume, aur color grading ko aapke instruction ke anusar adjust karega.
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label>Target Editing Software</label>
-              <div class="radio-row">
-                <label><input type="radio" name="target_nle" value="resolve" checked> 🎬 DaVinci Resolve (Live Media Pool &amp; Timelines)</label>
-                <label><input type="radio" name="target_nle" value="premiere"> 🟣 Adobe Premiere Pro (Native XML &amp; Project Sequence)</label>
-                <label><input type="radio" name="target_nle" value="edius"> 🟡 Grass Valley EDIUS (25 fps .EZP / XML)</label>
-                <label><input type="radio" name="target_nle" value="both"> ⚡ All / Multi-NLE</label>
-              </div>
-            </div>
-
-            <button class="btn btn-primary btn-block" id="btn-run-wedding-ai">
-              ✨ Start AI In-Clip Trimming &amp; Build Timelines
-            </button>
-            <div class="progress" id="wedding-progress"><div class="progress-bar"></div></div>
-            <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;">
-              <button class="btn btn-secondary" id="btn-open-output" style="flex:1">📂 Output Folder</button>
-              <button class="btn btn-secondary" id="btn-open-premiere-xml" style="flex:1">🎬 Send to DaVinci</button>
-              <button class="btn btn-secondary" id="btn-premiere-organize" style="flex:1">📁 Organize Bins</button>
+            <div class="card span-2">
+              <div class="log-head"><h3>Diagnostics</h3><button class="btn btn-sm" id="btn-diag">Refresh</button></div>
+              <div class="diag" id="diag"><span class="muted">Loading…</span></div>
             </div>
           </div>
-
-          <div class="panel-box">
-            <h3>2. Live Processing Output</h3>
-            <div class="console-box" id="wedding-console">
-              <div class="console-line info">[System] Ready to process raw wedding clips.</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Tab: All AI Tools (every MCP function, runnable directly) -->
-      <section class="tab-pane" id="pane-tools">
-        <div class="section-header">
-          <h2>🧰 All AI Tools</h2>
-          <p>Every function Claude Desktop can use, runnable directly from here. Pick a tool, fill the fields and press Run.</p>
-        </div>
-
-        <div class="workflow-grid">
-          <div class="panel-box">
-            <div class="form-group">
-              <label>Search Tools</label>
-              <input type="text" class="text-input" id="tool-search" placeholder="e.g. lut, timeline, audio, lecture">
-            </div>
-            <div class="tool-list" id="tool-list"><div class="muted">Loading tools...</div></div>
-          </div>
-
-          <div class="panel-box">
-            <h3 id="tool-title">Select a tool</h3>
-            <p class="card-desc" id="tool-desc"></p>
-            <form id="tool-form"></form>
-            <button class="btn btn-primary btn-block" id="btn-run-tool" disabled>▶ Run Tool</button>
-            <div class="console-box" id="tool-output" style="margin-top:16px"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Tab: Diagnostics -->
-      <section class="tab-pane" id="pane-diagnostics">
-        <div class="section-header section-header-row">
-          <div class="section-header-text">
-            <h2>🔍 Diagnostics & Status</h2>
-            <p>Environment, installed AI libraries, DaVinci Resolve and Claude Desktop connection details.</p>
-          </div>
-          <div class="cta-group">
-            <button class="btn btn-secondary" id="btn-refresh-diag">🔄 Refresh</button>
-            <button class="btn btn-primary" id="btn-diag-connect">🚀 Re-run CONNECT ALL</button>
-          </div>
-        </div>
-        <div class="diag-grid" id="diag-grid"><div class="muted">Loading diagnostics...</div></div>
-      </section>
-
-      <!-- Tab: Claude Assistant & Natural Language -->
-      <section class="tab-pane" id="pane-commands">
-        <div class="section-header">
-          <h2>💬 Natural Language Commands for Claude AI</h2>
-          <p>You can speak to Claude Desktop in Hindi, Hinglish, or English. Claude executes these operations directly in DaVinci Resolve.</p>
-        </div>
-
-        <div class="prompt-cards-grid">
-          <div class="prompt-card">
-            <span class="prompt-lang">Hinglish / Hindi</span>
-            <p>"DaVinci Resolve connect karo aur current project ka naam batao."</p>
-            <span class="prompt-action">Triggers: <code>resolve_get_status</code></span>
-          </div>
-
-          <div class="prompt-card">
-            <span class="prompt-lang">Hinglish / Hindi</span>
-            <p>"Wedding clips me se shaky start trim karo aur 3-minute highlight timeline banao."</p>
-            <span class="prompt-action">Triggers: <code>ai_create_wedding_timelines</code></span>
-          </div>
-
-          <div class="prompt-card">
-            <span class="prompt-lang">Hinglish / Hindi</span>
-            <p>"Background music ke beats analyze karke timeline par markers lagao."</p>
-            <span class="prompt-action">Triggers: <code>resolve_add_beat_markers</code></span>
-          </div>
-
-          <div class="prompt-card">
-            <span class="prompt-lang">English</span>
-            <p>"Create a vertical 9:16 Instagram reel timeline with the top 2% shots."</p>
-            <span class="prompt-action">Triggers: <code>ai_create_wedding_timelines (format: teaser)</code></span>
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
-  </div>
-
-  <!-- Modal 1: Processing Tier Selection Popup (Free Local vs AI Smart Premium) -->
-  <div class="modal-backdrop" id="modal-tier-select" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;backdrop-filter:blur(8px);align-items:center;justify-content:center;">
-    <div class="modal-card" style="background:#121826;border:1px solid #334155;border-radius:18px;max-width:760px;width:92%;padding:28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.85);position:relative;">
-      <button class="modal-close" id="btn-close-tier-modal" style="position:absolute;top:16px;right:18px;background:none;border:none;color:#94a3b8;font-size:24px;cursor:pointer;">&times;</button>
-      
-      <div style="text-align:center;margin-bottom:24px;">
-        <h2 style="font-size:22px;margin:0 0 8px 0;background:linear-gradient(135deg, #fff, #94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">Choose Your AI Processing Tier</h2>
-        <p style="color:#94a3b8;font-size:13px;margin:0;">Select between 100% Free Local processing or AI Smart Premium (Deep Multimodal Intelligence).</p>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
-        <!-- Card 1: Free Local -->
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:14px;padding:22px;display:flex;flex-direction:column;justify-content:space-between;">
-          <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-              <span style="font-size:16px;font-weight:700;color:#38bdf8;">🟢 Free Community</span>
-              <span style="background:#0284c7;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;">LOCAL OFFLINE</span>
-            </div>
-            <p style="font-size:12px;color:#94a3b8;margin:0 0 14px 0;line-height:1.4;">Zero cost, fast, runs completely on your computer without internet.</p>
-            <ul style="font-size:12px;color:#cbd5e1;padding-left:18px;margin:0 0 20px 0;line-height:1.9;">
-              <li>⚡ 100% On-Device Computer Vision</li>
-              <li>🔒 Zero upload bandwidth &amp; 100% private</li>
-              <li>✂️ In-Clip Blur &amp; Camera Shake Trimmer</li>
-              <li>🎵 Local FFT Music Beat Synchronization</li>
-              <li>🎞️ Export to DaVinci, Premiere &amp; EDIUS</li>
-              <li>♾️ Unlimited offline use forever</li>
-            </ul>
-          </div>
-          <button class="btn btn-secondary btn-block" id="btn-select-free" style="padding:12px;font-weight:700;border:1px solid #0284c7;color:#38bdf8;cursor:pointer;">
-            🚀 Start Free Processing
-          </button>
-        </div>
-
-        <!-- Card 2: AI Smart Premium -->
-        <div style="background:linear-gradient(145deg, #1e1b4b, #1e293b);border:1px solid #eab308;border-radius:14px;padding:22px;display:flex;flex-direction:column;justify-content:space-between;box-shadow:0 0 25px rgba(234, 179, 8, 0.15);">
-          <div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-              <span style="font-size:16px;font-weight:700;color:#fde047;">👑 AI Smart Premium</span>
-              <span id="badge-tier-modal-credits" style="background:#eab308;color:#000;font-size:10px;font-weight:800;padding:3px 8px;border-radius:10px;">CREDITS: 0</span>
-            </div>
-            <p style="font-size:12px;color:#cbd5e1;margin:0 0 14px 0;line-height:1.4;">Studio-grade Deep Multimodal Cloud AI for high-budget cinematic films.</p>
-            <ul style="font-size:12px;color:#fef08a;padding-left:18px;margin:0 0 20px 0;line-height:1.9;">
-              <li>🧠 Google Gemini Vision &amp; GPT-4o Multimodal</li>
-              <li>🎭 Emotional Peaks &amp; Facial Expressions (Joy/Tears)</li>
-              <li>🎙️ Speech-to-Text Ceremony Vows &amp; Mantras</li>
-              <li>🎨 Reference Reel 100% Pacing &amp; 3D LUT Tone</li>
-              <li>💳 Deducts 1 Wedding Credit per full shoot</li>
-            </ul>
-          </div>
-          <button class="btn btn-primary btn-block" id="btn-select-premium" style="padding:12px;font-weight:700;background:linear-gradient(135deg, #eab308, #ca8a04);color:#000;cursor:pointer;">
-            ✨ Start AI Smart Premium
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Modal 2: SaaS License & Credits Manager -->
-  <div class="modal-backdrop" id="modal-license-manager" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;backdrop-filter:blur(8px);align-items:center;justify-content:center;">
-    <div class="modal-card" style="background:#121826;border:1px solid #334155;border-radius:18px;max-width:560px;width:92%;padding:26px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.85);position:relative;">
-      <button class="modal-close" id="btn-close-license-modal" style="position:absolute;top:16px;right:18px;background:none;border:none;color:#94a3b8;font-size:24px;cursor:pointer;">&times;</button>
-      
-      <div style="margin-bottom:20px;">
-        <h2 style="font-size:20px;margin:0 0 6px 0;color:#fde047;">👑 SaaS License &amp; Wedding Credits</h2>
-        <p style="color:#94a3b8;font-size:12px;margin:0;">Manage your AI Video Flow subscription and per-wedding credits safely.</p>
-      </div>
-
-      <!-- Current Status Card -->
-      <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:16px;margin-bottom:18px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-          <span style="color:#94a3b8;font-size:12px;">Active Plan:</span>
-          <strong id="lic-card-plan" style="color:#fde047;font-size:13px;">Free Community Edition</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
-          <span style="color:#94a3b8;font-size:12px;">Remaining Wedding Credits:</span>
-          <strong id="lic-card-credits" style="color:#38bdf8;font-size:13px;">0 Credits</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <span style="color:#94a3b8;font-size:12px;">Machine Hardware ID:</span>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <code id="lic-card-machine-id" style="font-size:11px;background:#0f172a;padding:3px 8px;border-radius:4px;color:#a5f3fc;font-family:monospace;">...</code>
-            <button class="btn btn-secondary" id="btn-copy-machine-id" style="padding:3px 8px;font-size:10px;cursor:pointer;">Copy</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Activation Form -->
-      <div class="form-group" style="margin-bottom:14px;">
-        <label style="font-size:12px;color:#e2e8f0;display:block;margin-bottom:6px;">License Key (from your website purchase)</label>
-        <input type="text" class="text-input" id="txt-license-key" placeholder="e.g. AIFLOW-PREM-50-XXXX-XXXX" style="width:100%;box-sizing:border-box;">
-      </div>
-      <div class="form-group" style="margin-bottom:18px;">
-        <label style="font-size:12px;color:#e2e8f0;display:block;margin-bottom:6px;">Registered Email (Optional)</label>
-        <input type="email" class="text-input" id="txt-license-email" placeholder="client@example.com" style="width:100%;box-sizing:border-box;">
-      </div>
-
-      <div style="display:flex;gap:10px;margin-bottom:18px;">
-        <button class="btn btn-primary" id="btn-activate-license" style="flex:2;padding:12px;font-weight:700;cursor:pointer;">
-          🔑 Activate License Key
-        </button>
-        <button class="btn btn-secondary" id="btn-deactivate-license" style="flex:1;padding:12px;font-size:12px;color:#ef4444;cursor:pointer;">
-          Deactivate
-        </button>
-        <div style="font-size:11px;color:#64748b;margin-bottom:8px;text-align:center;">
-          Licensing Domain: <strong style="color:#38bdf8;">flow.aiphotoflow.in</strong>
-        </div>
-      </div>
-
-      <div style="text-align:center;padding-top:14px;border-top:1px solid #334155;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:8px;">
-        <button class="btn btn-secondary" id="btn-open-admin-portal" style="padding:7px 12px;font-size:11px;color:#a5f3fc;border:1px solid #0284c7;cursor:pointer;">
-          ⚙️ Local Admin (Offline)
-        </button>
-        <a href="https://flow.aiphotoflow.in/admin.php" target="_blank" class="btn btn-secondary" style="display:inline-block;padding:7px 12px;font-size:11px;color:#67e8f9;border:1px solid #0891b2;text-decoration:none;">
-          🌐 Cloud Admin Portal →
-        </a>
-        <a href="https://flow.aiphotoflow.in/" target="_blank" class="btn btn-secondary" style="display:inline-block;padding:7px 12px;font-size:11px;color:#fde047;border:1px solid #eab308;text-decoration:none;">
-          🛒 Buy Credits on flow.aiphotoflow.in →
-        </a>
-      </div>
-    </div>
   </div>
 
   <script src="app.js"></script>

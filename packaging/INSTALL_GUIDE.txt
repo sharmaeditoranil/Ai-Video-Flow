@@ -1,0 +1,43 @@
+AI Video Flow - Install Guide
+=============================
+
+MAC (Apple Silicon M1/M2/M3/M4 or Intel - use the matching DMG)
+  1. Drag "AI Video Flow" into the Applications folder.
+  2. Open Applications and double-click AI Video Flow.
+  3. If macOS says it cannot verify the app:
+       System Settings -> Privacy & Security -> scroll down -> "Open Anyway" -> Open.
+     (Only needed the first time.)
+
+WINDOWS 10 / 11
+  1. Run AI-Video-Flow-Windows-Setup.exe.
+  2. If Windows shows "Windows protected your PC": click "More info" -> "Run anyway".
+  3. Open "AI Video Flow" from the Desktop or Start Menu.
+
+FIRST USE
+  - The free plan works right away (1 project per day, no internet needed).
+  - DaVinci Resolve: Preferences -> System -> General ->
+    "External scripting using" = Local -> Save -> restart Resolve.
+  - Premiere Pro and EDIUS: timelines are saved as XML in the "AI-Video-Flow-Output"
+    folder in your home folder (AI Studio -> Output folder).
+  - Bought a plan? Open "My Profile", paste your license key and press Activate.
+  - Plans: open "Pricing" inside the app.
+
+----------------------------------------------------------------
+Hindi / Hinglish
+
+MAC
+  1. "AI Video Flow" ko Applications folder me drag kijiye.
+  2. Applications me app par double-click kijiye.
+  3. Agar Mac kahe "cannot verify": System Settings -> Privacy & Security ->
+     neeche "Open Anyway" -> Open. (Sirf pehli baar.)
+
+WINDOWS
+  1. AI-Video-Flow-Windows-Setup.exe chalaiye.
+  2. "Windows protected your PC" aaye to "More info" -> "Run anyway".
+  3. Desktop ya Start Menu se "AI Video Flow" kholiye.
+
+SHURUAAT
+  - Free plan turant chalta hai (roz 1 project, internet ki zaroorat nahi).
+  - DaVinci Resolve: Preferences -> System -> General ->
+    "External scripting using" = Local -> Save -> Resolve dobara kholiye.
+  - Plan khareeda hai? "My Profile" me license key daalkar Activate dabaiye.

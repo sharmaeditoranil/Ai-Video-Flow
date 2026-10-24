@@ -37,3 +37,13 @@ build/
 dist/AI-Video-Flow-Mac-*.dmg
 dist/AI-Video-Flow-Windows-Setup.exe
 dist/AI-Video-Flow-Windows-Portable.zip
+
+# Server secrets
+server/config.php
+server/data/
+dist/flow-server-bundle.zip
+dist/index.php
+dist/htaccess.txt
+dist/flow-server-bundle*/
+server/config*.php
+!server/config.sample.php

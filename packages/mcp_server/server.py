@@ -217,7 +217,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_set_clip_speed",
-        "description": "Adjusts playback speed (Slow Motion 50%, Speed Ramping 200%, or Reverse -100%) and retime process (Optical Flow) for a clip on the timeline.",
+        "description": "Sets the retime method (Optical Flow / Frame Blend / Nearest) of a clip and tries to set its speed; if DaVinci refuses the speed change the result tells the user the Change Clip Speed steps.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -231,7 +231,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_set_audio_volume",
-        "description": "Adjusts audio volume gain in decibels for a specific audio track in Fairlight.",
+        "description": "DaVinci's scripting API cannot change audio levels; returns Fairlight fader instructions.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -243,7 +243,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_apply_auto_ducking",
-        "description": "Applies Auto-Audio Ducking: automatically lowers background music volume whenever dialogue or vows are spoken.",
+        "description": "DaVinci's scripting API cannot automate audio levels; returns Fairlight Ducker instructions. Premiere Pro XML exports already include ducking.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -255,7 +255,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_normalize_audio",
-        "description": "Normalizes audio track loudness to streaming standards (-14 LUFS for YouTube/Instagram, -23 LUFS for Broadcast).",
+        "description": "DaVinci's scripting API cannot normalize audio; returns the exact Normalize Audio Levels steps for the user.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -293,7 +293,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_set_manual_color",
-        "description": "Manually adjusts Primary Color Wheels (Lift, Gamma, Gain), Color Temperature (Warm/Cool), Tint, Saturation, and Contrast for a clip on the timeline.",
+        "description": "Sets primary CDL values on node 1 of a clip: gain (slope), lift (offset), gamma (power) and saturation. Temperature, tint and contrast are not available in DaVinci's API and are reported back.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -324,7 +324,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_create_wedding_node_tree",
-        "description": "Builds a professional 5-node color pipeline on a clip: Node 1 (Exposure/Balance), Node 2 (Face/Skin Smooth), Node 3 (Contrast/Sat), Node 4 (Wedding Look/LUT), Node 5 (Glow/Vignette).",
+        "description": "Applies a wedding look (Royal Warm, Teal & Orange, Soft Pastel or Neutral) as a CDL grade on node 1 of a clip. The API cannot add nodes; the result explains how to add more.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -337,7 +337,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_apply_face_smoothing",
-        "description": "Applies Beauty Retouching, Face Smoothing, and Skin Tone enhancement: soft skin texture, warm skin glow, and shine reduction.",
+        "description": "Adds gentle skin warmth to a clip with a CDL grade on node 1. Real skin smoothing needs the Face Refinement / Beauty effect added by hand (explained in the result).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -352,7 +352,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_auto_white_balance",
-        "description": "Automatically neutralizes harsh yellow wedding stage lighting or mixed LED casts, calibrating a natural neutral white point.",
+        "description": "Applies a cool-shift CDL grade on node 1 to counter warm tungsten / halogen wedding light.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -377,7 +377,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_set_node_label",
-        "description": "Sets a custom label on a node in the Color Page (e.g. '01_Exposure', '02_Skin_Smooth').",
+        "description": "Not possible through DaVinci's scripting API (it cannot rename nodes); returns how to do it in the Color page.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -658,7 +658,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_set_audio_fade",
-        "description": "Applies smooth audio fade in and fade out (in frames) on audio clips to prevent audio pops/clicks at cut points.",
+        "description": "DaVinci's scripting API cannot set audio fades; returns how to drag the fade handles.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -672,7 +672,7 @@ MCP_TOOLS = [
     },
     {
         "name": "resolve_add_cinematic_letterbox",
-        "description": "Applies Hollywood widescreen cinematic blanking bars (2.39:1 or 2.35:1 Anamorphic) to the project output.",
+        "description": "Adds 2.39:1 or 2.35:1 cinematic letterbox bars by cropping the top and bottom of every clip on video track 1.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -861,6 +861,17 @@ MCP_TOOLS = [
 # ----------------------------------------------------------------------
 # DISPATCH HANDLER
 # ----------------------------------------------------------------------
+def _clip_dicts(items: Any) -> List[Dict[str, Any]]:
+    """Accepts clip dicts or plain file paths (models sometimes send just the paths)."""
+    out = []
+    for it in items or []:
+        if isinstance(it, str):
+            out.append({"path": it, "file_path": it})
+        elif isinstance(it, dict):
+            out.append(it)
+    return out
+
+
 def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
     """Executes requested tool and returns structured response."""
     logger.info(f"Executing tool '{tool_name}' with args: {arguments}")
@@ -1171,7 +1182,7 @@ def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
     elif tool_name == "ai_export_timeline_to_nle":
         return otio_exporter.export_timeline(
             timeline_name=arguments.get("timeline_name", "AI_Wedding_Timeline"),
-            clips=arguments.get("clips", []),
+            clips=_clip_dicts(arguments.get("clips")),
             fps=float(arguments.get("fps", 25.0)),
             output_format=arguments.get("output_format", "xml")
         )
@@ -1297,8 +1308,8 @@ def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
     elif tool_name == "ai_suggest_broll_cutaways":
         from packages.ai_engine.broll_placer import broll_placer
         return broll_placer.suggest_broll_cutaways(
-            primary_clips=arguments.get("primary_clips", []),
-            all_analyzed_clips=arguments.get("all_analyzed_clips", []),
+            primary_clips=_clip_dicts(arguments.get("primary_clips")),
+            all_analyzed_clips=_clip_dicts(arguments.get("all_analyzed_clips")),
             target_track=int(arguments.get("target_track", 2))
         )
 

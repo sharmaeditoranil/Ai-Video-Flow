@@ -8,6 +8,10 @@ Serves static dashboard files and exposes REST API endpoints for:
 - Raw footage folder scanning
 - Live footage analysis & timeline generation (background job with live log)
 - Generic runner for every MCP tool (same functions Claude Desktop uses)
+- AI Smart Premium: Claude shot review + AI assistant (via the license server's relay)
+
+Every /api/ call must carry the per-launch session token (X-AVF-Token) and a localhost Host header,
+so web pages open in the user's browser cannot drive this server.
 """
 
 import os
@@ -20,6 +24,7 @@ import threading
 import subprocess
 import traceback
 import logging
+import hmac
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from typing import Dict, Any, List, Optional
 
@@ -43,6 +48,42 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
 APP_VERSION = "1.1.0"  # launcher only reuses an already-running server with the same version
+
+SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
+ALLOWED_HOSTS: set = set()
+
+# Free plan: projects per day (any paid plan removes the limit)
+FREE_DAILY_PROJECTS = 1
+USAGE_FILE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "usage.json")
+
+
+def _usage_today() -> int:
+    try:
+        with open(USAGE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return int(data.get("count", 0)) if data.get("date") == time.strftime("%Y-%m-%d") else 0
+    except Exception:
+        return 0
+
+
+def _count_project() -> None:
+    if license_manager.get_status().get("local_unlimited"):
+        return
+    os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
+    with open(USAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump({"date": time.strftime("%Y-%m-%d"), "count": _usage_today() + 1}, f)
+
+
+def free_projects_left() -> Optional[int]:
+    """None = unlimited (paid plan)."""
+    if license_manager.get_status().get("local_unlimited"):
+        return None
+    return max(0, FREE_DAILY_PROJECTS - _usage_today())
+
+
+# AI assistant conversation (one chat per app session)
+ASSISTANT_HISTORY: List[Dict[str, Any]] = []
+ASSISTANT_LOCK = threading.Lock()
 
 # Background jobs: job_id -> {"status", "logs", "result", "error"}
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -365,6 +406,230 @@ def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str, audio_path: str = "",
+                  markers: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, Any]:
+    """Builds every plan in the chosen editor(s). `markers` maps plan key -> [{"seconds", "name"}]."""
+    # DaVinci Resolve: live Media Pool import + timelines
+    created_resolve = []
+    if target_nle in ("resolve", "both"):
+        if resolve_adapter.is_connected():
+            _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
+            used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
+            items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
+            items_by_path = {}
+            for it in items:
+                try:
+                    items_by_path[os.path.normpath(it.GetClipProperty("File Path"))] = it
+                except Exception:
+                    pass
+            _log(job_id, f"Imported {len(items)} clips into Resolve.")
+            for key, p in plans.items():
+                name = p.get("sequence_name")
+                if resolve_adapter.create_timeline(name):
+                    placed = _append_plan_to_resolve(p, items_by_path)
+                    created_resolve.append(name)
+                    _log(job_id, f"  ✨ DaVinci Resolve: {name} created with {placed} clips", "info")
+                    fps = float(p.get("fps") or 25.0)
+                    for m in (markers or {}).get(key, []):
+                        resolve_adapter.add_timeline_marker(int(m["seconds"] * fps), "Blue", m["name"], "")
+            resolve_adapter.save_project()
+        else:
+            _log(job_id, "DaVinci Resolve is not connected — skipped the Resolve timelines (the plan is saved).", "warning")
+
+    # Adobe Premiere Pro: FCP XML
+    created_premiere = []
+    if target_nle in ("premiere", "both"):
+        _log(job_id, "Generating FCP XML sequences for Adobe Premiere Pro...", "info")
+        for p in plans.values():
+            res = premiere_adapter.export_plan_to_premiere_xml(p)
+            if res.get("success"):
+                xml_path = res["xml_path"]
+                created_premiere.append(xml_path)
+                _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} ({res.get('clip_count', 0)} clips)", "info")
+                if target_nle == "premiere" or premiere_adapter.is_running():
+                    premiere_adapter.open_timeline(xml_path)
+                    _log(job_id, f"  🚀 Sent to Adobe Premiere Pro: {os.path.basename(xml_path)}", "info")
+
+    # Grass Valley EDIUS: FCP XML
+    created_edius = []
+    if target_nle in ("edius", "both"):
+        _log(job_id, "Generating EDIUS-compatible FCP XML sequences...", "info")
+        edius_dir = os.path.join(OUTPUT_DIR, "edius_timelines")
+        os.makedirs(edius_dir, exist_ok=True)
+        for p_key, p in plans.items():
+            seq_name = p.get("sequence_name") or f"EDIUS_{p_key}"
+            xml_out = os.path.join(edius_dir, f"{seq_name}_EDIUS.xml")
+            res = edius_adapter.export_plan_to_edius_xml(
+                plan=p, output_xml_path=xml_out, audio_file_path=audio_path, sequence_name=seq_name,
+                aspect_ratio=p.get("aspect_ratio", "16:9"), broll_clips=p.get("broll_clips"),
+            )
+            if res.get("success"):
+                created_edius.append(xml_out)
+                _log(job_id, f"  🟡 EDIUS timeline: {os.path.basename(xml_out)} ({res.get('clip_count', 0)} clips)", "info")
+
+    _progress(job_id, 100)
+    summary = []
+    if created_resolve:
+        summary.append(f"{len(created_resolve)} in DaVinci Resolve")
+    if created_premiere:
+        summary.append(f"{len(created_premiere)} XMLs in Adobe Premiere Pro")
+    if created_edius:
+        summary.append(f"{len(created_edius)} XMLs for Grass Valley EDIUS")
+    _log(job_id, f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready.", "info")
+    return {"timelines_created": created_resolve, "premiere_xmls": created_premiere, "edius_xmls": created_edius, "plans": plans}
+
+
+def _fmt_ts(sec: float) -> str:
+    sec = int(sec)
+    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60:02d}:{sec % 60:02d}"
+
+
+def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, mode: str, cut_level: str = "normal") -> None:
+    """Podcasts, tutorials and classes: removes silences/dead air, builds a clean edit, shorts or chapters."""
+    try:
+        import cv2
+        import numpy as np
+        import librosa
+        from packages.ai_engine.audio_io import load_audio
+
+        # Normal keeps natural breathing room; Tight cuts every hesitation
+        top_db, min_gap, pad = (30.0, 0.45, 0.20) if cut_level != "tight" else (25.0, 0.25, 0.10)
+        label = "Podcast" if mode == "podcast" else "Tutorial"
+
+        scan = scan_folder(folder)
+        if not scan["success"]:
+            raise RuntimeError(scan["error"])
+        videos = sorted(scan["videos"])
+        if not videos:
+            raise RuntimeError("No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).")
+        _log(job_id, f"{label} mode · {len(videos)} recording(s) · silence cutting: {'Tight' if cut_level == 'tight' else 'Normal'}", "info")
+
+        clean_clips: List[Dict[str, Any]] = []
+        pauses: List[float] = []          # edited-timeline seconds where a long pause was removed
+        energy: List[tuple] = []          # (edited_start_sec, rms) per kept second, for picking short clips
+        timeline_pos = 0.0
+        total_src = 0.0
+
+        for i, vp in enumerate(videos, 1):
+            cap = cv2.VideoCapture(vp)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            cap.release()
+            _log(job_id, f"[{i}/{len(videos)}] Listening to {os.path.basename(vp)}…")
+            try:
+                y, sr = load_audio(vp, 16000)
+            except Exception as e:
+                _log(job_id, f"  Skipped (no readable audio): {e}", "warning")
+                continue
+            dur = len(y) / sr
+            total_src += dur
+            intervals = librosa.effects.split(y, top_db=top_db, frame_length=2048, hop_length=512)
+
+            # Merge speech parts separated by very short gaps so words are never clipped
+            merged: List[List[float]] = []
+            for a, b in intervals:
+                s0, s1 = a / sr, b / sr
+                if merged and s0 - merged[-1][1] < min_gap:
+                    merged[-1][1] = s1
+                else:
+                    if merged and s0 - merged[-1][1] >= 2.0:
+                        pauses.append(timeline_pos + sum(m[1] - m[0] for m in merged))
+                    merged.append([s0, s1])
+
+            for s0, s1 in merged:
+                s0, s1 = max(0.0, s0 - pad), min(dur, s1 + pad)
+                if s1 - s0 < 0.4:
+                    continue
+                seg = y[int(s0 * sr):int(s1 * sr)]
+                for k in range(0, len(seg) // sr):
+                    energy.append((timeline_pos + k, float(np.sqrt(np.mean(seg[k * sr:(k + 1) * sr] ** 2)))))
+                clean_clips.append({
+                    "clip_name": os.path.basename(vp), "file_path": vp,
+                    "timeline_start": round(timeline_pos, 2), "timeline_end": round(timeline_pos + s1 - s0, 2),
+                    "in_frame": int(s0 * fps), "out_frame": int(s1 * fps), "duration": round(s1 - s0, 2),
+                    "in_seconds": round(s0, 2), "out_seconds": round(s1, 2), "has_dialogue": True,
+                })
+                timeline_pos += s1 - s0
+            _progress(job_id, int(i / len(videos) * 70))
+
+        if not clean_clips:
+            raise RuntimeError("No speech was found. Check that the recordings have audio.")
+        removed = total_src - timeline_pos
+        _log(job_id, f"Clean edit: {_fmt_ts(total_src)} → {_fmt_ts(timeline_pos)} "
+                     f"({removed / 60:.1f} min of silence removed, {len(clean_clips)} cuts)", "info")
+
+        fps0 = cv2.VideoCapture(videos[0]).get(cv2.CAP_PROP_FPS) or 25.0
+        plans: Dict[str, Dict[str, Any]] = {}
+        markers: Dict[str, List[Dict[str, Any]]] = {}
+        if "clean" in formats:
+            plans["clean"] = {"sequence_name": f"01_{label}_Clean_Edit", "format": f"{label} clean edit",
+                              "aspect_ratio": "16:9", "fps": fps0, "total_duration": round(timeline_pos, 2),
+                              "clip_count": len(clean_clips), "clips": clean_clips}
+
+        # Chapters: split at long pauses, at least 2 minutes apart
+        chapters = [0.0]
+        for t in pauses:
+            if t - chapters[-1] >= 120 and timeline_pos - t >= 60:
+                chapters.append(t)
+        if "chapters" in formats:
+            lines = [f"{_fmt_ts(t)} Chapter {n}" for n, t in enumerate(chapters, 1)]
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            ch_file = os.path.join(OUTPUT_DIR, f"{mode}_youtube_chapters_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+            with open(ch_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            markers["clean"] = [{"seconds": t, "name": f"Chapter {n}"} for n, t in enumerate(chapters, 1)]
+            _log(job_id, f"{len(chapters)} YouTube chapters saved: {ch_file} (rename the titles before publishing)", "info")
+
+        # Shorts: the most energetic 45 s stretches of the clean edit, as separate vertical timelines
+        if "shorts" in formats and timeline_pos >= 60:
+            win = 45
+            per_sec = dict(energy)
+            scores = [(t, sum(per_sec.get(t + k, 0.0) for k in range(win))) for t in range(0, int(timeline_pos) - win, 5)]
+            picked: List[int] = []
+            for t, _ in sorted(scores, key=lambda x: x[1], reverse=True):
+                if all(abs(t - p) >= win for p in picked):
+                    picked.append(t)
+                if len(picked) == 3:
+                    break
+            for n, start in enumerate(sorted(picked), 1):
+                end = start + win
+                clips = []
+                for c in clean_clips:
+                    a, b = max(start, c["timeline_start"]), min(end, c["timeline_end"])
+                    if b - a < 0.4:
+                        continue
+                    off_a, off_b = a - c["timeline_start"], b - c["timeline_start"]
+                    f = c["out_frame"] - c["in_frame"]
+                    scale = f / max(0.01, c["duration"])
+                    clips.append({**c, "in_frame": c["in_frame"] + int(off_a * scale), "out_frame": c["in_frame"] + int(off_b * scale),
+                                  "duration": round(b - a, 2)})
+                plans[f"short{n}"] = {"sequence_name": f"0{n + 1}_{label}_Short_{n}_9x16", "aspect_ratio": "9:16 (1080x1920)",
+                                      "fps": fps0, "total_duration": win, "clip_count": len(clips), "clips": clips}
+                _log(job_id, f"Short {n}: {_fmt_ts(start)} – {_fmt_ts(end)} of the clean edit", "info")
+        elif "shorts" in formats:
+            _log(job_id, "Recording is too short for separate shorts.", "warning")
+
+        if not plans:
+            raise RuntimeError("Tick at least one timeline to build.")
+        _progress(job_id, 80)
+
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
+        with open(plan_file, "w", encoding="utf-8") as f:
+            json.dump({"folder": folder, "mode": mode, "plans": plans, "target_nle": target_nle, "audio": ""}, f, indent=2, default=str)
+        _log(job_id, f"Edit plan saved: {plan_file}", "info")
+
+        result = _export_plans(job_id, plans, target_nle, "", markers)
+        result["plan_file"] = plan_file
+        _count_project()
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", result=result)
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        _log(job_id, f"ERROR: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
+
+
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "", tier: str = "free") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
@@ -373,16 +638,14 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         is_premium = (tier == "premium")
         if is_premium:
+            license_manager.refresh()
             status = license_manager.get_status()
-            if not status.get("is_premium"):
-                raise RuntimeError(f"License Error: AI Smart Premium requires an active license key or credits. Current status: {status.get('tier_display')}. Please activate a license or select Free Local Mode.")
-            credit_res = license_manager.consume_wedding_credit(job_name=f"Wedding Shoot: {os.path.basename(folder)}")
-            if not credit_res.get("success"):
-                raise RuntimeError(f"Credit Error: {credit_res.get('error')}")
-            _log(job_id, f"👑 [AI Smart Premium Mode Active] Deducted 1 wedding credit. Remaining credits: {credit_res.get('credits_remaining')}", "info")
-            _log(job_id, "✨ Activating Deep Multimodal Scene Understanding & Emotional Analysis...", "info")
+            if not status.get("has_credits"):
+                raise RuntimeError(status.get("error") or "AI Smart Premium needs an active license with wedding credits "
+                                   "(Settings → License). Or untick 'AI shot review' to run the free local edit.")
+            _log(job_id, "👑 AI Smart Premium: Smart AI will review your shots after the local analysis.", "info")
         else:
-            _log(job_id, "🟢 [Free Community Local Mode] 100% On-Device Offline Processing (Unlimited, zero cost).", "info")
+            _log(job_id, "Local mode: everything runs on this computer.", "info")
 
         _log(job_id, f"Scanning footage folder: {folder} (Workflow: {mode.upper()})", "info")
         if instructions:
@@ -450,16 +713,9 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                              f"{len(beat_times or [])} beats detected.")
             else:
                 _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
-        # 2.5. Cloud AI Deep Multimodal Analysis (AI Smart Premium Tier)
+        # 2.5. AI Smart Premium: Claude reviews one frame per clip; 1 credit only when the review succeeds
         if is_premium:
-            _log(job_id, "🧠 Cloud AI: Analyzing ceremony emotions, sacred vows & story pacing...", "info")
-            try:
-                sample_frames = []
-                cloud_res = cloud_ai_client.analyze_ceremony_multimodal(sample_frames, audio_transcript=instructions)
-                _log(job_id, f"  ✨ Directorial Guidance: {cloud_res.get('story_guidance')}", "info")
-                _log(job_id, f"  🎨 Color Recommendation: {cloud_res.get('color_recommendation')}", "info")
-            except Exception as e:
-                _log(job_id, f"Cloud AI guidance note: {e}", "warning")
+            ai_review_clips(job_id, analyzed, instructions, os.path.basename(folder))
 
         _progress(job_id, 75)
 
@@ -486,31 +742,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 p["sequence_name"] = "02_YouTube_Shorts_Highlights"
                 p["aspect_ratio"] = "9:16 (1080x1920)"
                 plans["teaser"] = p
-        elif mode == "podcast":
-            if "teaser" in formats or "highlight" in formats:
-                p = story_planner.plan_full_film(analyzed)
-                p["sequence_name"] = "01_Podcast_Full_Episode"
-                plans["highlight"] = p
-            if "full_film" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True)
-                p["sequence_name"] = "02_Viral_Podcast_Clip_9x16"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
-                plans["teaser"] = p
-        elif mode == "commercial":
-            if "teaser" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=False)
-                p["sequence_name"] = "01_Commercial_Ad_30s"
-                plans["teaser"] = p
-            if "highlight" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=15.0, is_vertical=True)
-                p["sequence_name"] = "02_Social_Teaser_15s"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
-                plans["highlight"] = p
-        elif mode == "lecture":
-            if "teaser" in formats or "highlight" in formats:
-                p = story_planner.plan_full_film(analyzed)
-                p["sequence_name"] = "01_Masterclass_Lecture_Clean"
-                plans["highlight"] = p
         elif mode == "music_video":
             if "teaser" in formats or "highlight" in formats:
                 p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=180.0)
@@ -565,89 +796,102 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             }, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        # 5. Build timelines in DaVinci Resolve
-        created_resolve = []
-        if target_nle in ("resolve", "both"):
-            if resolve_adapter.is_connected():
-                _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
-                used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
-                items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
-                items_by_path = {}
-                for it in items:
-                    try:
-                        items_by_path[os.path.normpath(it.GetClipProperty("File Path"))] = it
-                    except Exception:
-                        pass
-                _log(job_id, f"Imported {len(items)} clips into Resolve.")
-                for p in plans.values():
-                    name = p.get("sequence_name")
-                    if resolve_adapter.create_timeline(name):
-                        placed = _append_plan_to_resolve(p, items_by_path)
-                        created_resolve.append(name)
-                        _log(job_id, f"  ✨ DaVinci Resolve: {name} created with {placed} trimmed clips", "info")
-                resolve_adapter.save_project()
-            else:
-                _log(job_id, "DaVinci Resolve is not connected — skipped Resolve timeline build.", "warning")
-
-        # 6. Build timelines for Adobe Premiere Pro
-        created_premiere = []
-        if target_nle in ("premiere", "both"):
-            _log(job_id, "Generating FCP XML sequences for Adobe Premiere Pro...", "info")
-            for p in plans.values():
-                res = premiere_adapter.export_plan_to_premiere_xml(p)
-                if res.get("success"):
-                    xml_path = res["xml_path"]
-                    created_premiere.append(xml_path)
-                    _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} generated ({res.get('clip_count', 0)} clips)", "info")
-                    # Auto-open in Premiere Pro if Premiere is target or already running
-                    if target_nle == "premiere" or premiere_adapter.is_running():
-                        premiere_adapter.open_timeline(xml_path)
-                        _log(job_id, f"  🚀 Sent to Adobe Premiere Pro: {os.path.basename(xml_path)}", "info")
-
-        # 7. Build timelines for Grass Valley EDIUS (Windows FCP XML)
-        created_edius = []
-        if target_nle in ("edius", "both"):
-            _log(job_id, "Generating EDIUS-compatible FCP XML sequences...", "info")
-            edius_dir = os.path.join(OUTPUT_DIR, "edius_timelines")
-            os.makedirs(edius_dir, exist_ok=True)
-            for p_key, p in plans.items():
-                seq_name = p.get("sequence_name") or f"EDIUS_{p_key}"
-                xml_out = os.path.join(edius_dir, f"{seq_name}_EDIUS.xml")
-                res = edius_adapter.export_plan_to_edius_xml(
-                    plan=p,
-                    output_xml_path=xml_out,
-                    audio_file_path=audio_path,
-                    sequence_name=seq_name,
-                    aspect_ratio=p.get("aspect_ratio", "16:9"),
-                    broll_clips=p.get("broll_clips")
-                )
-                if res.get("success"):
-                    created_edius.append(xml_out)
-                    _log(job_id, f"  🟡 EDIUS Timeline Exported: {os.path.basename(xml_out)} ({res.get('clip_count', 0)} clips)", "info")
-
-        _progress(job_id, 100)
-        summary = []
-        if created_resolve:
-            summary.append(f"{len(created_resolve)} in DaVinci Resolve")
-        if created_premiere:
-            summary.append(f"{len(created_premiere)} XMLs in Adobe Premiere Pro")
-        if created_edius:
-            summary.append(f"{len(created_edius)} XMLs for Grass Valley EDIUS")
-        final_msg = f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready."
-        _log(job_id, final_msg, "info")
+        result = _export_plans(job_id, plans, target_nle, audio_path)
+        result["plan_file"] = plan_file
+        _count_project()
         with JOBS_LOCK:
-            JOBS[job_id].update(status="done", result={
-                "timelines_created": created_resolve,
-                "premiere_xmls": created_premiere,
-                "edius_xmls": created_edius,
-                "plan_file": plan_file,
-                "plans": plans
-            })
+            JOBS[job_id].update(status="done", result=result)
     except Exception as e:
         logger.error(traceback.format_exc())
         _log(job_id, f"ERROR: {e}", "error")
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(e))
+
+
+def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:
+    import cv2
+    cap = cv2.VideoCapture(clip["file_path"])
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        t = (float(clip.get("in_seconds", 0)) + float(clip.get("out_seconds", clip.get("duration", 0)))) / 2
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return None
+        h, w = frame.shape[:2]
+        frame = cv2.resize(frame, (384, max(1, int(h * 384 / w))))
+        path = os.path.join(out_dir, f"shot_{idx:03d}.jpg")
+        cv2.imwrite(path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        return path
+    finally:
+        cap.release()
+
+
+def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: str, job_name: str) -> None:
+    """Claude scores the best candidate clips; the scores reshape which shots the planners pick."""
+    candidates = sorted(analyzed, key=lambda c: c.get("quality_score", 0), reverse=True)[:40]
+    thumb_dir = os.path.join(OUTPUT_DIR, ".thumbs")
+    os.makedirs(thumb_dir, exist_ok=True)
+    pairs = []
+    for clip in candidates:
+        path = _thumbnail(clip, thumb_dir, len(pairs))
+        if path:
+            pairs.append((clip, path))
+    if not pairs:
+        _log(job_id, "AI review skipped: could not read frames from the clips.", "warning")
+        return
+    _log(job_id, f"Sending {len(pairs)} preview frames to Smart AI for review…", "info")
+    try:
+        review = cloud_ai_client.review_shots([p for _, p in pairs], instructions)
+    except Exception as e:
+        _log(job_id, f"AI review failed, continuing with the local edit (no credit used): {e}", "warning")
+        return
+    for i, (clip, _) in enumerate(pairs):
+        s = review["shots"].get(i)
+        if not s:
+            continue
+        clip["ai_moment"], clip["ai_emotion"] = s["moment"], s["emotion"]
+        base = float(clip.get("quality_score", 0))
+        clip["quality_score"] = round(base * 0.3 if not s["keep"] else base * 0.6 + float(s["emotion"]) * 0.4, 1)
+    top = sorted((c for c, _ in pairs if c.get("ai_moment")), key=lambda c: c.get("ai_emotion", 0), reverse=True)[:5]
+    for c in top:
+        _log(job_id, f"  ★ {os.path.basename(c['file_path'])}: {c['ai_moment']} (emotion {c['ai_emotion']})", "info")
+    if review.get("story_note"):
+        _log(job_id, f"  Story note: {review['story_note']}", "info")
+    credit = license_manager.consume_wedding_credit(job_name=f"Wedding: {job_name}")
+    if credit.get("success"):
+        left = "unlimited" if credit.get("unlimited") else credit.get("credits_remaining")
+        _log(job_id, f"1 AI wedding credit used. Credits left: {left}", "info")
+    else:
+        _log(job_id, f"Credit note: {credit.get('error')}", "warning")
+
+
+def _assistant_tools() -> List[Dict[str, Any]]:
+    seen, tools = set(), []
+    for t in _mcp().MCP_TOOLS:
+        if t["name"] in seen:
+            continue
+        seen.add(t["name"])
+        tools.append({"name": t["name"], "description": t.get("description", "")[:1000],
+                      "input_schema": t.get("inputSchema") or {"type": "object", "properties": {}}})
+    return tools
+
+
+def assistant_job(job_id: str, text: str) -> None:
+    with ASSISTANT_LOCK:
+        mark = len(ASSISTANT_HISTORY)
+        try:
+            reply = cloud_ai_client.assistant_turn(
+                ASSISTANT_HISTORY, text, _assistant_tools(), _mcp().handle_tool_call,
+                on_event=lambda kind, name: _log(job_id, f"Running {name}…", "info"),
+            )
+            with JOBS_LOCK:
+                JOBS[job_id].update(status="done", result={"reply": reply}, progress=100)
+        except Exception as e:
+            # Drop the partial turn so the next message starts from a valid conversation
+            del ASSISTANT_HISTORY[mark:]
+            with JOBS_LOCK:
+                JOBS[job_id].update(status="error", error=str(e))
 
 
 def tool_job(job_id: str, name: str, arguments: Dict[str, Any]) -> None:
@@ -697,7 +941,20 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    def _authorized(self) -> bool:
+        """Only the app window (which received the per-launch token) may call the API."""
+        if not self.path.startswith("/api/") or self.path == "/api/version":
+            return True
+        host_ok = (self.headers.get("Host") or "") in ALLOWED_HOSTS
+        token_ok = bool(SESSION_TOKEN) and hmac.compare_digest(self.headers.get("X-AVF-Token") or "", SESSION_TOKEN)
+        if host_ok and token_ok:
+            return True
+        self._json({"error": "Forbidden"}, 403)
+        return False
+
     def do_GET(self):
+        if not self._authorized():
+            return
         if self.path == "/api/status":
             self._json({
                 "resolve": resolve_adapter.get_status(),
@@ -730,7 +987,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/license/status":
-            self._json(license_manager.get_status())
+            self._json({**license_manager.get_status(), "free_left_today": free_projects_left()})
+            return
+
+        if self.path == "/api/plans":
+            self._json(license_manager.plans())
             return
 
         if self.path == "/api/cloud-ai/status":
@@ -748,6 +1009,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if not self._authorized():
+            return
         data = self._body()
 
         if self.path == "/api/connect":
@@ -829,6 +1092,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 res.pop("videos")
             self._json(res)
 
+        elif self.path == "/api/run-wedding" and free_projects_left() == 0:
+            self._json({"success": False, "limit": True,
+                        "error": "The free plan includes 1 project per day. Go unlimited with AI Editing from ₹399/month, or come back tomorrow."})
+
         elif self.path == "/api/run-wedding":
             formats = data.get("formats") or ["teaser", "highlight", "full_film"]
             target_nle = data.get("target_nle") or "resolve"
@@ -836,11 +1103,15 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             ref_video = (data.get("ref_video") or "").strip()
             instructions = (data.get("instructions") or "").strip()
             tier = (data.get("tier") or "free").strip().lower()
+            if mode in ("podcast", "tutorial"):
+                job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal")
+                self._json({"success": True, "job_id": job_id})
+                return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video, instructions, tier)
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/license/status":
-            self._json(license_manager.get_status())
+            self._json({**license_manager.get_status(), "free_left_today": free_projects_left()})
 
         elif self.path == "/api/license/activate":
             key = (data.get("license_key") or "").strip()
@@ -850,75 +1121,23 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/license/deactivate":
             self._json(license_manager.deactivate_license())
 
-        elif self.path == "/api/cloud-ai/status":
-            self._json(cloud_ai_client.get_status())
+        elif self.path == "/api/license/refresh":
+            self._json(license_manager.refresh())
 
-        elif self.path == "/api/cloud-ai/save-key":
-            provider = data.get("provider", "gemini")
-            key = (data.get("key") or "").strip()
-            res = cloud_ai_client.save_api_key(provider, key)
-            self._json({"success": res, "message": "API key successfully saved!" if res else "Failed to save API key."})
+        elif self.path == "/api/assistant/send":
+            text = (data.get("text") or "").strip()
+            if not license_manager.get_status().get("has_credits"):
+                # Free and AI Editing plans are offline-only: no Smart AI requests at all
+                self._json({"success": False, "error": "The AI Assistant is part of Smart AI Editing. See Pricing to add a Smart AI pack."}, 403)
+            elif not text:
+                self._json({"success": False, "error": "Type a message first."}, 400)
+            else:
+                self._json({"success": True, "job_id": start_job(assistant_job, text[:4000])})
 
-        elif self.path == "/api/admin/open-portal":
-            import webbrowser
-            from packages.licensing.admin_server import init_db
-            init_db()
-            global _ADMIN_SERVER_RUNNING
-            if "_ADMIN_SERVER_RUNNING" not in globals():
-                _ADMIN_SERVER_RUNNING = True
-                from packages.licensing.admin_server import AdminRequestHandler
-                def _run_srv():
-                    try:
-                        srv = ThreadingHTTPServer(("0.0.0.0", 8899), AdminRequestHandler)
-                        srv.serve_forever()
-                    except Exception:
-                        pass
-                threading.Thread(target=_run_srv, daemon=True).start()
-                time.sleep(0.4)
-
-            webbrowser.open("http://localhost:8899/")
-            self._json({"success": True, "url": "http://localhost:8899/", "message": "Admin Portal opened in browser!"})
-
-        elif self.path == "/api/apply-correction":
-            prompt = (data.get("prompt") or "").strip()
-            target_nle = data.get("target_nle") or "resolve"
-            mode = data.get("mode") or "wedding"
-            steps = []
-            if not prompt:
-                self._json({"success": False, "error": "No correction prompt provided."}, 400)
-                return
-
-            p_lower = prompt.lower()
-            # 1. Apply to DaVinci Resolve if connected
-            if target_nle in ("resolve", "both") and resolve_adapter.is_connected():
-                try:
-                    curr_tl = resolve_adapter.get_current_timeline()
-                    if curr_tl:
-                        tl_name = curr_tl.GetName()
-                        resolve_adapter.add_timeline_marker(frame_number=1, color="Yellow", name="AI Correction", note=prompt)
-                        steps.append(f"Added timeline marker on '{tl_name}': {prompt}")
-                        if any(w in p_lower for w in ["duck", "audio", "music", "bgm", "volume", "soft"]):
-                            resolve_adapter.apply_auto_ducking(ducking_amount_db=-15.0)
-                            steps.append("Adjusted audio ducking to -15.0dB for clear dialogue")
-                        if any(w in p_lower for w in ["warm", "gold", "golden", "color", "lut"]):
-                            steps.append("Applied Warm Golden 3D Look to active timeline node tree")
-                        resolve_adapter.save_project()
-                except Exception as e:
-                    steps.append(f"DaVinci Resolve note: {e}")
-
-            # 2. Apply to Premiere Pro if running
-            if target_nle in ("premiere", "both") and premiere_adapter.is_running():
-                steps.append(f"Parsed correction for Adobe Premiere Pro: \"{prompt}\"")
-                if any(w in p_lower for w in ["duck", "audio", "music", "volume"]):
-                    steps.append("Updated Premiere Pro XML dual-track keyframes: dialogue ducking -16dB")
-                if any(w in p_lower for w in ["slow", "slow-mo"]):
-                    steps.append("Tagged ritual clips for 50% optical flow slow-motion")
-
-            self._json({
-                "success": True,
-                "message": f"Applied correction: \"{prompt[:60]}...\"",
-                "steps": steps or [f"Logged correction note: \"{prompt}\" for next timeline update"]
-            })
+        elif self.path == "/api/assistant/reset":
+            with ASSISTANT_LOCK:
+                ASSISTANT_HISTORY.clear()
+            self._json({"success": True})
 
         elif self.path == "/api/tool":
             job_id = start_job(tool_job, data.get("name", ""), data.get("arguments") or {})
@@ -956,7 +1175,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         return
 
 
-def start_server(port: int = 5678):
+def start_server(port: int = 5678, token: Optional[str] = None):
+    global SESSION_TOKEN
+    if token:
+        SESSION_TOKEN = token
+    ALLOWED_HOSTS.update({f"127.0.0.1:{port}", f"localhost:{port}"})
     server = ThreadingHTTPServer(("127.0.0.1", port), AppRequestHandler)
     logger.info(f"AI Video Flow desktop backend running on http://127.0.0.1:{port}")
     try:

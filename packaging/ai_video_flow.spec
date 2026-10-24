@@ -20,13 +20,14 @@ datas = [
     (os.path.join(ROOT, "packages", "desktop_app", "style.css"), "packages/desktop_app"),
     (os.path.join(ROOT, "packages", "desktop_app", "logo.png"), "packages/desktop_app"),
     (os.path.join(ROOT, "packages", "desktop_app", "ads"), "packages/desktop_app/ads"),
+    (os.path.join(ROOT, "packages", "desktop_app", "nle"), "packages/desktop_app/nle"),
     (os.path.join(ROOT, "packages", "resolve_workflow"), "packages/resolve_workflow"),
     (os.path.join(ROOT, "assets", "icon_1024.png"), "assets"),
 ]
 binaries = []
 hiddenimports = collect_submodules("packages") + collect_submodules("installer")
 
-for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview"]:
+for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg"]:
     try:
         d, b, h = collect_all(pkg)
         datas += d

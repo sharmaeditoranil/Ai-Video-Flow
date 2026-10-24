@@ -28,6 +28,8 @@ PORT = 5678
 APP_URL = f"http://127.0.0.1:{PORT}"
 APP_VERSION = "1.1.0"
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow")
+SESSION_FILE = os.path.join(DATA_DIR, "session.json")
+SESSION_TOKEN = ""  # per-launch secret the dashboard sends with every API call
 
 
 def is_mcp_mode() -> bool:
@@ -46,7 +48,30 @@ def redirect_output_if_windowless():
 
 def start_backend():
     from packages.desktop_app.backend import start_server
-    start_server(PORT)
+    start_server(PORT, SESSION_TOKEN)
+
+
+def window_url() -> str:
+    # The token travels in the URL fragment, which browsers never send to the server or log
+    return f"{APP_URL}/#t={SESSION_TOKEN}"
+
+
+def save_session() -> None:
+    import json
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd = os.open(SESSION_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"port": PORT, "token": SESSION_TOKEN}, f)
+
+
+def saved_token_for(port: int) -> str:
+    import json
+    try:
+        with open(SESSION_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("token", "") if data.get("port") == port else ""
+    except Exception:
+        return ""
 
 
 def port_in_use(port: int) -> bool:
@@ -67,11 +92,18 @@ def running_same_version(port: int) -> bool:
 
 def choose_port() -> int:
     """Returns a port to use; an already running same-version instance's port is reused."""
-    global PORT, APP_URL
+    global PORT, APP_URL, SESSION_TOKEN
+    import secrets
     for port in range(5678, 5700):
-        if not port_in_use(port) or running_same_version(port):
-            PORT, APP_URL = port, f"http://127.0.0.1:{port}"
-            return port
+        if port_in_use(port):
+            token = saved_token_for(port)
+            if not (token and running_same_version(port)):
+                continue
+            SESSION_TOKEN = token
+        else:
+            SESSION_TOKEN = secrets.token_urlsafe(32)
+        PORT, APP_URL = port, f"http://127.0.0.1:{port}"
+        return port
     return PORT
 
 
@@ -92,7 +124,7 @@ def open_native_window() -> bool:
     except Exception:
         return False
     try:
-        webview.create_window("AI Video Flow", APP_URL, width=1280, height=820, min_size=(960, 640))
+        webview.create_window("AI Video Flow", window_url(), width=1280, height=820, min_size=(960, 640))
         webview.start(private_mode=False, storage_path=os.path.join(DATA_DIR, "webview"))
         return True
     except Exception as e:
@@ -112,7 +144,7 @@ def open_app_window():
         for browser in [chrome_app, brave_app, edge_app]:
             if os.path.exists(browser):
                 try:
-                    subprocess.Popen([browser, f"--app={APP_URL}", "--window-size=1280,820"])
+                    subprocess.Popen([browser, f"--app={window_url()}", "--window-size=1280,820"])
                     return
                 except Exception:
                     pass
@@ -127,13 +159,13 @@ def open_app_window():
         for c in candidates:
             if os.path.exists(c):
                 try:
-                    subprocess.Popen([c, f"--app={APP_URL}", "--window-size=1280,820"])
+                    subprocess.Popen([c, f"--app={window_url()}", "--window-size=1280,820"])
                     return
                 except Exception:
                     pass
 
     # Fallback to standard default browser
-    webbrowser.open(APP_URL)
+    webbrowser.open(window_url())
 
 
 def run_dashboard():
@@ -154,6 +186,9 @@ def run_dashboard():
     server_thread = threading.Thread(target=start_backend, daemon=True)
     server_thread.start()
     wait_for_backend()
+    save_session()
+    from packages.licensing.license_manager import license_manager
+    license_manager.refresh_in_background()
 
     # Native window: the app quits when the window is closed
     if open_native_window():

@@ -446,10 +446,11 @@ class ResolveAdapter:
         if not tl:
             return False
         items = tl.GetItemListInTrack("video", 1)
-        success = True
+        success = bool(items)
         for item in items or []:
             try:
-                item.ApplyGradeFromDRX(drx_path, 0)
+                graph = item.GetNodeGraph()
+                success = bool(graph and graph.ApplyGradeFromDRX(drx_path, 0)) and success
             except Exception:
                 success = False
         return success
@@ -463,7 +464,8 @@ class ResolveAdapter:
             return False
         items = tl.GetItemListInTrack("video", track_index)
         if items and 0 <= item_index < len(items):
-            return bool(items[item_index].SetLUT(1, lut_path))
+            graph = items[item_index].GetNodeGraph()
+            return bool(graph and graph.SetLUT(1, lut_path))
         return False
 
     def set_manual_color_grading(
@@ -492,45 +494,22 @@ class ResolveAdapter:
             return {"error": f"Clip at index {item_index} not found on video track {track_index}."}
 
         item = items[item_index]
-        applied = {}
-
-        # 1. Apply primary CDL values (Lift / Offset, Gamma / Power, Gain / Slope, Saturation)
-        try:
-            cdl_dict = {}
-            if gain is not None:
-                cdl_dict["slope"] = f"{gain} {gain} {gain}"
-                applied["gain"] = gain
-            if lift is not None:
-                cdl_dict["offset"] = f"{lift} {lift} {lift}"
-                applied["lift"] = lift
-            if gamma is not None:
-                cdl_dict["power"] = f"{gamma} {gamma} {gamma}"
-                applied["gamma"] = gamma
-            if saturation is not None:
-                # DaVinci saturation: 1.0 is default (mapped from 50.0)
-                norm_sat = saturation / 50.0 if saturation <= 100.0 else saturation
-                cdl_dict["sat"] = str(round(norm_sat, 2))
-                applied["saturation"] = saturation
-
-            if cdl_dict:
-                item.SetCDL(cdl_dict)
-        except Exception as e:
-            logger.warning(f"SetCDL warning: {e}")
-
-        # 2. Temperature and Tint
-        if temperature is not None:
-            applied["color_temperature"] = f"{temperature}K (Warm/Cool Balance)"
-        if tint is not None:
-            applied["tint"] = f"{tint} (Green/Magenta Balance)"
-        if contrast is not None:
-            applied["contrast"] = contrast
-
-        return {
-            "success": True,
-            "clip_name": item.GetName(),
-            "applied_parameters": applied,
-            "message": f"Manual color grade applied to clip '{item.GetName()}'."
-        }
+        g = 1.0 if gain is None else float(gain)
+        l = 0.0 if lift is None else float(lift)
+        p = 1.0 if gamma is None else float(gamma)
+        # 0-100 UI scale (50 = neutral) or a direct 0-2 multiplier
+        sat = 1.0 if saturation is None else (saturation / 50.0 if saturation > 2 else float(saturation))
+        ok = bool(item.SetCDL({"NodeIndex": "1", "Slope": f"{g} {g} {g}", "Offset": f"{l} {l} {l}",
+                               "Power": f"{p} {p} {p}", "Saturation": str(round(sat, 3))}))
+        not_supported = [k for k, v in (("temperature", temperature), ("tint", tint), ("contrast", contrast)) if v is not None]
+        result = {"success": ok, "clip_name": item.GetName(),
+                  "applied": {"gain": g, "lift": l, "gamma": p, "saturation": sat} if ok else {}}
+        if not_supported:
+            result["not_supported"] = not_supported
+            result["note"] = "DaVinci's scripting API only exposes CDL (slope/offset/power/saturation); set temperature, tint and contrast in the Color page."
+        if not ok:
+            result["error"] = "DaVinci Resolve rejected the CDL values."
+        return result
 
     def reset_clip_grade(self, track_index: int = 1, item_index: int = 0) -> Dict[str, Any]:
         """Resets all color grades and nodes on the specified clip to camera original."""
@@ -542,11 +521,10 @@ class ResolveAdapter:
         items = tl.GetItemListInTrack("video", track_index)
         if items and 0 <= item_index < len(items):
             item = items[item_index]
-            try:
-                item.ResetAllGrades()
-                return {"success": True, "clip_name": item.GetName(), "message": "Color grade reset to camera original."}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+            graph = item.GetNodeGraph()
+            ok = bool(graph and graph.ResetAllGrades())
+            return {"success": ok, "clip_name": item.GetName(),
+                    "message": "Color grade reset to camera original." if ok else "DaVinci Resolve could not reset the grade."}
         return {"error": f"Clip at index {item_index} not found on video track {track_index}."}
 
     # -------------------------------------------------------------
@@ -574,7 +552,7 @@ class ResolveAdapter:
             nodes_list.append({
                 "index": i,
                 "label": graph.GetNodeLabel(i) or f"Node_{i}",
-                "enabled": graph.GetNodeEnabled(i),
+                "tools": graph.GetToolsInNode(i) or [],
                 "lut": graph.GetLUT(i) or ""
             })
 
@@ -591,14 +569,8 @@ class ResolveAdapter:
         tl = self._current_project.GetCurrentTimeline()
         if not tl:
             return {"error": "No active timeline."}
-        items = tl.GetItemListInTrack("video", track_index)
-        if items and 0 <= item_index < len(items):
-            item = items[item_index]
-            graph = item.GetNodeGraph()
-            if graph:
-                success = bool(graph.SetNodeLabel(node_index, label))
-                return {"success": success, "node_index": node_index, "label": label}
-        return {"error": f"Could not set node label on clip {item_index}."}
+        return {"success": False, "supported": False,
+                "error": "DaVinci Resolve's scripting API cannot rename color nodes. Right-click the node in the Color page → Node Label."}
 
     def set_node_enabled(self, node_index: int, is_enabled: bool, track_index: int = 1, item_index: int = 0) -> Dict[str, Any]:
         """Enables or disables (bypasses) a specific node in the Color Page."""
@@ -635,28 +607,22 @@ class ResolveAdapter:
             return {"error": f"Clip at index {item_index} not found."}
 
         item = items[item_index]
-        graph = item.GetNodeGraph()
-        node_labels = [
-            "01_Exposure_Balance",
-            "02_Face_Skin_Smooth",
-            "03_Contrast_Saturation",
-            f"04_Wedding_Look_{style.replace(' ', '_')}",
-            "05_Soft_Glow_Vignette"
-        ]
-
-        if graph:
-            for idx, lbl in enumerate(node_labels, 1):
-                try:
-                    graph.SetNodeLabel(idx, lbl)
-                except Exception:
-                    pass
-
+        looks = {
+            "Royal Warm": {"Slope": "1.06 1.0 0.92", "Offset": "0.01 0.0 -0.01", "Power": "0.98 1.0 1.02", "Saturation": "1.12"},
+            "Teal & Orange": {"Slope": "1.05 0.98 0.95", "Offset": "0.0 0.0 0.015", "Power": "1.0 1.0 0.97", "Saturation": "1.15"},
+            "Soft Pastel": {"Slope": "1.02 1.02 1.0", "Offset": "0.02 0.02 0.02", "Power": "1.04 1.04 1.04", "Saturation": "0.9"},
+            "Neutral": {"Slope": "1.0 1.0 1.0", "Offset": "0.0 0.0 0.0", "Power": "1.0 1.0 1.0", "Saturation": "1.05"},
+        }
+        look = looks.get(style) or looks["Royal Warm"]
+        ok = bool(item.SetCDL({"NodeIndex": "1", **look}))
         return {
-            "success": True,
+            "success": ok,
             "clip_name": item.GetName(),
-            "style": style,
-            "node_pipeline": node_labels,
-            "message": f"Professional 5-Node Wedding Color Tree created with '{style}' look."
+            "style": style if style in looks else "Royal Warm",
+            "applied_cdl": look if ok else {},
+            "note": "DaVinci's scripting API cannot add or rename nodes, so the look is applied as a CDL grade on node 1. "
+                    "Add serial nodes (Alt+S) in the Color page for skin, contrast and glow.",
+            "message": f"'{style}' wedding look applied to '{item.GetName()}'." if ok else "DaVinci Resolve rejected the grade.",
         }
 
     def apply_face_smoothing(
@@ -684,24 +650,16 @@ class ResolveAdapter:
 
         item = items[item_index]
 
-        # Apply slight midtone detail reduction and warmth via CDL
-        try:
-            # Soft skin: slope adjustment + slight saturation boost
-            warm_sat = 1.0 + (skin_warmth * 0.15)
-            item.SetCDL({"sat": str(round(warm_sat, 2))})
-        except Exception as e:
-            logger.warning(f"Face smooth CDL warning: {e}")
-
+        # The scripting API can only set CDL values: add gentle skin warmth; smoothing itself needs Face Refinement / Beauty FX
+        w = round(skin_warmth * 0.06, 3)
+        ok = bool(item.SetCDL({"NodeIndex": "1", "Slope": f"{1 + w} 1.0 {1 - w}", "Offset": "0.0 0.0 0.0",
+                               "Power": "1.0 1.0 1.0", "Saturation": str(round(1.0 + skin_warmth * 0.1, 3))}))
         return {
-            "success": True,
+            "success": ok,
             "clip_name": item.GetName(),
-            "face_beauty_params": {
-                "skin_smoothing": round(smoothing_amount, 2),
-                "skin_warmth": round(skin_warmth, 2),
-                "shine_removal": round(shine_removal, 2),
-                "target_node": "Node 2 (Face & Skin Smooth)"
-            },
-            "message": f"Face Smoothing & Beauty Retouching applied to clip '{item.GetName()}'."
+            "skin_warmth_applied": skin_warmth if ok else 0,
+            "note": "Skin warmth is applied as a CDL grade. For skin smoothing and shine removal add the Face Refinement "
+                    "or Beauty effect on a node in the Color page (DaVinci Resolve Studio).",
         }
 
     def apply_auto_white_balance(self, track_index: int = 1, item_index: int = 0, mode: str = "Neutral Wedding") -> Dict[str, Any]:
@@ -720,18 +678,15 @@ class ResolveAdapter:
 
         item = items[item_index]
 
-        # Neutralizes yellow cast (lowers red/green slightly, boosts blue)
-        try:
-            item.SetCDL({"slope": "0.98 0.99 1.03", "offset": "0.0 0.0 0.0", "power": "1.0 1.0 1.0", "sat": "1.0"})
-        except Exception as e:
-            logger.warning(f"White balance CDL warning: {e}")
-
+        # Counters warm tungsten/halogen light: pull red, push blue
+        ok = bool(item.SetCDL({"NodeIndex": "1", "Slope": "0.97 0.99 1.04", "Offset": "0.0 0.0 0.0",
+                               "Power": "1.0 1.0 1.0", "Saturation": "1.0"}))
         return {
-            "success": True,
+            "success": ok,
             "clip_name": item.GetName(),
             "mode": mode,
-            "color_cast_removed": "Yellowish Stage Halogen / Mixed Lighting Neutralized",
-            "message": f"Auto White Balance applied: Neutral white point calibrated for '{item.GetName()}'."
+            "message": f"Warm-light correction applied to '{item.GetName()}'. Fine-tune with the Color page white-balance picker."
+                       if ok else "DaVinci Resolve rejected the grade.",
         }
 
     def set_clip_transform(self, track_index: int, item_index: int, zoom_x: float = 1.0, zoom_y: float = 1.0, pan: float = 0.0, tilt: float = 0.0) -> bool:
@@ -811,19 +766,16 @@ class ResolveAdapter:
         items = tl.GetItemListInTrack("video", track_index)
         if items and 0 <= item_index < len(items):
             item = items[item_index]
-            # Resolve API properties for speed and optical flow retime
-            try:
-                item.SetProperty("Speed", speed_percent)
-                item.SetProperty("RetimeProcess", retime_process)
-                return {
-                    "success": True,
-                    "clip_name": item.GetName(),
-                    "speed_percent": speed_percent,
-                    "retime_process": retime_process,
-                    "mode": "Cinematic Slow Motion" if speed_percent < 100 else ("Fast Forward" if speed_percent > 100 else "Normal")
-                }
-            except Exception as e:
-                return {"success": False, "error": str(e)}
+            # The API exposes the retime method (RETIME_* constants) but not the clip speed itself
+            process = {"nearest": 1, "frame blend": 2, "optical flow": 3}.get(retime_process.lower(), 3)
+            retime_ok = bool(item.SetProperty("RetimeProcess", process))
+            speed_ok = bool(item.SetProperty("Speed", speed_percent))
+            result = {"success": speed_ok, "clip_name": item.GetName(), "speed_percent": speed_percent,
+                      "retime_process": retime_process if retime_ok else None}
+            if not speed_ok:
+                result["error"] = (f"DaVinci Resolve's scripting API cannot change clip speed. Right-click '{item.GetName()}' → "
+                                   f"Change Clip Speed → {speed_percent}%" + (" (retime set to " + retime_process + ")." if retime_ok else "."))
+            return result
         return {"success": False, "error": f"Clip at index {item_index} not found on video track {track_index}."}
 
     # -------------------------------------------------------------
@@ -833,14 +785,9 @@ class ResolveAdapter:
         """Sets the audio volume gain (in decibels) for a specific audio track."""
         if not self.is_connected() or not self._current_project:
             return {"error": "DaVinci Resolve not connected."}
-        tl = self._current_project.GetCurrentTimeline()
-        if not tl:
-            return {"error": "No active timeline."}
-        try:
-            tl.SetTrackVolume("audio", track_index, volume_db)
-            return {"success": True, "track_index": track_index, "volume_db": volume_db}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return {"success": False, "supported": False, "track_index": track_index, "volume_db": volume_db,
+                "error": "DaVinci Resolve's scripting API cannot change audio levels. Set the track fader in the Fairlight page "
+                         "(or use Premiere Pro export, which writes the levels into the XML)."}
 
     def apply_auto_ducking(self, music_track_index: int = 2, duck_volume_db: float = -18.0) -> Dict[str, Any]:
         """
@@ -848,30 +795,18 @@ class ResolveAdapter:
         """
         if not self.is_connected() or not self._current_project:
             return {"error": "DaVinci Resolve not connected."}
-        # Sets ducking level on music track
-        try:
-            tl = self._current_project.GetCurrentTimeline()
-            if tl:
-                tl.SetTrackVolume("audio", music_track_index, duck_volume_db)
-            return {
-                "success": True,
-                "music_track": music_track_index,
-                "duck_volume_db": duck_volume_db,
-                "message": f"Auto-Ducking applied: Music lowered to {duck_volume_db}dB during speech."
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return {"success": False, "supported": False, "music_track": music_track_index, "duck_volume_db": duck_volume_db,
+                "error": "DaVinci Resolve's scripting API cannot automate audio. In Fairlight, add a Dynamics → Ducker on the music "
+                         f"track keyed from the dialogue track (about {duck_volume_db} dB). Premiere Pro exports from AI Video Flow "
+                         "already include ducking keyframes."}
 
     def normalize_audio_track(self, track_index: int = 1, target_lufs: float = -14.0) -> Dict[str, Any]:
         """Normalizes audio track to standard broadcast/streaming loudness (-14 LUFS for YouTube/Reels)."""
         if not self.is_connected() or not self._current_project:
             return {"error": "DaVinci Resolve not connected."}
-        return {
-            "success": True,
-            "track_index": track_index,
-            "target_lufs": target_lufs,
-            "message": f"Audio track {track_index} normalized to {target_lufs} LUFS."
-        }
+        return {"success": False, "supported": False, "track_index": track_index, "target_lufs": target_lufs,
+                "error": f"DaVinci Resolve's scripting API cannot normalize audio. In the Edit page select the clips → "
+                         f"right-click → Normalize Audio Levels → {target_lufs} LUFS (ITU-R BS.1770)."}
 
     def add_timeline_marker(
         self,
@@ -888,8 +823,8 @@ class ResolveAdapter:
             return {"error": "No active timeline found."}
 
         try:
-            # DaVinci Resolve API: CreateMarker(frameId, color, name, note, duration)
-            success = tl.CreateMarker(frame_id, color, name, note, 1)
+            # DaVinci Resolve API: AddMarker(frameId, color, name, note, duration)
+            success = tl.AddMarker(frame_id, color, name, note, 1)
             return {
                 "success": bool(success),
                 "frame": frame_id,
@@ -961,20 +896,9 @@ class ResolveAdapter:
         if not items or item_index >= len(items):
             return {"error": f"Audio clip at index {item_index} not found on track {track_index}."}
 
-        clip = items[item_index]
-        try:
-            if hasattr(clip, "SetProperty"):
-                clip.SetProperty("FadeIn", fade_in_frames)
-                clip.SetProperty("FadeOut", fade_out_frames)
-            return {
-                "success": True,
-                "track": track_index,
-                "item_index": item_index,
-                "fade_in_frames": fade_in_frames,
-                "fade_out_frames": fade_out_frames
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return {"success": False, "supported": False, "track": track_index, "item_index": item_index,
+                "error": "DaVinci Resolve's scripting API cannot set audio fades. Drag the fade handles at the top corners of the "
+                         f"audio clip in the Edit page ({fade_in_frames} / {fade_out_frames} frames)."}
 
     def add_cinematic_letterbox(
         self,
@@ -988,17 +912,20 @@ class ResolveAdapter:
         if not tl:
             return {"error": "No active timeline found."}
 
-        # Set project output blanking to 2.39 or 2.35
+        # Crop top and bottom of every clip on video track 1 to the target ratio (bars stay black)
         try:
-            val = "2.39" if "2.39" in aspect_ratio else "2.35"
-            self._current_project.SetSetting("timelineOutputBlanking", val)
-            return {
-                "success": True,
-                "aspect_ratio": aspect_ratio,
-                "message": f"Hollywood cinematic blanking {aspect_ratio} enabled."
-            }
-        except Exception as e:
-            return {"success": True, "aspect_ratio": aspect_ratio, "message": f"Cinematic crop configured for {aspect_ratio}."}
+            ratio = float(aspect_ratio.split(":")[0])
+        except ValueError:
+            ratio = 2.39
+        width = float(self._current_project.GetSetting("timelineResolutionWidth") or 1920)
+        height = float(self._current_project.GetSetting("timelineResolutionHeight") or 1080)
+        bar = max(0.0, (height - width / ratio) / 2)
+        if bar <= 0:
+            return {"success": False, "error": f"The timeline is already wider than {aspect_ratio}."}
+        items = tl.GetItemListInTrack("video", 1) or []
+        done = sum(1 for it in items if it.SetProperty("CropTop", bar) and it.SetProperty("CropBottom", bar))
+        return {"success": done > 0, "aspect_ratio": aspect_ratio, "clips_cropped": done, "bar_height_px": round(bar, 1),
+                "message": f"{aspect_ratio} letterbox applied to {done} clip(s)." if done else "No clips on video track 1."}
 
 
 # Global singleton instance

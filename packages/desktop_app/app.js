@@ -1,839 +1,589 @@
-// AI Video Flow - Desktop Application Logic with Live Backend API
+// AI Video Flow - dashboard logic
 
-document.addEventListener("DOMContentLoaded", () => {
-  // Navigation tabs
-  const navItems = document.querySelectorAll(".nav-item");
-  const tabPanes = document.querySelectorAll(".tab-pane");
+(() => {
+  // ------------------------------------------------------------------
+  // Session token: the launcher puts it in the URL fragment (#t=...)
+  // ------------------------------------------------------------------
+  const TOKEN_KEY = "avf.session";
+  const START_TAB = (location.hash.match(/tab=(\w+)/) || [])[1];
+  const START_MODE = (location.hash.match(/mode=(\w+)/) || [])[1];
+  function readToken() {
+    const m = location.hash.match(/t=([\w-]+)/);
+    if (m) {
+      try { sessionStorage.setItem(TOKEN_KEY, m[1]); } catch (e) { /* ignore */ }
+      history.replaceState(null, "", location.pathname);
+      return m[1];
+    }
+    try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+  }
+  const TOKEN = readToken();
 
-  navItems.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tabId = btn.getAttribute("data-tab");
-      navItems.forEach((i) => i.classList.remove("active"));
-      tabPanes.forEach((p) => p.classList.remove("active"));
-      btn.classList.add("active");
-      const targetPane = document.getElementById(`pane-${tabId}`);
-      if (targetPane) targetPane.classList.add("active");
-      if (tabId === "diagnostics") loadDiagnostics();
-      if (tabId === "tools") loadTools();
-    });
+  async function api(path, body) {
+    const opts = { headers: { "X-AVF-Token": TOKEN } };
+    if (body !== undefined) {
+      opts.method = "POST";
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(path, opts);
+    if (res.status === 403) throw new Error("This window is not authorised. Close it and open AI Video Flow again.");
+    return res.json();
+  }
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
+  };
+  const fmtDate = (ts) => ts ? new Date(ts * 1000).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
+  // ------------------------------------------------------------------
+  // Navigation
+  // ------------------------------------------------------------------
+  const PAGES = {
+    home: ["Home", "Your editors, footage and AI in one place"],
+    studio: ["AI Studio", "Turn a folder of raw clips into ready timelines"],
+    assistant: ["AI Assistant", "Tell Smart AI what to do in your editor — Hindi, Hinglish or English"],
+    tools: ["Tools", "Run any editing function by hand"],
+    profile: ["My Profile", "Your account, plan and license"],
+    pricing: ["Pricing", "AI Editing and Smart AI Editing plans"],
+    settings: ["Settings", "Claude Desktop connection and diagnostics"],
+  };
+
+  function go(tab) {
+    document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    document.querySelectorAll(".pane").forEach((p) => p.classList.toggle("active", p.id === `pane-${tab}`));
+    $("page-title").textContent = PAGES[tab][0];
+    $("page-sub").textContent = PAGES[tab][1];
+    if (tab === "settings") loadDiagnostics();
+    if (tab === "tools") loadTools();
+    if (tab === "pricing") loadPlans();
+  }
+  document.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
+  document.addEventListener("click", (e) => {
+    const g = e.target.closest("[data-goto]");
+    if (g) go(g.dataset.goto);
   });
 
-  // Action Buttons & Elements
-  const btnConnectAll = document.getElementById("btn-connect-all");
-  const btnQuickConnect = document.getElementById("btn-quick-connect");
-  const btnTestConn = document.getElementById("btn-test-connection");
-  const btnRunWedding = document.getElementById("btn-run-wedding-ai");
-  const weddingConsole = document.getElementById("wedding-console");
-  const folderInput = document.getElementById("input-folder-path");
-  const audioInput = document.getElementById("input-audio-path");
-  const folderInfo = document.getElementById("folder-info");
-  const progress = document.getElementById("wedding-progress");
+  // Ads and external links open in the normal browser
+  document.querySelectorAll(".qa-ad").forEach((a) => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    openUrl(a.getAttribute("href"));
+  }));
+  async function openUrl(url) {
+    try { if ((await api("/api/open-url", { url })).success) return; } catch (e) { /* fall through */ }
+    window.open(url, "_blank");
+  }
 
-  function appendLog(msg, type = "normal", box = weddingConsole, time = null) {
-    if (!box) return;
+  // ------------------------------------------------------------------
+  // Logging helpers
+  // ------------------------------------------------------------------
+  function log(box, msg, level = "normal", time = null) {
     const line = document.createElement("div");
-    line.className = `console-line ${type}`;
-    line.textContent = `[${time || new Date().toLocaleTimeString()}] ${msg}`;
+    line.className = `line ${level}`;
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = time || new Date().toLocaleTimeString("en-IN", { hour12: false });
+    line.append(t, document.createTextNode(msg));
     box.appendChild(line);
     box.scrollTop = box.scrollHeight;
   }
 
-  async function api(path, body) {
-    const opts = body === undefined ? {} : {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    };
-    const res = await fetch(path, opts);
-    return res.json();
-  }
-
-  // Remember last used paths between launches
-  const store = {
-    get(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
-  };
-  if (folderInput) folderInput.value = store.get("avf.folder");
-  if (audioInput) audioInput.value = store.get("avf.audio");
-
-  // Update Status Pills and Metrics
-  function updateLiveUI(data) {
-    if (!data) return;
-
-    // DaVinci Resolve Status
-    const resolveStatus = data.resolve || {};
-    const resolveLabel = document.querySelector("#status-resolve .status-label");
-    const resolveDot = document.querySelector("#status-resolve .status-dot");
-    const editionBadge = document.getElementById("resolve-edition-badge");
-    const metricProject = document.getElementById("metric-project");
-    const metricTimelines = document.getElementById("metric-timelines");
-
-    if (resolveStatus.resolve_running) {
-      if (resolveLabel) resolveLabel.textContent = `DaVinci Resolve: Connected (${resolveStatus.version || "Studio/Free"})`;
-      if (resolveDot) resolveDot.className = "status-dot dot-green";
-      if (editionBadge) editionBadge.textContent = resolveStatus.edition || "Active";
-      if (metricProject) metricProject.textContent = resolveStatus.current_project || "No project open";
-      if (metricTimelines && resolveStatus.timeline_count !== undefined) metricTimelines.textContent = `${resolveStatus.timeline_count} Timelines`;
-    } else {
-      if (resolveLabel) resolveLabel.textContent = "DaVinci Resolve: Not Running";
-      if (resolveDot) resolveDot.className = "status-dot dot-yellow";
-      if (editionBadge) editionBadge.textContent = "Offline";
-      if (metricProject) metricProject.textContent = "Open DaVinci Resolve";
-    }
-
-    // Adobe Premiere Pro Status
-    const premiereStatus = data.premiere || {};
-    const premiereLabel = document.querySelector("#status-premiere .status-label");
-    const premiereDot = document.querySelector("#status-premiere .status-dot");
-    const premiereBadge = document.getElementById("premiere-edition-badge");
-    const metricPremiereVer = document.getElementById("metric-premiere-version");
-    const metricPremiereStatus = document.getElementById("metric-premiere-status");
-
-    if (premiereStatus.installed) {
-      const verText = premiereStatus.version ? ` (${premiereStatus.version})` : "";
-      if (premiereLabel) premiereLabel.textContent = premiereStatus.running ? `Premiere Pro: Running${verText}` : `Premiere Pro: Standby${verText}`;
-      if (premiereDot) premiereDot.className = `status-dot ${premiereStatus.running ? "dot-green" : "dot-yellow"}`;
-      if (premiereBadge) {
-        premiereBadge.textContent = premiereStatus.running ? "Running" : "Installed";
-        premiereBadge.className = `badge ${premiereStatus.running ? "badge-success" : "badge-premiere"}`;
-      }
-      if (metricPremiereVer) metricPremiereVer.textContent = premiereStatus.app_name || `Premiere Pro ${premiereStatus.version || ""}`;
-      if (metricPremiereStatus) metricPremiereStatus.textContent = premiereStatus.running ? "🟢 Running & Active" : "🟡 Standby (Ready to launch)";
-    } else {
-      if (premiereLabel) premiereLabel.textContent = "Premiere Pro: Not Found";
-      if (premiereDot) premiereDot.className = "status-dot dot-yellow";
-      if (premiereBadge) {
-        premiereBadge.textContent = "Not Installed";
-        premiereBadge.className = "badge badge-warning";
-      }
-      if (metricPremiereVer) metricPremiereVer.textContent = "Not Detected";
-      if (metricPremiereStatus) metricPremiereStatus.textContent = "Install Premiere Pro";
-    }
-
-    // Claude Desktop & MCP Status
-    const claudeStatus = data.claude || {};
-    const claudeLabel = document.querySelector("#status-claude .status-label");
-    const claudeDot = document.querySelector("#status-claude .status-dot");
-    const mcpLabel = document.querySelector("#status-mcp .status-label");
-    const mcpDot = document.querySelector("#status-mcp .status-dot");
-    const configured = claudeStatus.claude_desktop && claudeStatus.claude_desktop.configured;
-
-    if (claudeLabel) claudeLabel.textContent = configured ? "Claude AI: Configured" : "Claude AI: Not Connected";
-    if (claudeDot) claudeDot.className = `status-dot ${configured ? "dot-green" : "dot-yellow"}`;
-    if (mcpLabel) mcpLabel.textContent = configured ? `MCP Server: Active${toolCount ? ` (${toolCount} Tools)` : ""}` : "MCP Server: Press CONNECT ALL";
-    if (mcpDot) mcpDot.className = `status-dot ${configured ? "dot-green" : "dot-yellow"}`;
-  }
-
-  // Fetch Live Status from Backend
-  async function fetchStatus() {
-    try {
-      updateLiveUI(await api("/api/status"));
-    } catch (e) {
-      console.log("Backend offline:", e);
-    }
-  }
-
-  // Handle 1-Click "CONNECT ALL" Action
-  async function handleConnectAll() {
-    appendLog("Initiating 1-Click 'CONNECT ALL'...", "info");
-    try {
-      const result = await api("/api/connect", {});
-      (result.steps || []).forEach((s) => appendLog(s));
-      (result.guidance || []).forEach((g) => appendLog(g, "warning"));
-      appendLog(result.success ? "✅ Claude Desktop MCP registered (ai-video-flow-resolve)" : "❌ Claude Desktop registration failed", result.success ? "info" : "error");
-      await fetchStatus();
-      alert((result.success ? "🎉 AI Video Flow - Setup Complete!\n\n" : "⚠️ Setup incomplete\n\n") +
-            "1. Claude Desktop: " + (result.success ? "MCP Registered" : "Failed – see Diagnostics") + "\n" +
-            "2. DaVinci Resolve: " + (result.davinci_resolve?.running ? "Connected" : "Open Resolve (External scripting = Local)") + "\n\n" +
-            (result.success ? "Restart Claude Desktop, then speak in Hindi or English!" : ""));
-    } catch (e) {
-      appendLog("Backend not reachable. Close and re-open AI Video Flow.", "error");
-    }
-  }
-
-  if (btnConnectAll) btnConnectAll.addEventListener("click", handleConnectAll);
-  if (btnQuickConnect) btnQuickConnect.addEventListener("click", handleConnectAll);
-
-  if (btnTestConn) {
-    btnTestConn.addEventListener("click", async () => {
-      appendLog("Pinging DaVinci Resolve...", "info");
-      try {
-        const status = await api("/api/test-resolve", {});
-        appendLog(`Resolve Ping: Running=${status.resolve_running}, Project=${status.current_project || "None"}, Version=${status.version || "Unknown"}`,
-                  status.resolve_running ? "info" : "warning");
-        updateLiveUI({ resolve: status });
-      } catch (e) {
-        appendLog("Backend not reachable.", "error");
-      }
-    });
-  }
-
-  const btnLaunchPremiere = document.getElementById("btn-launch-premiere");
-  if (btnLaunchPremiere) {
-    btnLaunchPremiere.addEventListener("click", async () => {
-      appendLog("Launching / focusing Adobe Premiere Pro...", "info");
-      try {
-        const res = await api("/api/premiere/launch", {});
-        appendLog(res.message || (res.success ? "Premiere Pro launched" : res.error), res.success ? "info" : "error");
-        await fetchStatus();
-      } catch (e) {
-        appendLog("Backend error launching Premiere.", "error");
-      }
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // Browse buttons (native OS dialogs via backend)
-  // ------------------------------------------------------------------
-  async function browseInto(input, kind, prompt, btn) {
-    if (btn) btn.disabled = true;
-    try {
-      const res = await api("/api/browse", { kind, prompt });
-      if (res.path) {
-        input.value = res.path;
-        input.dispatchEvent(new Event("change"));
-        return res.path;
-      }
-      if (res.error) alert(res.error);
-    } catch (e) {
-      alert("Could not open the file dialog. Please paste the path manually.");
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-    return null;
-  }
-
-  // ------------------------------------------------------------------
-  // Footage folder loading
-  // ------------------------------------------------------------------
-  let loadedFolder = null;
-
-  async function loadFolder() {
-    const path = folderInput.value.trim();
-    loadedFolder = null;
-    if (!path) {
-      folderInfo.className = "folder-info err";
-      folderInfo.textContent = "Please select a footage folder first.";
-      return false;
-    }
-    folderInfo.className = "folder-info";
-    folderInfo.textContent = "Scanning folder...";
-    try {
-      const res = await api("/api/scan-folder", { path });
-      if (!res.success) {
-        folderInfo.className = "folder-info err";
-        folderInfo.textContent = res.error;
-        return false;
-      }
-      store.set("avf.folder", res.folder);
-      folderInput.value = res.folder;
-      folderInfo.className = res.video_count ? "folder-info ok" : "folder-info err";
-      folderInfo.textContent = `✔ ${res.video_count} video clips, ${res.audio_count} audio files (${res.total_gb} GB) loaded.`;
-      if (!res.video_count) {
-        folderInfo.textContent = "No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).";
-        return false;
-      }
-      const ul = document.createElement("ul");
-      res.preview.forEach((name) => {
-        const li = document.createElement("li");
-        li.textContent = name;
-        ul.appendChild(li);
-      });
-      if (res.video_count > res.preview.length) {
-        const li = document.createElement("li");
-        li.textContent = `...and ${res.video_count - res.preview.length} more`;
-        ul.appendChild(li);
-      }
-      folderInfo.appendChild(ul);
-      loadedFolder = res.folder;
-      appendLog(`Footage folder loaded: ${res.folder} (${res.video_count} clips)`, "info");
-      return true;
-    } catch (e) {
-      folderInfo.className = "folder-info err";
-      folderInfo.textContent = "Backend not reachable. Close and re-open AI Video Flow.";
-      return false;
-    }
-  }
-
-  const btnBrowseFolder = document.getElementById("btn-browse-folder");
-  const btnLoadFolder = document.getElementById("btn-load-folder");
-  const btnBrowseAudio = document.getElementById("btn-browse-audio");
-
-  if (btnBrowseFolder) {
-    btnBrowseFolder.addEventListener("click", async () => {
-      if (await browseInto(folderInput, "folder", "Select your raw footage folder", btnBrowseFolder)) loadFolder();
-    });
-  }
-  if (btnLoadFolder) btnLoadFolder.addEventListener("click", loadFolder);
-  if (folderInput) {
-    folderInput.addEventListener("keydown", (e) => { if (e.key === "Enter") loadFolder(); });
-    if (folderInput.value) loadFolder();
-  }
-  if (btnBrowseAudio) {
-    btnBrowseAudio.addEventListener("click", () => browseInto(audioInput, "audio", "Select background music", btnBrowseAudio));
-  }
-  if (audioInput) audioInput.addEventListener("change", () => store.set("avf.audio", audioInput.value.trim()));
-
-  const btnOpenOutput = document.getElementById("btn-open-output");
-  if (btnOpenOutput) btnOpenOutput.addEventListener("click", () => api("/api/open-folder", {}));
-
-  // ------------------------------------------------------------------
-  // Workflow Modes & Reference Video Engine
-  // ------------------------------------------------------------------
-  let currentWorkflowMode = "wedding";
-  const editModeCards = document.querySelectorAll(".edit-mode-card");
-  const refVideoGroup = document.getElementById("group-ref-video");
-  const refVideoInput = document.getElementById("input-ref-video");
-  const btnBrowseRefVideo = document.getElementById("btn-browse-ref-video");
-  const refVideoHint = document.getElementById("ref-video-hint");
-  const chkTeaser = document.getElementById("chk-teaser");
-  const chkHighlight = document.getElementById("chk-highlight");
-  const chkFullFilm = document.getElementById("chk-fullfilm");
-  const textChkTeaser = document.getElementById("text-chk-teaser");
-  const textChkHighlight = document.getElementById("text-chk-highlight");
-  const textChkFullfilm = document.getElementById("text-chk-fullfilm");
-  const lblChkFullfilm = document.getElementById("lbl-chk-fullfilm");
-
-  const WORKFLOW_CONFIGS = {
-    reels: {
-      folderLabel: "Clips / Shoot Folder for Reels",
-      btnText: "⚡ Start AI Reel Generation & Reference Match",
-      hint: "💡 <strong>Reel Reference Engine:</strong> Select any reference Instagram Reel. AI analyzes its cut speed/rhythm and extracts its color grade into a 3D LUT (.cube) for your reel.",
-      highlightRef: true,
-      seq1: "01_Instagram_Reel_9x16 (Viral Hook + Beat Sync)",
-      seq2: "02_Shorts_Teaser_30s (9:16 Vertical)",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    },
-    wedding: {
-      folderLabel: "Wedding Raw Clips Folder",
-      btnText: "✨ Start AI In-Clip Trimming & Build Timelines",
-      hint: "💡 <strong>Optional Reference:</strong> Select any master reference video if you want AI to extract and match its color grading mood to your wedding timelines.",
-      highlightRef: false,
-      seq1: "01_Teaser_60s (9:16 Vertical Reel)",
-      seq2: "02_Cinematic_Highlight_4m (16:9 Cinema)",
-      seq3: "03_Full_Wedding_Film (Chronological Rituals)",
-      chk1: true, chk2: true, chk3: true
-    },
-    youtube: {
-      folderLabel: "Raw Footage / Episode Takes Folder",
-      btnText: "🎙️ Start AI Silence Removal & YouTube Edit",
-      hint: "💡 <strong>Pacing & Look Reference:</strong> Select an inspiring YouTube video to match cut frequency and color tone.",
-      highlightRef: false,
-      seq1: "01_YouTube_Main_Edit (Silence & Dead-Air Cut)",
-      seq2: "02_YouTube_Shorts_Highlights (9:16 Vertical)",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    },
-    podcast: {
-      folderLabel: "Multi-Cam Video & Audio Folder",
-      btnText: "👥 Start AI Multi-Cam & Dialogue Polish",
-      hint: "💡 <strong>Multi-Cam Reference:</strong> AI uses speaker waveforms to auto-switch camera angles and cuts viral clips.",
-      highlightRef: false,
-      seq1: "01_Podcast_Full_Episode (Multi-Cam Switch)",
-      seq2: "02_Viral_Podcast_Clips (9:16 Vertical)",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    },
-    commercial: {
-      folderLabel: "Product / Brand Shoot Clips Folder",
-      btnText: "💎 Build High-Energy Commercial Sequence",
-      hint: "💡 <strong>Commercial Mood Reference:</strong> Select reference ad to match punchy speed-ramping and cinematic brand color grading.",
-      highlightRef: true,
-      seq1: "01_Commercial_Ad_30s (High-Impact TV/Web)",
-      seq2: "02_Social_Teaser_15s (9:16 Vertical)",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    },
-    lecture: {
-      folderLabel: "Course Recording / Screen Capture Folder",
-      btnText: "🎓 Clean Stumbles & Build Lecture Sequence",
-      hint: "💡 <strong>Lecture Engine:</strong> Detects slide changes, trims false starts and retakes, and normalizes presenter audio.",
-      highlightRef: false,
-      seq1: "01_Masterclass_Lecture_Clean (Slide Sync)",
-      seq2: "02_Topic_Chapter_Breakdown",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    },
-    music_video: {
-      folderLabel: "Performance & B-Roll Clips Folder",
-      btnText: "🎸 Generate Beat-Synced Music Video",
-      hint: "💡 <strong>Music Video Mood Reference:</strong> Select a reference video to match color grading palette and dynamic cut rhythm.",
-      highlightRef: true,
-      seq1: "01_Music_Video_Cut (Beat-Matched Drops)",
-      seq2: "02_Cinematic_Mood_Montage (2.39:1 / 16:9)",
-      seq3: "",
-      chk1: true, chk2: true, chk3: false
-    }
-  };
-
-  function selectWorkflowMode(mode) {
-    currentWorkflowMode = mode;
-    editModeCards.forEach((c) => {
-      c.classList.toggle("active", c.dataset.mode === mode);
-    });
-    const cfg = WORKFLOW_CONFIGS[mode] || WORKFLOW_CONFIGS.wedding;
-    const folderLbl = document.getElementById("label-folder-path");
-    if (folderLbl) folderLbl.textContent = cfg.folderLabel;
-    if (btnRunWedding) btnRunWedding.textContent = cfg.btnText;
-    if (refVideoHint) refVideoHint.innerHTML = cfg.hint;
-    if (refVideoGroup) refVideoGroup.classList.toggle("highlight-ref", !!cfg.highlightRef);
-
-    if (textChkTeaser) textChkTeaser.textContent = cfg.seq1;
-    if (textChkHighlight) textChkHighlight.textContent = cfg.seq2;
-    if (textChkFullfilm) textChkFullfilm.textContent = cfg.seq3;
-
-    if (chkTeaser) chkTeaser.checked = cfg.chk1;
-    if (chkHighlight) chkHighlight.checked = cfg.chk2;
-    if (chkFullFilm) chkFullFilm.checked = cfg.chk3;
-
-    if (lblChkFullfilm) {
-      lblChkFullfilm.style.display = cfg.seq3 ? "flex" : "none";
-    }
-  }
-
-  editModeCards.forEach((card) => {
-    card.addEventListener("click", () => selectWorkflowMode(card.dataset.mode));
-  });
-
-  if (btnBrowseRefVideo && refVideoInput) {
-    btnBrowseRefVideo.addEventListener("click", () => {
-      browseInto(refVideoInput, "video", "Select Reference Reel or Video", btnBrowseRefVideo);
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // Background job polling
-  // ------------------------------------------------------------------
-  function pollJob(jobId, box, onProgress) {
+  function pollJob(jobId, onLog, onProgress) {
     let shown = 0;
     return new Promise((resolve) => {
       const tick = async () => {
         try {
           const job = await api(`/api/job/${jobId}`);
-          (job.logs || []).slice(shown).forEach((l) => appendLog(l.msg, l.level, box, l.t));
+          (job.logs || []).slice(shown).forEach((l) => onLog(l));
           shown = (job.logs || []).length;
           if (onProgress) onProgress(job.progress || 0);
           if (job.status !== "running") return resolve(job);
         } catch (e) { /* retry */ }
-        setTimeout(tick, 800);
+        setTimeout(tick, 700);
       };
       tick();
     });
   }
 
-  const inputEditPrompt = document.getElementById("input-edit-prompt");
-  const promptChips = document.querySelectorAll(".prompt-chip");
-  const btnQuickCorrection = document.getElementById("btn-quick-correction");
+  // ------------------------------------------------------------------
+  // Status (top bar, home cards, settings)
+  // ------------------------------------------------------------------
+  function setStatus(id, state, title) {
+    const el = $(id);
+    el.className = `status ${state}`;
+    el.title = title;
+  }
+  function setBadge(id, text, state) {
+    const el = $(id);
+    el.textContent = text;
+    el.className = `badge ${state || ""}`;
+  }
 
-  promptChips.forEach((chip) => {
-    chip.addEventListener("click", () => {
-      const text = chip.dataset.prompt || chip.textContent.trim().replace(/^\+\s*/, "");
-      if (!inputEditPrompt) return;
-      const current = inputEditPrompt.value.trim();
-      inputEditPrompt.value = current ? `${current}, ${text}` : text;
-      inputEditPrompt.focus();
-    });
+  function renderStatus(data) {
+    const r = data.resolve || {};
+    const p = data.premiere || {};
+    const c = (data.claude || {}).claude_desktop || {};
+
+    setStatus("st-resolve", r.resolve_running ? "ok" : "warn", r.resolve_running ? `DaVinci Resolve ${r.version || ""} connected` : "DaVinci Resolve is not running");
+    setBadge("home-resolve-badge", r.resolve_running ? "Connected" : "Not running", r.resolve_running ? "ok" : "warn");
+    $("home-resolve-project").textContent = r.resolve_running ? (r.current_project || "No project open") : "Open DaVinci Resolve";
+    $("home-resolve-timelines").textContent = r.resolve_running ? String(r.timeline_count ?? 0) : "—";
+    $("set-resolve").textContent = r.resolve_running ? `Connected ${r.version || ""}` : "Not running";
+
+    const pText = p.installed ? (p.running ? "Running" : "Installed") : "Not installed";
+    setStatus("st-premiere", p.running ? "ok" : (p.installed ? "warn" : ""), `Premiere Pro: ${pText}`);
+    setBadge("home-premiere-badge", pText, p.running ? "ok" : "warn");
+    $("home-premiere-version").textContent = p.installed ? (p.app_name || p.version || "Installed") : "—";
+    $("set-premiere").textContent = pText;
+
+    setStatus("st-claude", c.configured ? "ok" : "warn", c.configured ? "Claude Desktop is connected" : "Press Connect to link Claude Desktop");
+    setBadge("home-claude-badge", c.configured ? "Connected" : "Not connected", c.configured ? "ok" : "warn");
+    $("set-claude").textContent = c.configured ? "Connected" : "Not connected";
+  }
+
+  async function fetchStatus() {
+    try { renderStatus(await api("/api/status")); } catch (e) { /* backend restarting */ }
+  }
+
+  async function connectAll() {
+    const btns = [$("btn-connect-2")];
+    btns.forEach((b) => b.disabled = true);
+    try {
+      const r = await api("/api/connect", {});
+      await fetchStatus();
+      const lines = [r.success ? "Claude Desktop is connected to AI Video Flow." : "Could not update the Claude Desktop settings."];
+      (r.guidance || []).forEach((g) => lines.push("• " + g));
+      alert(lines.join("\n"));
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      btns.forEach((b) => b.disabled = false);
+    }
+  }
+  $("btn-connect-2").addEventListener("click", connectAll);
+  $("btn-test-resolve").addEventListener("click", async () => {
+    const r = await api("/api/test-resolve", {});
+    renderStatus({ resolve: r });
+    alert(r.resolve_running ? `DaVinci Resolve connected · Project: ${r.current_project || "none"}` :
+      "DaVinci Resolve is not reachable. Open it and set Preferences → System → General → External scripting using: Local.");
   });
 
-  if (btnQuickCorrection) {
-    btnQuickCorrection.addEventListener("click", async () => {
-      const prompt = inputEditPrompt ? inputEditPrompt.value.trim() : "";
-      if (!prompt) return alert("Pehle correction box me apna badlav ya instruction type karein.");
-      const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
-      const target_nle = targetNleInput ? targetNleInput.value : "resolve";
-      appendLog(`🔄 Applying Edit Correction: "${prompt}"...`, "info", weddingConsole);
-      btnQuickCorrection.disabled = true;
-      try {
-        const res = await api("/api/apply-correction", {
-          prompt,
-          target_nle,
-          mode: currentWorkflowMode,
-          folder: loadedFolder || ""
-        });
-        if (res.success) {
-          appendLog(`✅ Correction Applied: ${res.message || "Timeline updated"}`, "info", weddingConsole);
-          (res.steps || []).forEach(s => appendLog(`  • ${s}`, "info", weddingConsole));
-        } else {
-          appendLog(`⚠️ Correction note: ${res.error || res.message}`, "warning", weddingConsole);
-        }
-      } catch (e) {
-        appendLog("Error applying correction: " + e, "error", weddingConsole);
-      } finally {
-        btnQuickCorrection.disabled = false;
-      }
-    });
-  }
+  // ------------------------------------------------------------------
+  // License
+  // ------------------------------------------------------------------
+  let license = { is_premium: false };
 
-  // -------------------------------------------------------------
-  // SaaS Licensing & Tier Management
-  // -------------------------------------------------------------
-  const btnLicenseModal = document.getElementById("btn-license-modal");
-  const modalTierSelect = document.getElementById("modal-tier-select");
-  const modalLicenseManager = document.getElementById("modal-license-manager");
-  const btnCloseTierModal = document.getElementById("btn-close-tier-modal");
-  const btnCloseLicenseModal = document.getElementById("btn-close-license-modal");
-  const btnSelectFree = document.getElementById("btn-select-free");
-  const btnSelectPremium = document.getElementById("btn-select-premium");
-  const btnActivateLicense = document.getElementById("btn-activate-license");
-  const btnDeactivateLicense = document.getElementById("btn-deactivate-license");
-  const btnCopyMachineId = document.getElementById("btn-copy-machine-id");
-  const topbarPlanLabel = document.getElementById("topbar-plan-label");
-  const topbarPlanIcon = document.getElementById("topbar-plan-icon");
-  const badgeTierModalCredits = document.getElementById("badge-tier-modal-credits");
-  const licCardPlan = document.getElementById("lic-card-plan");
-  const licCardCredits = document.getElementById("lic-card-credits");
-  const licCardMachineId = document.getElementById("lic-card-machine-id");
-  const txtLicenseKey = document.getElementById("txt-license-key");
-  const txtLicenseEmail = document.getElementById("txt-license-email");
+  function renderLicense(l) {
+    license = l;
+    const name = l.is_premium && l.client_name ? l.client_name : "Guest";
+    const initial = (name.trim()[0] || "?").toUpperCase();
+    $("chip-name").textContent = name;
+    $("plan-chip").textContent = "My Profile";
+    const creditsText = !l.is_premium ? "" : (l.plan_type === "local" ? "Unlimited editing" : (l.unlimited ? "Unlimited Smart AI" : `${l.credits_remaining} Smart AI weddings left`));
+    $("chip-credits").textContent = l.is_premium ? creditsText : (l.free_left_today === 0 ? "Free · today's project used" : "Free · 1 project per day");
+    $("chip-avatar").textContent = initial;
+    document.querySelector(".side-profile").classList.toggle("premium", !!l.is_premium);
+    $("pf-avatar").textContent = initial;
+    $("pf-name").textContent = name;
+    $("pf-email").textContent = l.is_premium ? (l.client_email || "—") : "Activate a license to see your account";
+    $("pf-plan").textContent = l.is_premium ? l.plan_name : "Free Edition";
+    $("pf-plan").classList.toggle("premium", !!l.is_premium);
+    $("lic-credits").textContent = !l.ai_enabled ? "—" : (l.unlimited ? "Unlimited" : String(l.credits_remaining));
+    $("lic-expiry").textContent = l.is_premium ? fmtDate(l.expires_at) : "—";
+    $("lic-machine").textContent = l.machine_id || "…";
+    if (l.license_key && !$("lic-key").value) $("lic-key").value = l.license_key;
+    const err = $("lic-error");
+    err.hidden = !l.error;
+    err.textContent = l.error || "";
 
-  let currentLicenseState = { tier: "free", is_premium: false, credits_remaining: 0 };
-  let pendingRunParams = null;
+    $("chat-lock").hidden = !!l.has_credits;
+    const review = $("chk-ai-review");
+    review.disabled = !l.has_credits;
+    if (!l.has_credits) review.checked = false;
+    $("ai-review-note").textContent = l.has_credits
+      ? `Smart AI looks at every candidate shot and picks the most emotional moments. Uses 1 wedding credit (${l.unlimited ? "unlimited plan" : l.credits_remaining + " left"}).`
+      : (l.ai_enabled ? "No Smart AI weddings left — add a Smart AI pack to continue."
+        : "Needs a Smart AI pack (from ₹999). See Pricing.");
 
-  async function updateLicenseDisplay() {
-    try {
-      const lic = await api("/api/license/status");
-      currentLicenseState = lic;
-      if (topbarPlanLabel) {
-        if (lic.is_premium) {
-          topbarPlanLabel.textContent = `👑 Plan: Pro (${lic.credits_remaining} Credits)`;
-          if (topbarPlanIcon) topbarPlanIcon.textContent = "👑";
-        } else {
-          topbarPlanLabel.textContent = "Plan: Free Edition";
-          if (topbarPlanIcon) topbarPlanIcon.textContent = "🟢";
-        }
-      }
-      if (badgeTierModalCredits) {
-        badgeTierModalCredits.textContent = `CREDITS: ${lic.credits_remaining || 0}`;
-      }
-      if (licCardPlan) licCardPlan.textContent = lic.tier_display || "Free Community Edition";
-      if (licCardCredits) licCardCredits.textContent = `${lic.credits_remaining || 0} Wedding Credits`;
-      if (licCardMachineId) licCardMachineId.textContent = lic.machine_id || "...";
-      if (txtLicenseKey && lic.license_key && lic.license_key !== "FREE-COMMUNITY-TIER") {
-        txtLicenseKey.value = lic.license_key;
-      }
-      if (txtLicenseEmail && lic.email) {
-        txtLicenseEmail.value = lic.email;
-      }
-    } catch (e) {
-      console.warn("Failed to fetch license status", e);
+    const quota = $("quota");
+    if (l.is_premium) {
+      quota.hidden = true;
+    } else {
+      quota.hidden = false;
+      quota.innerHTML = "";
+      const left = l.free_left_today ?? 1;
+      const txt = document.createElement("span");
+      txt.textContent = left > 0 ? "Free plan · 1 project per day (today's project is still available)." : "Today's free project is used. It resets tomorrow.";
+      const go = document.createElement("button");
+      go.className = "link";
+      go.dataset.goto = "pricing";
+      go.textContent = "Go unlimited from ₹399/month →";
+      quota.append(txt, " ", go);
     }
   }
 
-  // Fetch license on startup
-  updateLicenseDisplay();
-
-  if (btnLicenseModal) {
-    btnLicenseModal.addEventListener("click", () => {
-      updateLicenseDisplay();
-      if (modalLicenseManager) modalLicenseManager.style.display = "flex";
-    });
+  async function fetchLicense() {
+    try { renderLicense(await api("/api/license/status")); } catch (e) { /* ignore */ }
   }
 
-  if (btnCloseTierModal) {
-    btnCloseTierModal.addEventListener("click", () => {
-      if (modalTierSelect) modalTierSelect.style.display = "none";
-    });
-  }
-
-  if (btnCloseLicenseModal) {
-    btnCloseLicenseModal.addEventListener("click", () => {
-      if (modalLicenseManager) modalLicenseManager.style.display = "none";
-    });
-  }
-
-  if (btnCopyMachineId) {
-    btnCopyMachineId.addEventListener("click", () => {
-      const mid = licCardMachineId ? licCardMachineId.textContent : "";
-      if (mid && mid !== "...") {
-        navigator.clipboard.writeText(mid);
-        btnCopyMachineId.textContent = "Copied!";
-        setTimeout(() => { btnCopyMachineId.textContent = "Copy"; }, 2000);
-      }
-    });
-  }
-
-  if (btnActivateLicense) {
-    btnActivateLicense.addEventListener("click", async () => {
-      const key = (txtLicenseKey ? txtLicenseKey.value : "").trim();
-      const email = (txtLicenseEmail ? txtLicenseEmail.value : "").trim();
-      if (!key) return alert("Please enter your License Key.");
-      btnActivateLicense.disabled = true;
-      btnActivateLicense.textContent = "Verifying...";
-      try {
-        const res = await api("/api/license/activate", { license_key: key, email: email });
-        if (res.success) {
-          alert(`✅ ${res.message}`);
-          await updateLicenseDisplay();
-          if (modalLicenseManager) modalLicenseManager.style.display = "none";
-        } else {
-          alert(`❌ Activation Failed: ${res.error || "Invalid key"}`);
-        }
-      } catch (e) {
-        alert("Activation error: " + e);
-      } finally {
-        btnActivateLicense.disabled = false;
-        btnActivateLicense.textContent = "🔑 Activate License Key";
-      }
-    });
-  }
-
-  if (btnDeactivateLicense) {
-    btnDeactivateLicense.addEventListener("click", async () => {
-      if (!confirm("Deactivate this license and switch back to Free Local Edition?")) return;
-      const res = await api("/api/license/deactivate");
-      alert(res.message || "License deactivated.");
-      await updateLicenseDisplay();
-      if (modalLicenseManager) modalLicenseManager.style.display = "none";
-    });
-  }
-
-  const btnOpenAdminPortal = document.getElementById("btn-open-admin-portal");
-  if (btnOpenAdminPortal) {
-    btnOpenAdminPortal.addEventListener("click", async () => {
-      try {
-        const res = await api("/api/admin/open-portal");
-        if (res.success) {
-          appendLog(`🌐 Admin Portal opened: ${res.url}`, "info", weddingConsole);
-        }
-      } catch (e) {
-        window.open("http://localhost:8899/", "_blank");
-      }
-    });
-  }
-
-  async function executeWeddingProcessing(tier) {
-    if (!pendingRunParams) return;
-    if (modalTierSelect) modalTierSelect.style.display = "none";
-
-    const params = { ...pendingRunParams, tier: tier };
-    btnRunWedding.disabled = true;
-    progress.classList.add("active");
-    const bar = progress.querySelector(".progress-bar");
-    bar.style.width = "0%";
-
+  $("btn-activate").addEventListener("click", async () => {
+    const key = $("lic-key").value.trim();
+    if (!key) return alert("Paste your license key first.");
+    $("btn-activate").disabled = true;
     try {
-      const { job_id } = await api("/api/run-wedding", params);
-      await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
-      fetchStatus();
-      updateLicenseDisplay();
-    } catch (e) {
-      appendLog("Job error: " + e, "error", weddingConsole);
+      const r = await api("/api/license/activate", { license_key: key });
+      if (r.success) {
+        await fetchLicense();
+        alert(`License activated on this computer: ${r.status.plan_name}.`);
+      } else {
+        alert(r.error || "Activation failed.");
+      }
     } finally {
-      btnRunWedding.disabled = false;
+      $("btn-activate").disabled = false;
     }
+  });
+  $("btn-refresh-lic").addEventListener("click", async () => {
+    const r = await api("/api/license/refresh", {});
+    await fetchLicense();
+    if (!r.success && r.error) alert(r.error);
+  });
+  $("btn-remove-lic").addEventListener("click", async () => {
+    if (!confirm("Remove the license from this computer?")) return;
+    const r = await api("/api/license/deactivate", {});
+    $("lic-key").value = "";
+    await fetchLicense();
+    alert(r.message);
+  });
+  $("btn-copy-machine").addEventListener("click", () => {
+    navigator.clipboard.writeText($("lic-machine").textContent);
+    $("btn-copy-machine").textContent = "Copied";
+    setTimeout(() => $("btn-copy-machine").textContent = "Copy", 1500);
+  });
+  // ------------------------------------------------------------------
+  // Pricing
+  // ------------------------------------------------------------------
+  function planCard(p, buyUrl) {
+    const price = Number(p.price_inr), mrp = Number(p.mrp_inr || 0);
+    const save = mrp > price ? Math.round(100 - (price * 100) / mrp) : 0;
+    const local = p.kind === "local";
+    let unit, perks;
+    if (local) {
+      unit = p.validity_days >= 300 ? `₹${Math.round(price / 12)}/month, billed yearly` : "per month";
+      perks = ["No daily limit — unlimited projects", "All workflows & editors", `${p.validity_days} days · 1 computer`];
+    } else if (+p.unlimited) {
+      unit = "Unlimited Smart AI weddings";
+      perks = ["Unlimited Smart AI shot review", "Smart AI Assistant", "Unlimited editing · 1 year"];
+    } else {
+      unit = `₹${Math.round(price / Math.max(1, p.credits))} per wedding`;
+      perks = [`${p.credits} Smart AI weddings`, "Smart AI Assistant", `Unlimited editing · ${p.validity_days} days`];
+    }
+    const card = document.createElement("div");
+    card.className = "plan card" + (p.badge ? " popular" : "");
+    const tag = p.badge || (save ? `Save ${save}%` : "");
+    if (tag) { const t = document.createElement("span"); t.className = "plan-tag"; t.textContent = tag; card.appendChild(t); }
+    const h = document.createElement("h3"); h.textContent = p.name; card.appendChild(h);
+    const pr = document.createElement("div"); pr.className = "price"; pr.textContent = `₹${price.toLocaleString("en-IN")}`;
+    if (save) { const st = document.createElement("s"); st.textContent = `₹${mrp.toLocaleString("en-IN")}`; pr.appendChild(st); }
+    card.appendChild(pr);
+    const per = document.createElement("div"); per.className = "per"; per.textContent = unit + (save && p.badge ? ` · save ${save}%` : ""); card.appendChild(per);
+    const ul = document.createElement("ul"); ul.className = "perks";
+    perks.forEach((x) => { const li = document.createElement("li"); li.textContent = x; ul.appendChild(li); });
+    card.appendChild(ul);
+    const current = license.is_premium && license.plan_name === p.name;
+    const b = document.createElement("button");
+    b.className = "btn btn-block " + (p.badge ? "btn-gold" : "btn-primary");
+    b.textContent = current ? "Renew" : "Buy now";
+    b.addEventListener("click", () => openUrl(`${buyUrl}?plan=${p.id}`));
+    card.appendChild(b);
+    return card;
   }
 
-  if (btnSelectFree) {
-    btnSelectFree.addEventListener("click", () => executeWeddingProcessing("free"));
+  function showPriceGroup(g) {
+    document.querySelectorAll("#price-switch button").forEach((b) => b.classList.toggle("active", b.dataset.group === g));
+    $("group-local").hidden = g !== "local";
+    $("group-ai").hidden = g !== "ai";
+  }
+  document.querySelectorAll("#price-switch button").forEach((b) => b.addEventListener("click", () => showPriceGroup(b.dataset.group)));
+
+  async function loadPlans() {
+    const localBox = $("plans-local"), aiBox = $("plans-ai"), note = $("plans-note");
+    let data;
+    try { data = await api("/api/plans"); } catch (e) { data = { success: false, plans: [] }; }
+    const buyUrl = data.buy_url || license.buy_url || "https://flow.aiphotoflow.in/index.php/buy";
+    localBox.querySelectorAll(".plan:not(.free-plan)").forEach((c) => c.remove());
+    aiBox.innerHTML = "";
+    const freeBtn = localBox.querySelector(".free-plan button");
+    freeBtn.textContent = license.is_premium ? "Free plan" : "Your current plan";
+    if (!data.success || !data.plans.length) {
+      aiBox.innerHTML = '<div class="muted">Plans could not be loaded. Check your internet connection.</div>';
+      note.textContent = "";
+      return;
+    }
+    data.plans.forEach((p) => (p.kind === "local" ? localBox : aiBox).appendChild(planCard(p, buyUrl)));
+    note.textContent = data.payments_enabled ? "After paying, paste the license key in My Profile → License and press Activate."
+      : "Online payment is opening soon — contact us on WhatsApp to buy a plan.";
   }
 
-  if (btnSelectPremium) {
-    btnSelectPremium.addEventListener("click", async () => {
-      await updateLicenseDisplay();
-      if (!currentLicenseState.is_premium || currentLicenseState.credits_remaining <= 0) {
-        alert("⚠️ You need active Wedding Credits or a Pro License for AI Smart Premium.\n\nPlease activate your license key or purchase credits on our website.");
-        if (modalTierSelect) modalTierSelect.style.display = "none";
-        if (modalLicenseManager) modalLicenseManager.style.display = "flex";
+  // ------------------------------------------------------------------
+  // AI Studio
+  // ------------------------------------------------------------------
+  const OUTPUTS = {
+    wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — chronological"]],
+    reels: [["teaser", "Instagram Reel — 45 s, 9:16"], ["highlight", "Shorts Teaser — 30 s, 9:16"]],
+    youtube: [["highlight", "Main edit — about 6 min"], ["full_film", "Shorts highlights — 60 s, 9:16"]],
+    music_video: [["highlight", "Music video cut — about 3 min, on the beat"], ["full_film", "Mood montage — 60 s"]],
+    podcast: [["clean", "01 Clean edit — silences and dead air removed"], ["shorts", "3 vertical shorts — the liveliest 45 s moments, 9:16"]],
+    tutorial: [["clean", "01 Clean edit — pauses and dead air removed"], ["chapters", "YouTube chapters file + chapter markers"]],
+  };
+  const LONG_MODES = ["podcast", "tutorial"];
+  let cutLevel = store.get("avf.cut") || "normal";
+  let mode = START_MODE || store.get("avf.mode") || "wedding";
+  let nle = store.get("avf.nle") || "resolve";
+  let loadedFolder = null;
+  const consoleBox = $("console");
+
+  function renderOutputs() {
+    $("outputs").innerHTML = "";
+    OUTPUTS[mode].forEach(([key, label]) => {
+      const l = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      cb.value = key;
+      l.append(cb, document.createTextNode(label));
+      $("outputs").appendChild(l);
+    });
+  }
+
+  function setMode(m) {
+    mode = OUTPUTS[m] ? m : "wedding";
+    store.set("avf.mode", mode);
+    document.querySelectorAll(".mode").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    const long = LONG_MODES.includes(mode);
+    document.querySelectorAll(".short-only").forEach((el) => el.hidden = long);
+    document.querySelectorAll(".long-only").forEach((el) => el.hidden = !long);
+    $("lbl-folder").textContent = long ? "Folder with the long recording(s)" : "Raw footage folder";
+    $("step2-title").textContent = long ? "Recording" : "Footage & music";
+    $("in-folder").placeholder = long ? "/Volumes/Drive/Podcast_Episode_12" : "/Volumes/Drive/Wedding_Rohit_Priya";
+    if (!loadedFolder) $("folder-info").textContent = long
+      ? "Put the full podcast / class recording here. Several files are joined in name order."
+      : "Choose the folder with your raw clips (subfolders are included).";
+    renderOutputs();
+  }
+  document.querySelectorAll(".mode").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  setMode(mode);
+
+  function setCut(v) {
+    cutLevel = v === "tight" ? "tight" : "normal";
+    store.set("avf.cut", cutLevel);
+    document.querySelectorAll("#cut-level button").forEach((b) => b.classList.toggle("active", b.dataset.cut === cutLevel));
+  }
+  document.querySelectorAll("#cut-level button").forEach((b) => b.addEventListener("click", () => setCut(b.dataset.cut)));
+  setCut(cutLevel);
+
+  function setNle(v) {
+    nle = v;
+    store.set("avf.nle", v);
+    document.querySelectorAll("#nle button").forEach((b) => b.classList.toggle("active", b.dataset.nle === v));
+  }
+  document.querySelectorAll("#nle button").forEach((b) => b.addEventListener("click", () => setNle(b.dataset.nle)));
+  setNle(nle);
+
+  async function browseInto(input, kind, prompt) {
+    const r = await api("/api/browse", { kind, prompt });
+    if (r.path) { input.value = r.path; return r.path; }
+    if (r.error) alert(r.error);
+    return null;
+  }
+
+  async function loadFolder() {
+    const path = $("in-folder").value.trim();
+    const info = $("folder-info");
+    loadedFolder = null;
+    if (!path) { info.className = "hint error"; info.textContent = "Choose your footage folder first."; return false; }
+    info.className = "hint";
+    info.textContent = "Scanning…";
+    const r = await api("/api/scan-folder", { path });
+    if (!r.success) { info.className = "hint error"; info.textContent = r.error; return false; }
+    if (!r.video_count) { info.className = "hint error"; info.textContent = "No video files found in this folder (mp4, mov, mxf, mts, avi, mkv…)."; return false; }
+    $("in-folder").value = r.folder;
+    store.set("avf.folder", r.folder);
+    info.className = "hint ok";
+    info.textContent = `✓ ${r.video_count} video clips · ${r.total_gb} GB${r.audio_count ? ` · ${r.audio_count} audio files` : ""}`;
+    loadedFolder = r.folder;
+    return true;
+  }
+
+  $("in-folder").value = store.get("avf.folder");
+  $("in-audio").value = store.get("avf.audio");
+  $("in-ref").value = store.get("avf.ref");
+  if ($("in-folder").value) loadFolder();
+
+  $("btn-browse-folder").addEventListener("click", async () => {
+    if (await browseInto($("in-folder"), "folder", "Select your raw footage folder")) loadFolder();
+  });
+  $("btn-load-folder").addEventListener("click", loadFolder);
+  $("in-folder").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFolder(); });
+  $("btn-browse-audio").addEventListener("click", () => browseInto($("in-audio"), "audio", "Select the song"));
+  $("btn-browse-ref").addEventListener("click", () => browseInto($("in-ref"), "video", "Select a reference video"));
+
+  $("btn-run").addEventListener("click", async () => {
+    if (!loadedFolder || loadedFolder !== $("in-folder").value.trim()) {
+      if (!(await loadFolder())) return;
+    }
+    const formats = [...$("outputs").querySelectorAll("input:checked")].map((c) => c.value);
+    if (!formats.length) return alert("Tick at least one timeline.");
+    const audio = $("in-audio").value.trim();
+    const ref = $("in-ref").value.trim();
+    store.set("avf.audio", audio);
+    store.set("avf.ref", ref);
+
+    const btn = $("btn-run");
+    const prog = $("progress");
+    const bar = prog.querySelector(".bar");
+    btn.disabled = true;
+    btn.textContent = "Working…";
+    prog.classList.add("active");
+    bar.style.width = "0%";
+    consoleBox.innerHTML = "";
+    try {
+      const started = await api("/api/run-wedding", {
+        folder: loadedFolder, audio, formats, target_nle: nle, mode, ref_video: ref,
+        instructions: $("in-notes").value.trim(),
+        tier: $("chk-ai-review").checked && !LONG_MODES.includes(mode) ? "premium" : "free",
+        cut_level: cutLevel,
+      });
+      if (!started.success) {
+        log(consoleBox, started.error, "warning");
+        if (started.limit && confirm(started.error + "\n\nOpen the plans now?")) go("pricing");
         return;
       }
-      executeWeddingProcessing("premium");
-    });
-  }
+      const job_id = started.job_id;
+      const job = await pollJob(job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
+      if (job.status === "error") log(consoleBox, "Stopped: " + (job.error || "unknown error"), "error");
+      fetchStatus();
+      fetchLicense();
+    } catch (e) {
+      log(consoleBox, e.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Build timelines";
+    }
+  });
 
-  if (btnRunWedding) {
-    btnRunWedding.addEventListener("click", async () => {
-      if (!loadedFolder || loadedFolder !== folderInput.value.trim()) {
-        if (!(await loadFolder())) return;
+  $("btn-open-output").addEventListener("click", () => api("/api/open-folder", {}));
+
+  $("btn-send-again").addEventListener("click", async () => {
+    const btn = $("btn-send-again");
+    btn.disabled = true;
+    try {
+      if (nle === "resolve" || nle === "both") {
+        log(consoleBox, "Sending the last edit plan to DaVinci Resolve…", "info");
+        const r = await api("/api/resolve/send", {});
+        log(consoleBox, r.success ? r.message : r.error, r.success ? "info" : "warning");
       }
-      const formats = [];
-      if (chkTeaser && chkTeaser.checked) formats.push("teaser");
-      if (chkHighlight && chkHighlight.checked) formats.push("highlight");
-      if (chkFullFilm && chkFullFilm.checked) formats.push("full_film");
-      if (!formats.length) return alert("Select at least one output sequence.");
+      if (nle === "edius" || nle === "both") {
+        const r = await api("/api/edius/export", {});
+        log(consoleBox, r.success ? `${r.message} In EDIUS: File → Import Project → FCP XML.` : r.error, r.success ? "info" : "warning");
+        if (r.success) api("/api/open-folder", { path: r.edius_dir || "" });
+      }
+      if (nle === "premiere" || nle === "both") {
+        const r = await api("/api/premiere/launch", {});
+        log(consoleBox, (r.message || r.error || "Premiere Pro opened.") + " Import the XML from the output folder.", r.success ? "info" : "warning");
+      }
+    } catch (e) {
+      log(consoleBox, e.message, "error");
+    } finally {
+      btn.disabled = false;
+    }
+  });
 
-      const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
-      const target_nle = targetNleInput ? targetNleInput.value : "resolve";
-      const ref_video = refVideoInput ? refVideoInput.value.trim() : "";
-      const instructions = inputEditPrompt ? inputEditPrompt.value.trim() : "";
-
-      store.set("avf.audio", audioInput.value.trim());
-
-      pendingRunParams = {
-        folder: loadedFolder,
-        audio: audioInput.value.trim(),
-        formats,
-        target_nle,
-        mode: currentWorkflowMode,
-        ref_video,
-        instructions
-      };
-
-      await updateLicenseDisplay();
-      if (modalTierSelect) modalTierSelect.style.display = "flex";
-    });
+  // ------------------------------------------------------------------
+  // AI Assistant
+  // ------------------------------------------------------------------
+  const chatLog = $("chat-log");
+  function addMsg(text, cls) {
+    const d = document.createElement("div");
+    d.className = `msg ${cls}`;
+    d.textContent = text;
+    chatLog.appendChild(d);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return d;
   }
 
-  const btnSendToNle = document.getElementById("btn-open-premiere-xml");
-  const targetNleRadios = document.querySelectorAll('input[name="target_nle"]');
-
-  function updateNleButtonState() {
-    const selected = document.querySelector('input[name="target_nle"]:checked');
-    const val = selected ? selected.value : "resolve";
-    if (!btnSendToNle) return;
-    if (val === "resolve") {
-      btnSendToNle.innerHTML = "🎬 Send to DaVinci";
-      btnSendToNle.title = "Launch or focus DaVinci Resolve";
-    } else if (val === "premiere") {
-      btnSendToNle.innerHTML = "🟣 Send to Premiere";
-      btnSendToNle.title = "Launch or focus Adobe Premiere Pro";
-    } else if (val === "edius") {
-      btnSendToNle.innerHTML = "🟡 Send to EDIUS (25 fps)";
-      btnSendToNle.title = "Export 25 fps XML & Open in Grass Valley EDIUS (.EZP project)";
-    } else {
-      btnSendToNle.innerHTML = "⚡ Send to All NLEs";
-      btnSendToNle.title = "Export and send to DaVinci, Premiere & EDIUS";
+  async function sendChat(text) {
+    text = text.trim();
+    if (!text) return;
+    $("chat-text").value = "";
+    addMsg(text, "user");
+    $("chat-send").disabled = true;
+    const thinking = addMsg("Thinking…", "tool");
+    try {
+      const r = await api("/api/assistant/send", { text });
+      if (!r.success) throw new Error(r.error);
+      const job = await pollJob(r.job_id, (l) => addMsg("⚙ " + l.msg, "tool"));
+      thinking.remove();
+      if (job.status === "error") addMsg(job.error || "Something went wrong.", "err");
+      else addMsg(job.result.reply, "bot");
+      fetchStatus();
+    } catch (e) {
+      thinking.remove();
+      addMsg(e.message, "err");
+    } finally {
+      $("chat-send").disabled = false;
+      $("chat-text").focus();
     }
   }
 
-  targetNleRadios.forEach((r) => {
-    r.addEventListener("change", updateNleButtonState);
+  $("chat-form").addEventListener("submit", (e) => { e.preventDefault(); sendChat($("chat-text").value); });
+  $("chat-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat($("chat-text").value); }
   });
-  updateNleButtonState();
-
-  if (btnSendToNle) {
-    btnSendToNle.addEventListener("click", async () => {
-      const selected = document.querySelector('input[name="target_nle"]:checked');
-      const val = selected ? selected.value : "resolve";
-      btnSendToNle.disabled = true;
-      try {
-        if (val === "resolve") {
-          appendLog("🎬 Sending AI edit timelines & trimmed clips to DaVinci Resolve...", "info", weddingConsole);
-          const res = await api("/api/resolve/send", {});
-          if (res.success) {
-            appendLog(`✅ DaVinci Resolve: ${res.message || "Timelines loaded successfully!"}`, "info", weddingConsole);
-            (res.timelines || []).forEach(t => appendLog(`  • Created Timeline: ${t}`, "info", weddingConsole));
-          } else {
-            appendLog(`⚠️ DaVinci Resolve: ${res.error || res.message}`, "warning", weddingConsole);
-          }
-        } else if (val === "premiere") {
-          appendLog("🟣 Sending AI edit to Adobe Premiere Pro...", "info", weddingConsole);
-          const res = await api("/api/premiere/launch", {});
-          appendLog(res.message || (res.success ? "Premiere Pro ready." : res.error), res.success ? "info" : "warning", weddingConsole);
-          await api("/api/open-folder", { path: "" });
-        } else if (val === "edius") {
-          appendLog("🟡 Exporting project & timeline for Grass Valley EDIUS...", "info", weddingConsole);
-          const res = await api("/api/edius/export", {});
-          if (res.success) {
-            appendLog(`✅ EDIUS: ${res.message}`, "info", weddingConsole);
-            (res.xmls || []).forEach(x => appendLog(`  • EDIUS XML: ${x.split("/").pop()}`, "info", weddingConsole));
-            appendLog("💡 Tip for EDIUS (Windows): Open EDIUS -> Create 25 fps PAL Project -> File -> Import Project -> FCP XML and select this file. Press Ctrl+S to save as .EZP project!", "info", weddingConsole);
-            await api("/api/open-folder", { path: res.edius_dir || "" });
-          } else {
-            appendLog(`⚠️ EDIUS note: ${res.error || res.message}`, "warning", weddingConsole);
-          }
-        } else {
-          appendLog("⚡ Sending AI edit to DaVinci Resolve, Premiere Pro & EDIUS...", "info", weddingConsole);
-          const resRes = await api("/api/resolve/send", {});
-          const resPrem = await api("/api/premiere/launch", {});
-          const resEdius = await api("/api/edius/export", {});
-          appendLog(`DaVinci: ${resRes.message || resRes.error}`, resRes.success ? "info" : "warning", weddingConsole);
-          appendLog(`Premiere: ${resPrem.message || resPrem.error}`, resPrem.success ? "info" : "warning", weddingConsole);
-          appendLog(`EDIUS: ${resEdius.message || resEdius.error}`, resEdius.success ? "info" : "warning", weddingConsole);
-          await api("/api/open-folder", { path: "" });
-        }
-      } catch (e) {
-        appendLog("Error launching editing software: " + e, "error", weddingConsole);
-      } finally {
-        btnSendToNle.disabled = false;
-      }
-    });
-  }
-
-  const btnPremiereOrganize = document.getElementById("btn-premiere-organize");
-  if (btnPremiereOrganize) {
-    btnPremiereOrganize.addEventListener("click", async () => {
-      const selected = document.querySelector('input[name="target_nle"]:checked');
-      const val = selected ? selected.value : "resolve";
-      btnPremiereOrganize.disabled = true;
-      try {
-        if (val === "resolve") {
-          appendLog("📁 Organizing DaVinci Resolve Media Pool bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
-          const res = await api("/api/resolve/organize-bins", {});
-          if (res.success) {
-            appendLog(`✅ DaVinci Resolve Bins Organized: ${res.message}`, "info", weddingConsole);
-          } else {
-            appendLog(`⚠️ DaVinci Resolve bin note: ${res.error || res.message}`, "warning", weddingConsole);
-          }
-        } else if (val === "premiere") {
-          appendLog("📁 Organizing Adobe Premiere Pro project bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
-          const res = await api("/api/premiere/organize-bins", {});
-          if (res.success) {
-            appendLog(`✅ Premiere Pro Bins Organized: ${res.message || "Smart Bins created"}`, "info", weddingConsole);
-          } else {
-            appendLog(`⚠️ Premiere Pro bin note: ${res.error || res.message}`, "warning", weddingConsole);
-          }
-        } else {
-          appendLog("📁 Organizing bins in both DaVinci Resolve & Premiere Pro...", "info", weddingConsole);
-          const r1 = await api("/api/resolve/organize-bins", {});
-          const r2 = await api("/api/premiere/organize-bins", {});
-          appendLog(`✅ Resolve: ${r1.message || r1.error} | Premiere: ${r2.message || r2.error}`, "info", weddingConsole);
-        }
-      } catch (e) {
-        appendLog("Error organizing bins: " + e, "error", weddingConsole);
-      } finally {
-        btnPremiereOrganize.disabled = false;
-      }
-    });
-  }
+  document.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => sendChat(c.textContent)));
+  $("chat-reset").addEventListener("click", async () => {
+    await api("/api/assistant/reset", {});
+    chatLog.innerHTML = "";
+    addMsg("New conversation. Kya karna hai?", "bot");
+  });
 
   // ------------------------------------------------------------------
-  // All AI Tools tab (auto-generated forms from MCP tool schemas)
+  // Tools (forms generated from the tool schemas)
   // ------------------------------------------------------------------
   let tools = null;
-  let toolCount = 0;
   let currentTool = null;
-  const toolList = document.getElementById("tool-list");
-  const toolForm = document.getElementById("tool-form");
-  const toolOutput = document.getElementById("tool-output");
-  const btnRunTool = document.getElementById("btn-run-tool");
-  const toolSearch = document.getElementById("tool-search");
-
-  const GROUPS = [
-    ["resolve_", "DaVinci Resolve"],
-    ["premiere_", "Adobe Premiere Pro"],
-    ["edius_", "Grass Valley EDIUS"],
-    ["ai_", "AI Engine"],
-    ["hyperframes_", "HyperFrames"]
-  ];
+  const GROUPS = [["resolve_", "DaVinci Resolve"], ["premiere_", "Premiere Pro"], ["edius_", "EDIUS"], ["ai_", "AI engine"], ["hyperframes_", "Titles & motion"]];
 
   function browseKindFor(key) {
-    if (/folder|_dir$|output_dir/.test(key)) return "folder";
+    if (/folder|_dir$/.test(key)) return "folder";
     if (/audio|music/.test(key)) return "audio";
     if (/image|reference/.test(key)) return "image";
-    if (/drx|lut|cube/.test(key)) return "file";
+    if (/drx|lut|cube|xml/.test(key)) return "file";
     if (/path|clip|video/.test(key)) return "video";
     return null;
   }
 
   function renderToolList() {
-    const q = (toolSearch.value || "").toLowerCase();
-    toolList.innerHTML = "";
-    GROUPS.forEach(([prefix, label]) => {
-      const items = tools.filter((t) => t.name.startsWith(prefix) &&
-        (!q || t.name.toLowerCase().includes(q) || (t.description || "").toLowerCase().includes(q)));
+    const q = $("tool-search").value.toLowerCase();
+    const list = $("tool-list");
+    list.innerHTML = "";
+    const groups = GROUPS.map(([prefix, label]) => [label, tools.filter((t) => t.name.startsWith(prefix))]);
+    const other = tools.filter((t) => !GROUPS.some(([p]) => t.name.startsWith(p)));
+    if (other.length) groups.push(["Other", other]);
+    groups.forEach(([label, items]) => {
+      items = items.filter((t) => !q || t.name.includes(q) || (t.description || "").toLowerCase().includes(q));
       if (!items.length) return;
       const h = document.createElement("div");
       h.className = "tool-group";
-      h.textContent = `${label} (${items.length})`;
-      toolList.appendChild(h);
+      h.textContent = `${label} · ${items.length}`;
+      list.appendChild(h);
       items.forEach((t) => {
         const b = document.createElement("button");
         b.className = "tool-item" + (currentTool === t ? " active" : "");
         b.textContent = t.name;
         b.title = t.description || "";
         b.addEventListener("click", () => selectTool(t));
-        toolList.appendChild(b);
+        list.appendChild(b);
       });
     });
   }
@@ -841,87 +591,73 @@ document.addEventListener("DOMContentLoaded", () => {
   function selectTool(t) {
     currentTool = t;
     renderToolList();
-    document.getElementById("tool-title").textContent = t.name;
-    document.getElementById("tool-desc").textContent = t.description || "";
-    toolForm.innerHTML = "";
+    $("tool-title").textContent = t.name;
+    $("tool-desc").textContent = t.description || "";
+    const form = $("tool-form");
+    form.innerHTML = "";
     const schema = t.inputSchema || {};
     const props = schema.properties || {};
     const required = schema.required || [];
 
     Object.entries(props).forEach(([key, spec]) => {
-      const group = document.createElement("div");
-      group.className = "form-group";
       const label = document.createElement("label");
+      label.className = "lbl";
       label.textContent = key + (required.includes(key) ? " *" : "") + (spec.description ? ` — ${spec.description}` : "");
-      group.appendChild(label);
+      form.appendChild(label);
 
       let input;
       if (spec.enum) {
         input = document.createElement("select");
-        spec.enum.forEach((v) => {
-          const o = document.createElement("option");
-          o.value = v;
-          o.textContent = v;
-          input.appendChild(o);
-        });
+        spec.enum.forEach((v) => { const o = document.createElement("option"); o.value = v; o.textContent = v; input.appendChild(o); });
         if (spec.default !== undefined) input.value = spec.default;
       } else if (spec.type === "boolean") {
         input = document.createElement("input");
         input.type = "checkbox";
-        input.checked = spec.default !== undefined ? !!spec.default : false;
-      } else if (spec.type === "array" || spec.type === "object" || key === "html_content") {
+        input.checked = !!spec.default;
+      } else if (spec.type === "array" || spec.type === "object") {
         input = document.createElement("textarea");
-        input.rows = spec.type === "array" ? 4 : 6;
-        input.placeholder = spec.type === "array" ? "One value per line" : (spec.type === "object" ? "JSON" : "");
-        if (spec.default !== undefined) input.value = spec.type === "object" ? JSON.stringify(spec.default) : spec.default;
+        input.rows = 3;
+        input.placeholder = spec.type === "array" ? "One value per line" : "JSON";
       } else {
         input = document.createElement("input");
-        input.type = spec.type === "number" || spec.type === "integer" ? "number" : "text";
-        if (input.type === "number") input.step = "any";
+        input.type = "text";
         if (spec.default !== undefined) input.value = spec.default;
       }
       input.name = key;
       input.dataset.type = spec.enum ? "string" : (spec.type || "string");
 
       const kind = browseKindFor(key);
-      if (kind && input.tagName !== "SELECT" && input.type !== "checkbox" && input.type !== "number") {
+      if (kind && input.tagName !== "SELECT" && input.type !== "checkbox" && !["number", "integer"].includes(spec.type)) {
         const row = document.createElement("div");
-        row.className = "input-action";
-        row.appendChild(input);
+        row.className = "input-row";
         const b = document.createElement("button");
         b.type = "button";
-        b.className = "btn btn-secondary";
+        b.className = "btn";
         b.textContent = "Browse";
         b.addEventListener("click", async () => {
-          const res = await api("/api/browse", { kind, prompt: `Select ${key}` });
-          if (!res.path) return;
-          if (input.tagName === "TEXTAREA" && spec.type === "array") {
-            input.value = (input.value.trim() ? input.value.trim() + "\n" : "") + res.path;
-          } else {
-            input.value = res.path;
-          }
+          const r = await api("/api/browse", { kind, prompt: `Select ${key}` });
+          if (!r.path) return;
+          input.value = spec.type === "array" && input.value.trim() ? `${input.value.trim()}\n${r.path}` : r.path;
         });
-        row.appendChild(b);
-        group.appendChild(row);
+        row.append(input, b);
+        form.appendChild(row);
       } else {
-        group.appendChild(input);
+        form.appendChild(input);
       }
-      toolForm.appendChild(group);
     });
-
     if (!Object.keys(props).length) {
       const p = document.createElement("p");
       p.className = "muted";
       p.textContent = "This tool needs no inputs.";
-      toolForm.appendChild(p);
+      form.appendChild(p);
     }
-    btnRunTool.disabled = false;
-    toolOutput.innerHTML = "";
+    $("btn-run-tool").disabled = false;
+    $("tool-output").innerHTML = "";
   }
 
   function collectArgs() {
     const args = {};
-    for (const el of toolForm.elements) {
+    for (const el of $("tool-form").elements) {
       if (!el.name) continue;
       const type = el.dataset.type;
       if (type === "boolean") { args[el.name] = el.checked; continue; }
@@ -942,110 +678,71 @@ document.addEventListener("DOMContentLoaded", () => {
   async function loadTools() {
     if (tools) return;
     try {
-      const res = await api("/api/tools");
-      if (!res.success) {
-        toolList.innerHTML = `<div class="muted">${res.error}</div>`;
-        return;
-      }
-      // Deduplicate tools registered twice in the server list
+      const r = await api("/api/tools");
+      if (!r.success) { $("tool-list").innerHTML = ""; $("tool-list").textContent = r.error; return; }
       const seen = new Set();
-      tools = res.tools.filter((t) => !seen.has(t.name) && seen.add(t.name));
-      toolCount = tools.length;
-      const metricTools = document.getElementById("metric-tools");
-      if (metricTools) metricTools.textContent = `${toolCount} Tools Active`;
+      tools = r.tools.filter((t) => !seen.has(t.name) && seen.add(t.name));
+      $("home-tool-count").textContent = `${tools.length} tools`;
       renderToolList();
     } catch (e) {
-      toolList.innerHTML = '<div class="muted">Backend not reachable.</div>';
+      $("tool-list").textContent = e.message;
     }
   }
+  $("tool-search").addEventListener("input", () => tools && renderToolList());
 
-  if (toolSearch) toolSearch.addEventListener("input", () => tools && renderToolList());
-
-  if (btnRunTool) {
-    btnRunTool.addEventListener("click", async () => {
-      if (!currentTool) return;
-      let args;
-      try { args = collectArgs(); } catch (e) { return alert(e.message); }
-      btnRunTool.disabled = true;
-      toolOutput.innerHTML = "";
-      try {
-        const { job_id } = await api("/api/tool", { name: currentTool.name, arguments: args });
-        const job = await pollJob(job_id, toolOutput);
-        const pre = document.createElement("pre");
-        pre.className = "console-line";
-        pre.style.whiteSpace = "pre-wrap";
-        pre.textContent = JSON.stringify(job.result ?? job.error, null, 2);
-        toolOutput.appendChild(pre);
-        fetchStatus();
-      } catch (e) {
-        appendLog("Backend not reachable.", "error", toolOutput);
-      } finally {
-        btnRunTool.disabled = false;
-      }
-    });
-  }
-
-  // ------------------------------------------------------------------
-  // Diagnostics tab
-  // ------------------------------------------------------------------
-  const diagGrid = document.getElementById("diag-grid");
-
-  function diagCard(title, obj) {
-    const card = document.createElement("div");
-    card.className = "panel-box";
-    const h = document.createElement("h3");
-    h.textContent = title;
-    const pre = document.createElement("pre");
-    pre.textContent = JSON.stringify(obj, null, 2);
-    card.append(h, pre);
-    return card;
-  }
-
-  async function loadDiagnostics() {
-    if (!diagGrid) return;
-    diagGrid.innerHTML = '<div class="muted">Loading diagnostics...</div>';
+  $("btn-run-tool").addEventListener("click", async () => {
+    if (!currentTool) return;
+    let args;
+    try { args = collectArgs(); } catch (e) { return alert(e.message); }
+    const out = $("tool-output");
+    out.innerHTML = "";
+    $("btn-run-tool").disabled = true;
     try {
-      const d = await api("/api/diagnostics");
-      diagGrid.innerHTML = "";
-      const missing = Object.entries(d.environment.dependencies).filter(([, v]) => !v).map(([k]) => k);
-      if (missing.length) {
-        diagGrid.appendChild(diagCard("⚠️ Missing AI libraries", {
-          missing,
-          fix: "Run AI-Video-Flow-Setup again (it installs requirements.txt)"
-        }));
-      }
-      diagGrid.appendChild(diagCard("Environment", d.environment));
-      diagGrid.appendChild(diagCard("DaVinci Resolve", d.resolve));
-      diagGrid.appendChild(diagCard("Claude Desktop", d.claude));
-      diagGrid.appendChild(diagCard("HyperFrames", d.hyperframes));
-      updateLiveUI(d);
+      const { job_id } = await api("/api/tool", { name: currentTool.name, arguments: args });
+      const job = await pollJob(job_id, (l) => log(out, l.msg, l.level, l.t));
+      log(out, JSON.stringify(job.result ?? job.error, null, 2), job.status === "error" ? "error" : "normal");
+      fetchStatus();
     } catch (e) {
-      diagGrid.innerHTML = '<div class="muted">Backend not reachable.</div>';
+      log(out, e.message, "error");
+    } finally {
+      $("btn-run-tool").disabled = false;
     }
-  }
-
-  const btnRefreshDiag = document.getElementById("btn-refresh-diag");
-  const btnDiagConnect = document.getElementById("btn-diag-connect");
-  if (btnRefreshDiag) btnRefreshDiag.addEventListener("click", loadDiagnostics);
-  if (btnDiagConnect) btnDiagConnect.addEventListener("click", async () => { await handleConnectAll(); loadDiagnostics(); });
-
-  // ------------------------------------------------------------------
-  // Sponsored ads: open landing page in the system browser
-  // ------------------------------------------------------------------
-  document.querySelectorAll(".qa-ad").forEach((ad) => {
-    ad.addEventListener("click", async (e) => {
-      e.preventDefault();
-      const url = ad.getAttribute("href");
-      try {
-        const res = await api("/api/open-url", { url });
-        if (res.success) return;
-      } catch (err) { /* fall through */ }
-      window.open(url, "_blank");
-    });
   });
 
-  // Poll status initially and every 5 seconds
-  loadTools();
+  // ------------------------------------------------------------------
+  // Diagnostics
+  // ------------------------------------------------------------------
+  async function loadDiagnostics() {
+    const box = $("diag");
+    try {
+      const d = await api("/api/diagnostics");
+      renderStatus(d);
+      box.innerHTML = "";
+      const env = d.environment;
+      const items = [["App", `v1.1 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
+      items.forEach(([k, v]) => {
+        const it = document.createElement("div");
+        it.className = "item";
+        const a = document.createElement("span"); a.className = "muted"; a.textContent = k;
+        const b = document.createElement("span"); b.textContent = v;
+        if (v === "missing") b.style.color = "var(--red)";
+        it.append(a, b);
+        box.appendChild(it);
+      });
+    } catch (e) {
+      box.textContent = e.message;
+    }
+  }
+  $("btn-diag").addEventListener("click", loadDiagnostics);
+
+  // ------------------------------------------------------------------
+  // Start
+  // ------------------------------------------------------------------
+  if (START_TAB && PAGES[START_TAB]) go(START_TAB);
   fetchStatus();
-  setInterval(fetchStatus, 5000);
-});
+  fetchLicense();
+  loadTools();
+  setInterval(fetchStatus, 6000);
+  setInterval(fetchLicense, 60000);
+})();

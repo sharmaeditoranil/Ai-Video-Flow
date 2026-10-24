@@ -537,19 +537,25 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSendToNle.disabled = true;
       try {
         if (val === "resolve") {
-          appendLog("🎬 Launching / focusing DaVinci Resolve...", "info", weddingConsole);
-          const res = await api("/api/resolve/launch", {});
-          appendLog(res.message || (res.success ? "DaVinci Resolve ready." : res.error), res.success ? "info" : "warning", weddingConsole);
+          appendLog("🎬 Sending AI edit timelines & trimmed clips to DaVinci Resolve...", "info", weddingConsole);
+          const res = await api("/api/resolve/send", {});
+          if (res.success) {
+            appendLog(`✅ DaVinci Resolve: ${res.message || "Timelines loaded successfully!"}`, "info", weddingConsole);
+            (res.timelines || []).forEach(t => appendLog(`  • Created Timeline: ${t}`, "info", weddingConsole));
+          } else {
+            appendLog(`⚠️ DaVinci Resolve: ${res.error || res.message}`, "warning", weddingConsole);
+          }
         } else if (val === "premiere") {
-          appendLog("🟣 Launching / focusing Adobe Premiere Pro...", "info", weddingConsole);
+          appendLog("🟣 Sending AI edit to Adobe Premiere Pro...", "info", weddingConsole);
           const res = await api("/api/premiere/launch", {});
           appendLog(res.message || (res.success ? "Premiere Pro ready." : res.error), res.success ? "info" : "warning", weddingConsole);
           await api("/api/open-folder", { path: "" });
         } else {
-          appendLog("⚡ Launching DaVinci Resolve & Adobe Premiere Pro...", "info", weddingConsole);
-          const resRes = await api("/api/resolve/launch", {});
+          appendLog("⚡ Sending AI edit to DaVinci Resolve & Adobe Premiere Pro...", "info", weddingConsole);
+          const resRes = await api("/api/resolve/send", {});
           const resPrem = await api("/api/premiere/launch", {});
-          appendLog(`DaVinci: ${resRes.message || "Ready"} | Premiere: ${resPrem.message || "Ready"}`, "info", weddingConsole);
+          appendLog(`DaVinci: ${resRes.message || resRes.error}`, resRes.success ? "info" : "warning", weddingConsole);
+          appendLog(`Premiere: ${resPrem.message || resPrem.error}`, resPrem.success ? "info" : "warning", weddingConsole);
           await api("/api/open-folder", { path: "" });
         }
       } catch (e) {

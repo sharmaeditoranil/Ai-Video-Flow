@@ -259,6 +259,109 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
     return len(entries) if resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")) else 0
 
 
+def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
+    """Sends the latest or specified edit plan directly into DaVinci Resolve."""
+    try:
+        # 1. Locate plan
+        if not plan_path or not os.path.isfile(plan_path):
+            import glob
+            plans = glob.glob(os.path.join(OUTPUT_DIR, "*_plan_*.json"))
+            if not plans:
+                return {"success": False, "error": "Koi edit plan nahi mila. Pehle 'Start AI In-Clip Trimming' run karein."}
+            plans.sort(key=os.path.getmtime, reverse=True)
+            plan_path = plans[0]
+
+        with open(plan_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # 2. Ensure DaVinci Resolve is running
+        if not resolve_adapter.is_running():
+            resolve_adapter.launch()
+            for _ in range(8):
+                time.sleep(1)
+                if resolve_adapter.connect():
+                    break
+
+        if not resolve_adapter.connect():
+            return {"success": False, "error": "DaVinci Resolve se connect nahi ho paya. Kripya DaVinci Resolve open karein."}
+
+        # 3. Ensure an active project exists
+        proj = None
+        if resolve_adapter._project_manager:
+            proj = resolve_adapter._project_manager.GetCurrentProject()
+        if not proj:
+            proj_name = f"AI_Video_Flow_{data.get('mode', 'Edit').capitalize()}"
+            resolve_adapter.create_project(proj_name)
+            proj = resolve_adapter._current_project
+            if not proj:
+                return {"success": False, "error": "DaVinci Resolve me project create/open nahi ho saka."}
+
+        plans_dict = data.get("plans", {})
+        if not plans_dict:
+            return {"success": False, "error": "Plan file me koi sequence nahi mili."}
+
+        created_timelines = []
+        total_placed = 0
+
+        for p_key, p in plans_dict.items():
+            name = p.get("sequence_name") or f"01_AI_{data.get('mode', 'Edit')}_Timeline"
+            used = sorted({c["file_path"] for c in p.get("clips", []) if c.get("file_path")})
+            items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
+            items_by_path = {}
+            for it in (items or []):
+                try:
+                    items_by_path[os.path.normpath(it.GetClipProperty("File Path"))] = it
+                except Exception:
+                    pass
+
+            # Also read existing items from pool if already imported earlier
+            try:
+                pool = proj.GetMediaPool()
+                root = pool.GetRootFolder()
+                def collect_clips(folder):
+                    for clip in folder.GetClipList():
+                        try:
+                            fp = os.path.normpath(clip.GetClipProperty("File Path"))
+                            if fp not in items_by_path:
+                                items_by_path[fp] = clip
+                        except Exception:
+                            pass
+                    for sf in folder.GetSubFolderList():
+                        collect_clips(sf)
+                collect_clips(root)
+            except Exception:
+                pass
+
+            # Create or select timeline
+            tl = resolve_adapter.create_timeline(name)
+            placed = _append_plan_to_resolve(p, items_by_path)
+            total_placed += placed
+            created_timelines.append(name)
+
+            # Import audio if exists
+            audio_file = data.get("audio")
+            if audio_file and os.path.isfile(audio_file):
+                try:
+                    resolve_adapter.import_media_files([audio_file], bin_name="03_MUSIC")
+                except Exception:
+                    pass
+
+        # Focus DaVinci window
+        if platform.system() == "Darwin":
+            subprocess.run(["osascript", "-e", 'tell application "DaVinci Resolve" to activate'], check=False)
+
+        resolve_adapter.save_project()
+        return {
+            "success": True,
+            "message": f"DaVinci Resolve me {len(created_timelines)} timeline(s) load ho gayi ({total_placed} clips trimmed & placed)!",
+            "timelines": created_timelines,
+            "clip_count": total_placed
+        }
+    except Exception as e:
+        logger.error(f"Error in send_to_resolve: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
@@ -592,6 +695,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/resolve/launch":
             self._json(resolve_adapter.launch())
+
+        elif self.path == "/api/resolve/send":
+            self._json(send_to_resolve(data.get("plan_path")))
 
         elif self.path == "/api/resolve/organize-bins":
             self._json(resolve_adapter.organize_bins_automatically())

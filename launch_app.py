@@ -26,7 +26,7 @@ if root_dir not in sys.path:
 
 PORT = 5678
 APP_URL = f"http://127.0.0.1:{PORT}"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow")
 SESSION_FILE = os.path.join(DATA_DIR, "session.json")
 SESSION_TOKEN = ""  # per-launch secret the dashboard sends with every API call

@@ -30,8 +30,10 @@ from packages.licensing.public_key import LICENSE_PUBLIC_KEY_B64
 
 logger = logging.getLogger("ai_video_flow.licensing")
 
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://flow.aiphotoflow.in/index.php").rstrip("/")
+RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
+RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 _CONFIG_DIR = os.path.expanduser("~/.ai-video-flow")
 _LICENSE_FILE = os.path.join(_CONFIG_DIR, "license.json")
 _PUBLIC_KEY = Ed25519PublicKey.from_public_bytes(base64.b64decode(LICENSE_PUBLIC_KEY_B64))
@@ -230,6 +232,32 @@ class LicenseManager:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             return {"success": False, "error": f"Could not load plans: {e}", "plans": [], "buy_url": f"{self.server_url}/buy"}
+
+    def update_info(self) -> Dict[str, Any]:
+        """Newer app version, if any: the admin portal's setting first, else the latest GitHub release."""
+        latest, url, notes = "", "", ""
+        try:
+            with urllib.request.urlopen(f"{self.server_url}/api/v1/app/version", timeout=10) as resp:
+                d = json.loads(resp.read().decode("utf-8"))
+                latest, url, notes = d.get("latest") or "", d.get("download_url") or "", d.get("notes") or ""
+        except Exception:
+            pass
+        if not latest:
+            try:
+                req = urllib.request.Request(RELEASES_API, headers={"User-Agent": f"AIVideoFlow/{APP_VERSION}"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    d = json.loads(resp.read().decode("utf-8"))
+                    latest, url = (d.get("tag_name") or "").lstrip("vV"), d.get("html_url") or ""
+            except Exception as e:
+                return {"available": False, "current": APP_VERSION, "error": str(e)}
+
+        def ver(v: str) -> Tuple[int, ...]:
+            try:
+                return tuple(int(x) for x in v.split("."))
+            except ValueError:
+                return (0,)
+        return {"available": bool(latest) and ver(latest) > ver(APP_VERSION), "current": APP_VERSION,
+                "latest": latest, "url": url if url.startswith("https://") else RELEASES_PAGE, "notes": notes}
 
     def ai_credentials(self) -> Tuple[str, str]:
         """License key + machine id that the Claude relay on the server authenticates."""

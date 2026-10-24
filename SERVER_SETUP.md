@@ -35,7 +35,13 @@ Ye kho gayi to naye license sign nahi honge aur app dobara banana padega.
 - **Payments · Razorpay**: Key ID, Key secret, Webhook secret daaliye aur "Accept online payments" on kariye.
   Razorpay Dashboard → Webhooks me jo URL Settings me dikhta hai wo daaliye (events: `payment.captured`, `order.paid`).
   Customer buy page: `https://flow.aiphotoflow.in/index.php/buy`
-- **Plans & pricing**: plans ki keemat, credits, validity yahan badaliye.
+- **AI Audio · ElevenLabs**: AI background music aur voiceover ke liye ElevenLabs API key (elevenlabs.io → Developers → API Keys) daaliye → Save → Test connection.
+  Voiceover ki aawaz badalni ho to ElevenLabs → Voices se voice ka ID copy karke "Voiceover voice ID" me daaliye.
+  Ye sirf Smart AI packs me chalta hai; "generations per license per day" se kharcha control kariye.
+- **App update notice**: naya version release karne ke baad yahan version (jaise `1.1.5`) aur download link daaliye.
+  Purane app me "New version available → Download" dikhne lagega. Khali chhodne par app GitHub ka latest release dekhta hai.
+- **Plans & pricing**: plans ki keemat, MRP, weddings, badge aur validity yahan badaliye. Free plan ki roz ki limit bhi yahi hai.
+  Ye sab installed apps me apne aap dikhta hai, naya app nahi chahiye.
 
 ## 5. Roz ka kaam
 

@@ -26,7 +26,7 @@ import traceback
 import logging
 import hmac
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 # Ensure project root is in sys.path
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -47,14 +47,56 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.3"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.4"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
 
-# Free plan: projects per day (any paid plan removes the limit)
+# Free plan: projects per day (any paid plan removes the limit). The admin portal can change it;
+# the last plan list from the server is cached so prices and the limit also show offline.
 FREE_DAILY_PROJECTS = 1
 USAGE_FILE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "usage.json")
+PLANS_CACHE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "plans.json")
+
+
+def _cached_plans() -> Dict[str, Any]:
+    try:
+        with open(PLANS_CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def fetch_plans() -> Dict[str, Any]:
+    data = license_manager.plans()
+    if data.get("success"):
+        try:
+            os.makedirs(os.path.dirname(PLANS_CACHE), exist_ok=True)
+            with open(PLANS_CACHE, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except OSError:
+            pass
+    return data
+
+
+def free_daily_limit() -> int:
+    try:
+        return max(0, int(_cached_plans().get("free_daily_projects", FREE_DAILY_PROJECTS)))
+    except (TypeError, ValueError):
+        return FREE_DAILY_PROJECTS
+
+
+def price_from() -> Dict[str, int]:
+    """Cheapest monthly AI Editing plan and cheapest Smart AI pack, for the hints in the app."""
+    plans = _cached_plans().get("plans") or []
+    local = [int(p["price_inr"]) for p in plans if p.get("kind") == "local" and int(p.get("validity_days", 0)) <= 31]
+    ai = [int(p["price_inr"]) for p in plans if p.get("kind") == "ai"]
+    return {"local": min(local) if local else 399, "ai": min(ai) if ai else 999}
+
+
+def license_status() -> Dict[str, Any]:
+    return {**license_manager.get_status(), "free_left_today": free_projects_left(),
+            "free_limit": free_daily_limit(), "price_from": price_from()}
 
 
 def _usage_today() -> int:
@@ -78,7 +120,7 @@ def free_projects_left() -> Optional[int]:
     """None = unlimited (paid plan)."""
     if license_manager.get_status().get("local_unlimited"):
         return None
-    return max(0, FREE_DAILY_PROJECTS - _usage_today())
+    return max(0, free_daily_limit() - _usage_today())
 
 
 # AI assistant conversation (one chat per app session)
@@ -339,7 +381,35 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
         entries.append({"mediaPoolItem": item, "startFrame": start, "endFrame": end})
     if not entries:
         return 0
-    return len(entries) if resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")) else 0
+    if not resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")):
+        return 0
+    # Music bed from 0:00 and the AI voiceover from 1 s, each on its own audio track
+    end = float(plan.get("total_duration") or 0)
+    if plan.get("audio") and os.path.isfile(plan["audio"]) and end > 0:
+        _append_audio_to_resolve(plan["audio"], end, 0.0)
+    if plan.get("voiceover") and os.path.isfile(plan["voiceover"]):
+        _append_audio_to_resolve(plan["voiceover"], float(plan.get("voiceover_duration") or 0), 1.0)
+    return len(entries)
+
+
+def _append_audio_to_resolve(path: str, seconds: float, at_seconds: float) -> bool:
+    """Puts an audio file on a new audio track of the current Resolve timeline."""
+    project = resolve_adapter._current_project
+    tl = project.GetCurrentTimeline() if project else None
+    items = resolve_adapter.import_media_files([path], bin_name="03_MUSIC") if tl else None
+    if not items or seconds <= 0:
+        return False
+    try:
+        tl.AddTrack("audio", "stereo")
+        fps = float(project.GetSetting("timelineFrameRate") or 25.0)
+        start = int(tl.GetStartFrame() or 0)
+        placed = project.GetMediaPool().AppendToTimeline([{
+            "mediaPoolItem": items[0], "startFrame": 0, "endFrame": max(1, int(seconds * fps) - 1), "mediaType": 2,
+            "trackIndex": tl.GetTrackCount("audio"), "recordFrame": start + int(round(at_seconds * fps))}])
+        return bool(placed)
+    except Exception as e:
+        logger.error(f"Audio append failed: {e}")
+        return False
 
 
 def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
@@ -484,6 +554,7 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
             if res.get("success"):
                 xml_path = res["xml_path"]
                 created_premiere.append(xml_path)
+                _add_voiceover_xml(job_id, p, xml_path)
                 _log(job_id, f"  🟣 Premiere Pro XML: {os.path.basename(xml_path)} ({res.get('clip_count', 0)} clips)", "info")
                 if target_nle == "premiere" or premiere_adapter.is_running():
                     premiere_adapter.open_timeline(xml_path)
@@ -504,6 +575,7 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
             )
             if res.get("success"):
                 created_edius.append(xml_out)
+                _add_voiceover_xml(job_id, p, xml_out)
                 _log(job_id, f"  🟡 EDIUS timeline: {os.path.basename(xml_out)} ({res.get('clip_count', 0)} clips)", "info")
 
     _progress(job_id, 100)
@@ -516,6 +588,15 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
         summary.append(f"{len(created_edius)} XMLs for Grass Valley EDIUS")
     _log(job_id, f"Done! Created {' & '.join(summary)}." if summary else "Analysis complete. Plan file is ready.", "info")
     return {"timelines_created": created_resolve, "premiere_xmls": created_premiere, "edius_xmls": created_edius, "plans": plans}
+
+
+def _add_voiceover_xml(job_id: str, plan: Dict[str, Any], xml_path: str) -> None:
+    if plan.get("voiceover") and os.path.isfile(plan["voiceover"]):
+        try:
+            from packages.ai_engine.fcp_xml import add_audio_track
+            add_audio_track(xml_path, plan["voiceover"], float(plan.get("voiceover_duration") or 0), 1.0)
+        except Exception as e:
+            _log(job_id, f"Could not add the voiceover to {os.path.basename(xml_path)}: {e}", "warning")
 
 
 def _fmt_ts(sec: float) -> str:
@@ -738,7 +819,9 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
             JOBS[job_id].update(status="error", error=str(e))
 
 
-def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "", instructions: str = "", tier: str = "free") -> None:
+def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding",
+                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "") -> None:
+    """`voiceover`: "" = none, "auto" = Smart AI writes the script, anything else = the script to speak."""
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
@@ -869,7 +952,22 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             except Exception as e:
                 _log(job_id, f"Reference video note: {e}", "warning")
 
-        # 2. Music beats
+        # 2. Smart AI: Claude reviews one frame per clip (1 credit only when it succeeds), then AI audio
+        voice_path, voice_seconds = "", 0.0
+        if is_premium:
+            credit_used, story_note = ai_review_clips(job_id, analyzed, instructions, os.path.basename(folder))
+            if ai_music or voiceover:
+                music_file, voice_path, voice_seconds = smart_audio(
+                    job_id, mode, formats, analyzed, instructions, story_note,
+                    ai_music and not (audio_path and os.path.isfile(audio_path)), voiceover)
+                if music_file:
+                    audio_path = music_file
+                if (music_file or voice_path) and not credit_used:
+                    _use_credit(job_id, os.path.basename(folder))
+        elif ai_music or voiceover:
+            _log(job_id, "AI music and voiceover are part of Smart AI packs - tick Smart AI to use them.", "warning")
+
+        # 2.5. Music beats
         beat_times = None
         if audio_path:
             if os.path.isfile(audio_path):
@@ -880,10 +978,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                              f"{len(beat_times or [])} beats detected.")
             else:
                 _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
-        # 2.5. AI Smart Premium: Claude reviews one frame per clip; 1 credit only when the review succeeds
-        if is_premium:
-            ai_review_clips(job_id, analyzed, instructions, os.path.basename(folder))
-
         _progress(job_id, 75)
 
         # 3. Story plans tailored by workflow mode
@@ -937,6 +1031,14 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         if audio_synced_plan:
             plans["audio_synced"] = audio_synced_plan
+
+        for key, p in plans.items():
+            if p.get("tracks"):
+                continue
+            if audio_path and os.path.isfile(audio_path) and key in ("teaser", "highlight"):
+                p["audio"] = audio_path  # music bed under the edit
+            if voice_path and key in ("teaser", "highlight"):
+                p["voiceover"], p["voiceover_duration"] = voice_path, voice_seconds
 
         # YouTube, Music Video and Reels: the music leads - every cut lands on a beat
         if mode in ("youtube", "music_video", "reels"):
@@ -1055,8 +1157,9 @@ def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:
         cap.release()
 
 
-def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: str, job_name: str) -> None:
-    """Claude scores the best candidate clips; the scores reshape which shots the planners pick."""
+def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: str, job_name: str) -> Tuple[bool, str]:
+    """Claude scores the best candidate clips; the scores reshape which shots the planners pick.
+    Returns (credit used, story note)."""
     candidates = sorted(analyzed, key=lambda c: c.get("quality_score", 0), reverse=True)[:40]
     thumb_dir = os.path.join(OUTPUT_DIR, ".thumbs")
     os.makedirs(thumb_dir, exist_ok=True)
@@ -1067,13 +1170,13 @@ def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: s
             pairs.append((clip, path))
     if not pairs:
         _log(job_id, "AI review skipped: could not read frames from the clips.", "warning")
-        return
+        return False, ""
     _log(job_id, f"Sending {len(pairs)} preview frames to Smart AI for review…", "info")
     try:
         review = cloud_ai_client.review_shots([p for _, p in pairs], instructions)
     except Exception as e:
         _log(job_id, f"AI review failed, continuing with the local edit (no credit used): {e}", "warning")
-        return
+        return False, ""
     for i, (clip, _) in enumerate(pairs):
         s = review["shots"].get(i)
         if not s:
@@ -1086,12 +1189,70 @@ def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: s
         _log(job_id, f"  ★ {os.path.basename(c['file_path'])}: {c['ai_moment']} (emotion {c['ai_emotion']})", "info")
     if review.get("story_note"):
         _log(job_id, f"  Story note: {review['story_note']}", "info")
+    return _use_credit(job_id, job_name), review.get("story_note", "")
+
+
+def _use_credit(job_id: str, job_name: str) -> bool:
     credit = license_manager.consume_wedding_credit(job_name=f"Wedding: {job_name}")
     if credit.get("success"):
         left = "unlimited" if credit.get("unlimited") else credit.get("credits_remaining")
         _log(job_id, f"1 AI wedding credit used. Credits left: {left}", "info")
-    else:
-        _log(job_id, f"Credit note: {credit.get('error')}", "warning")
+        return True
+    _log(job_id, f"Credit note: {credit.get('error')}", "warning")
+    return False
+
+
+# Length of the AI music per workflow (the edit is cut to the music's beats)
+MUSIC_SECONDS = {"reels": 50, "youtube": 300, "music_video": 180}
+
+
+def smart_audio(job_id: str, mode: str, formats: List[str], analyzed: List[Dict[str, Any]], instructions: str,
+                story_note: str, want_music: bool, voiceover: str) -> Tuple[str, str, float]:
+    """Smart AI writes the music brief / voiceover script, ElevenLabs (via the server) makes the audio.
+    Returns (music path, voiceover path, voiceover seconds); empty paths for anything that failed."""
+    from packages.ai_engine import ai_audio
+    music_seconds = MUSIC_SECONDS.get(mode) or (240 if "highlight" in formats else 70)
+    if want_music and mode == "wedding" and not {"teaser", "highlight"} & set(formats):
+        _log(job_id, "AI music is made for the teaser / highlight - the full film keeps its own sound.", "warning")
+        want_music = False
+    script = "" if voiceover == "auto" else voiceover
+    if not want_music and not voiceover:
+        return "", "", 0.0
+    out_dir = os.path.join(OUTPUT_DIR, "ai_audio")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    music_path = voice_path = ""
+    brief = {"music_prompt": "", "voiceover_script": script}
+    if want_music or not script:
+        _log(job_id, "🎼 Smart AI is writing the music brief" + (" and voiceover script…" if not script and voiceover else "…"), "info")
+        try:
+            moments = [c["ai_moment"] for c in sorted(analyzed, key=lambda c: c.get("ai_emotion", 0), reverse=True) if c.get("ai_moment")]
+            brief = cloud_ai_client.audio_brief(mode, moments, story_note, instructions, music_seconds, 25)
+            brief["voiceover_script"] = script or brief["voiceover_script"]
+        except Exception as e:
+            _log(job_id, f"Smart AI could not write the audio brief: {e}", "warning")
+            if not script:
+                return "", "", 0.0
+    if want_music and brief["music_prompt"]:
+        _log(job_id, f"  Music brief: {brief['music_prompt'][:160]}", "normal")
+        _log(job_id, f"🎵 Generating {music_seconds} s of AI music (about a minute)…", "info")
+        try:
+            music_path = ai_audio.generate_music(brief["music_prompt"], music_seconds, os.path.join(out_dir, f"ai_music_{stamp}.mp3"))
+            _log(job_id, f"  AI music ready: {music_path} - the edit will be cut on its beats.", "info")
+        except Exception as e:
+            _log(job_id, f"AI music failed: {e}", "warning")
+    voice_seconds = 0.0
+    if voiceover and brief["voiceover_script"]:
+        _log(job_id, f"🎙️ Generating the voiceover: “{brief['voiceover_script'][:120]}…”", "info")
+        try:
+            voice_path = ai_audio.generate_voiceover(brief["voiceover_script"], os.path.join(out_dir, f"ai_voiceover_{stamp}.mp3"))
+            voice_seconds = ai_audio.duration(voice_path)
+            with open(voice_path[:-4] + ".txt", "w", encoding="utf-8") as f:
+                f.write(brief["voiceover_script"])
+            _log(job_id, f"  Voiceover ready ({voice_seconds:.0f} s): {voice_path} - placed on its own audio track.", "info")
+        except Exception as e:
+            voice_path = ""
+            _log(job_id, f"AI voiceover failed: {e}", "warning")
+    return music_path, voice_path, voice_seconds
 
 
 def _assistant_tools() -> List[Dict[str, Any]]:
@@ -1216,11 +1377,15 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path == "/api/license/status":
-            self._json({**license_manager.get_status(), "free_left_today": free_projects_left()})
+            self._json(license_status())
             return
 
         if self.path == "/api/plans":
-            self._json(license_manager.plans())
+            self._json(fetch_plans())
+            return
+
+        if self.path == "/api/update":
+            self._json(license_manager.update_info())
             return
 
         if self.path == "/api/cloud-ai/status":
@@ -1322,8 +1487,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self._json(res)
 
         elif self.path == "/api/run-wedding" and free_projects_left() == 0:
+            n = free_daily_limit()
             self._json({"success": False, "limit": True,
-                        "error": "The free plan includes 1 project per day. Go unlimited with AI Editing from ₹399/month, or come back tomorrow."})
+                        "error": (f"The free plan includes {n} project{'s' if n != 1 else ''} per day. " if n else "The free plan is paused. ")
+                        + f"Go unlimited with AI Editing from ₹{price_from()['local']:,}/month"
+                        + (", or come back tomorrow." if n else ".")})
 
         elif self.path == "/api/run-wedding":
             formats = data.get("formats") or ["teaser", "highlight", "full_film"]
@@ -1336,11 +1504,12 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal")
                 self._json({"success": True, "job_id": job_id})
                 return
-            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video, instructions, tier)
+            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
+                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500])
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/license/status":
-            self._json({**license_manager.get_status(), "free_left_today": free_projects_left()})
+            self._json(license_status())
 
         elif self.path == "/api/license/activate":
             key = (data.get("license_key") or "").strip()
@@ -1410,6 +1579,7 @@ def start_server(port: int = 5678, token: Optional[str] = None):
         SESSION_TOKEN = token
     ALLOWED_HOSTS.update({f"127.0.0.1:{port}", f"localhost:{port}"})
     server = ThreadingHTTPServer(("127.0.0.1", port), AppRequestHandler)
+    threading.Thread(target=fetch_plans, daemon=True).start()  # latest prices / free limit from the admin portal
     logger.info(f"AI Video Flow desktop backend running on http://127.0.0.1:{port}")
     try:
         server.serve_forever()

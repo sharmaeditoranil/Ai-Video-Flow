@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.3 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.4 · AI editing assistant</div>
         </div>
       </div>
 
@@ -58,6 +58,11 @@
           </div>
         </div>
       </header>
+      <div class="update-bar" id="update-bar" hidden>
+        <span><b>New version available</b> <span id="update-text"></span></span>
+        <button class="btn btn-gold btn-sm" id="update-get">Download</button>
+        <button class="update-close" id="update-close" aria-label="Hide">×</button>
+      </div>
 
       <div class="content">
         <!-- HOME -->
@@ -197,6 +202,21 @@
                     <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot and picks the most emotional moments. Uses 1 wedding credit.</span></span>
                 </label>
                 <textarea id="in-notes" rows="2" placeholder="Notes for the AI (optional) — e.g. 'Bride entry and varmala ko teaser me zaroor rakho'"></textarea>
+                <div class="ai-audio" id="ai-audio">
+                  <label class="switch">
+                    <input type="checkbox" id="chk-ai-music">
+                    <span class="switch-ui"></span>
+                    <span><b>AI background music</b><br>
+                      <span class="muted">Smart AI composes an instrumental that fits your footage and cuts the edit on its beats. Used only when no song is selected.</span></span>
+                  </label>
+                  <label class="switch">
+                    <input type="checkbox" id="chk-ai-voice">
+                    <span class="switch-ui"></span>
+                    <span><b>AI voiceover</b><br>
+                      <span class="muted">A spoken intro on its own audio track. Leave the box empty and Smart AI writes it.</span></span>
+                  </label>
+                  <textarea id="in-voice" rows="2" placeholder="Voiceover text (optional) — e.g. 'Do dil, do parivaar, ek nayi shuruaat…'" hidden></textarea>
+                </div>
               </div>
 
               <button class="btn btn-primary btn-lg btn-block" id="btn-run">Build timelines</button>
@@ -295,9 +315,9 @@
             <div class="card">
               <h3>Plans at a glance</h3>
               <ul class="perks">
-                <li><b>Free</b> · every workflow and editor, 1 project per day</li>
-                <li><b>AI Editing</b> · unlimited projects — ₹399/month or ₹2,499/year (save 48%)</li>
-                <li><b>Smart AI Editing</b> · AI shot review + AI Assistant, unlimited editing included — from ₹999</li>
+                <li><b>Free</b> · every workflow and editor, <span class="free-limit-text">1 project per day</span></li>
+                <li><b>AI Editing</b> · unlimited projects — from <span class="price-local">₹399</span>/month</li>
+                <li><b>Smart AI Editing</b> · AI shot review, AI music &amp; voiceover, AI Assistant, unlimited editing included — from <span class="price-ai">₹999</span></li>
               </ul>
               <button class="btn btn-gold" data-goto="pricing">See plans &amp; pricing</button>
             </div>
@@ -324,7 +344,7 @@
                 <div class="price">₹0</div>
                 <div class="per">forever · with a daily limit</div>
                 <ul class="perks">
-                  <li>1 project per day</li>
+                  <li class="free-limit-text">1 project per day</li>
                   <li>All workflows &amp; editors</li>
                   <li>Shake trim, beat sync, silence cut</li>
                 </ul>
@@ -347,6 +367,7 @@
                 <tr><td>Wedding, Reels, YouTube, Music, Podcast, Tutorial</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>DaVinci Resolve · Premiere Pro · EDIUS</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>Smart AI shot review</td><td>—</td><td>—</td><td>✓</td></tr>
+                <tr><td>AI background music &amp; voiceover</td><td>—</td><td>—</td><td>✓</td></tr>
                 <tr><td>Smart AI Assistant (Hindi · Hinglish · English)</td><td>—</td><td>—</td><td>✓</td></tr>
               </tbody>
             </table>

@@ -86,10 +86,45 @@ def write_track_sequence(xml_path: str, name: str, tracks: List[List[Dict[str, A
         clipitem(ET.SubElement(audio, "track"), {"file_path": music_path, "timeline_start": 0.0, "in_seconds": 0.0,
                                                  "out_seconds": music_seconds}, "music-1", "audio")
 
+    _write(root, xml_path)
+    return count
+
+
+def _write(root: ET.Element, xml_path: str) -> None:
     os.makedirs(os.path.dirname(xml_path) or ".", exist_ok=True)
     ET.ElementTree(root).write(xml_path, encoding="UTF-8", xml_declaration=True)
     with open(xml_path, "r+", encoding="utf-8") as fh:  # FCP 7 importers expect the DOCTYPE line
         body = fh.read()
         fh.seek(0)
         fh.write(body.replace("?>", "?>\n<!DOCTYPE xmeml>", 1))
-    return count
+
+
+def add_audio_track(xml_path: str, audio_path: str, seconds: float, start_seconds: float = 0.0) -> bool:
+    """Adds `audio_path` (e.g. an AI voiceover) on a new audio track of an existing FCP 7 XML sequence."""
+    root = ET.parse(xml_path).getroot()
+    seq = root.find(".//sequence")  # EDIUS files wrap it in <project><children>
+    media = seq.find("media") if seq is not None else None
+    if media is None:
+        return False
+    audio = media.find("audio")
+    if audio is None:
+        audio = ET.SubElement(media, "audio")
+    fps_i = int((seq.findtext("rate/timebase") or "25").strip() or 25)
+    start, length = int(round(start_seconds * fps_i)), max(1, int(round(seconds * fps_i)))
+    item = ET.SubElement(ET.SubElement(audio, "track"), "clipitem", id="clipitem-ai-audio-1")
+    ET.SubElement(item, "name").text = os.path.basename(audio_path)
+    ET.SubElement(item, "duration").text = str(length)
+    _rate(item, fps_i)
+    ET.SubElement(item, "start").text = str(start)
+    ET.SubElement(item, "end").text = str(start + length)
+    ET.SubElement(item, "in").text = "0"
+    ET.SubElement(item, "out").text = str(length)
+    f = ET.SubElement(item, "file", id="file-ai-audio-1")
+    ET.SubElement(f, "name").text = os.path.basename(audio_path)
+    ET.SubElement(f, "pathurl").text = _pathurl(audio_path)
+    _rate(f, fps_i)
+    total = seq.find("duration")
+    if total is not None and (total.text or "").isdigit():
+        total.text = str(max(int(total.text), start + length))
+    _write(root, xml_path)
+    return True

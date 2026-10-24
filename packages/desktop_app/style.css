@@ -277,6 +277,17 @@ textarea { resize: vertical; }
 .segmented button.active { background: var(--card-2); color: var(--text); box-shadow: 0 0 0 1px var(--line-2); }
 
 .premium-step { border-bottom: 0; padding-bottom: 0; }
+.ai-audio { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line-2); }
+.ai-audio textarea { margin-top: -2px; }
+
+/* ---------- Update notice ---------- */
+.update-bar { display: flex; align-items: center; gap: 12px; padding: 10px 28px; font-size: 13px;
+  background: rgba(232, 185, 95, 0.1); border-bottom: 1px solid rgba(232, 185, 95, 0.35); color: var(--text); }
+.update-bar[hidden] { display: none; }
+.update-bar > span { flex: 1; min-width: 0; }
+.update-bar .muted, #update-text { color: var(--muted); }
+.update-close { background: none; border: 0; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; }
+.update-close:hover { color: var(--text); }
 .switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; margin-bottom: 12px; font-size: 13px; }
 .switch input { display: none; }
 .switch-ui { flex-shrink: 0; width: 36px; height: 20px; border-radius: 999px; background: var(--line-2); position: relative; transition: background 0.15s; margin-top: 1px; }

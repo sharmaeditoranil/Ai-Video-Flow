@@ -19,6 +19,9 @@ const RAZORPAY_API = 'https://api.razorpay.com/v1';
 const TOKEN_VALID_DAYS = 7;          // offline grace before the app must refresh online
 const MAX_RELAY_TOKENS = 16000;
 const ALLOWED_BETAS = ['server-side-fallback-2026-07-01'];
+const ELEVEN_API = 'https://api.elevenlabs.io/v1';
+const DEFAULT_VOICE_ID = 'JBFqnCBsd6RMkjVDRZzb';
+const DEFAULT_DOWNLOAD_URL = 'https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest';
 const AI_MODELS = [
     'claude-opus-5-5' => 'Claude Opus 5.5 (best quality)',
     'claude-sonnet-5-5' => 'Claude Sonnet 5.5 (faster, lower cost)',
@@ -297,6 +300,21 @@ function set_setting(PDO $pdo, string $key, string $value, bool $secret = false)
     }
     $pdo->prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         ->execute([$key, $value]);
+}
+
+// Smart AI routes (Claude relay, AI audio): the app sends its license key + machine id
+function smart_ai_license(PDO $pdo): array
+{
+    $key = (string)($_SERVER['HTTP_X_API_KEY'] ?? '');
+    $auth = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
+    if ($key === '' && str_starts_with($auth, 'Bearer ')) {
+        $key = substr($auth, 7);
+    }
+    $lic = check_license($pdo, $key, strtoupper((string)($_SERVER['HTTP_X_MACHINE_ID'] ?? '')), false);
+    if ($lic['plan_type'] === 'local' || ($lic['plan_type'] === 'per_wedding' && (int)$lic['credits'] <= 0)) {
+        json_out(['success' => false, 'error' => 'Smart AI needs an active Smart AI pack with credits left.'], 403);
+    }
+    return $lic;
 }
 
 function mask_secret(string $v): string
@@ -668,7 +686,15 @@ if (str_starts_with($PATH, '/api/v1/')) {
     if ($PATH === '/api/v1/plans' && $METHOD === 'GET') {
         $rows = $pdo->query('SELECT id, name, kind, credits, unlimited, price_inr, mrp_inr, validity_days, badge FROM plans WHERE active = 1 AND price_inr > 0 ORDER BY sort, id')->fetchAll();
         json_out(['success' => true, 'plans' => $rows, 'payments_enabled' => get_setting($pdo, 'payments_enabled') === '1',
+            'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '1'),
             'buy_url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/buy']);
+    }
+
+    // Update notice: installed apps compare their version with the one set in the admin portal
+    if ($PATH === '/api/v1/app/version' && $METHOD === 'GET') {
+        json_out(['success' => true, 'latest' => get_setting($pdo, 'app_latest_version'),
+            'download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
+            'notes' => get_setting($pdo, 'app_update_notes')]);
     }
 
     if ($PATH === '/api/v1/license/activate' && $METHOD === 'POST') {
@@ -707,18 +733,52 @@ if (str_starts_with($PATH, '/api/v1/')) {
         json_out(['success' => true] + signed_token(load_license($pdo, $lic['license_key']), $lic['bound_machine_id']));
     }
 
+    // Smart AI audio (ElevenLabs): background music and voiceover, the API key never leaves the server
+    if (($PATH === '/api/v1/audio/music' || $PATH === '/api/v1/audio/voice') && $METHOD === 'POST') {
+        @set_time_limit(300);
+        $lic = smart_ai_license($pdo);
+        rate_limit($pdo, 'audio:' . $lic['license_key'], (int)get_setting($pdo, 'audio_daily_limit', '10'), 86400);
+        $apiKey = get_setting($pdo, 'elevenlabs_api_key');
+        if ($apiKey === '') {
+            json_out(['success' => false, 'error' => 'AI audio is not set up on the server yet. Contact the admin.'], 503);
+        }
+        $b = body_json();
+        if ($PATH === '/api/v1/audio/music') {
+            $prompt = trim(substr((string)($b['prompt'] ?? ''), 0, 1500));
+            $seconds = max(10, min(300, (int)($b['seconds'] ?? 120)));
+            $url = ELEVEN_API . '/music?output_format=mp3_44100_128';
+            $req = ['prompt' => $prompt, 'music_length_ms' => $seconds * 1000, 'force_instrumental' => true];
+            $kind = 'eleven-music';
+            $amount = $seconds;
+        } else {
+            $prompt = trim(substr((string)($b['text'] ?? ''), 0, 2500));
+            $voice = preg_replace('/[^A-Za-z0-9]/', '', get_setting($pdo, 'elevenlabs_voice_id', DEFAULT_VOICE_ID)) ?: DEFAULT_VOICE_ID;
+            $url = ELEVEN_API . '/text-to-speech/' . $voice . '?output_format=mp3_44100_128';
+            $req = ['text' => $prompt, 'model_id' => 'eleven_multilingual_v2'];
+            $kind = 'eleven-voice';
+            $amount = function_exists('mb_strlen') ? mb_strlen($prompt) : strlen($prompt);
+        }
+        if ($prompt === '') {
+            json_out(['success' => false, 'error' => 'Nothing to generate.'], 400);
+        }
+        [$status, $resp] = http_request('POST', $url, ['Content-Type: application/json', 'xi-api-key: ' . $apiKey], json_encode($req), 290);
+        $pdo->prepare('INSERT INTO ai_usage (license_key, model, input_tokens, output_tokens, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            ->execute([$lic['license_key'], $kind, $amount, 0, $status, time()]);
+        if ($status !== 200) {
+            $err = json_decode($resp, true)['detail'] ?? null;
+            $msg = is_array($err) ? ($err['message'] ?? $err[0]['msg'] ?? '') : (string)$err;
+            json_out(['success' => false, 'error' => 'AI audio service error' . ($msg !== '' ? ": $msg" : " (HTTP $status)")], 502);
+        }
+        header('Content-Type: audio/mpeg');
+        header('Content-Length: ' . strlen($resp));
+        echo $resp;
+        exit;
+    }
+
     // Claude relay: the Anthropic SDK in the desktop app uses base_url = <server>/index.php/api/v1/ai
     if ($PATH === '/api/v1/ai/v1/messages' && $METHOD === 'POST') {
         @set_time_limit(300);
-        $key = (string)($_SERVER['HTTP_X_API_KEY'] ?? '');
-        $auth = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
-        if ($key === '' && str_starts_with($auth, 'Bearer ')) {
-            $key = substr($auth, 7);
-        }
-        $lic = check_license($pdo, $key, strtoupper((string)($_SERVER['HTTP_X_MACHINE_ID'] ?? '')), false);
-        if ($lic['plan_type'] === 'local' || ($lic['plan_type'] === 'per_wedding' && (int)$lic['credits'] <= 0)) {
-            json_out(['success' => false, 'error' => 'Smart AI needs an active Smart AI pack with credits left.'], 403);
-        }
+        $lic = smart_ai_license($pdo);
         rate_limit($pdo, 'ai:' . $lic['license_key'], (int)get_setting($pdo, 'ai_daily_limit', '200'), 86400);
 
         $apiKey = get_setting($pdo, 'anthropic_api_key');
@@ -1000,6 +1060,13 @@ if (str_starts_with($PATH, '/api/admin/')) {
             }
             json_out(['success' => true]);
 
+        case 'GET /settings/free':
+            json_out(['success' => true, 'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '1')]);
+
+        case 'POST /settings/free':
+            set_setting($pdo, 'free_daily_projects', (string)max(0, min(50, (int)($b['free_daily_projects'] ?? 1))));
+            json_out(['success' => true]);
+
         case 'POST /plans/delete':
             $pdo->prepare('DELETE FROM plans WHERE id = ?')->execute([(int)$b['id']]);
             json_out(['success' => true]);
@@ -1026,6 +1093,12 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 'anthropic_model' => get_setting($pdo, 'anthropic_model', 'claude-opus-5-5'),
                 'ai_daily_limit' => (int)get_setting($pdo, 'ai_daily_limit', '200'),
                 'models' => AI_MODELS,
+                'elevenlabs_api_key' => mask_secret(get_setting($pdo, 'elevenlabs_api_key')),
+                'elevenlabs_voice_id' => get_setting($pdo, 'elevenlabs_voice_id', DEFAULT_VOICE_ID),
+                'audio_daily_limit' => (int)get_setting($pdo, 'audio_daily_limit', '10'),
+                'app_latest_version' => get_setting($pdo, 'app_latest_version'),
+                'app_download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
+                'app_update_notes' => get_setting($pdo, 'app_update_notes'),
                 'php' => PHP_VERSION,
                 'curl' => function_exists('curl_init'),
             ]);
@@ -1063,6 +1136,42 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 json_out(['success' => true, 'message' => 'Claude is connected (' . ($data['model'] ?? '') . ').']);
             }
             json_out(['success' => false, 'error' => $data['error']['message'] ?? "HTTP $st"], 400);
+
+        case 'POST /settings/audio':
+            if (trim((string)($b['elevenlabs_api_key'] ?? '')) !== '') {
+                set_setting($pdo, 'elevenlabs_api_key', trim((string)$b['elevenlabs_api_key']), true);
+            }
+            set_setting($pdo, 'elevenlabs_voice_id', preg_replace('/[^A-Za-z0-9]/', '', (string)($b['elevenlabs_voice_id'] ?? '')) ?: DEFAULT_VOICE_ID);
+            set_setting($pdo, 'audio_daily_limit', (string)max(1, min(200, (int)($b['audio_daily_limit'] ?? 10))));
+            json_out(['success' => true]);
+
+        case 'POST /settings/audio-test':
+            $apiKey = get_setting($pdo, 'elevenlabs_api_key');
+            if ($apiKey === '') {
+                json_out(['success' => false, 'error' => 'Save an ElevenLabs API key first.'], 400);
+            }
+            $voice = get_setting($pdo, 'elevenlabs_voice_id', DEFAULT_VOICE_ID);
+            [$st, $resp] = http_request('GET', ELEVEN_API . '/voices/' . rawurlencode($voice), ['xi-api-key: ' . $apiKey], null, 30);
+            $data = json_decode($resp, true) ?: [];
+            if ($st === 200) {
+                json_out(['success' => true, 'message' => 'ElevenLabs is connected · voice: ' . ($data['name'] ?? $voice)]);
+            }
+            $err = $data['detail'] ?? null;
+            json_out(['success' => false, 'error' => is_array($err) ? ($err['message'] ?? "HTTP $st") : ($err ?: "HTTP $st")], 400);
+
+        case 'POST /settings/update':
+            $ver = trim((string)($b['app_latest_version'] ?? ''));
+            if ($ver !== '' && !preg_match('/^\d+(\.\d+){1,3}$/', $ver)) {
+                json_out(['success' => false, 'error' => 'Version must look like 1.1.4'], 400);
+            }
+            $dl = trim((string)($b['app_download_url'] ?? ''));
+            if ($dl !== '' && !preg_match('#^https://#', $dl)) {
+                json_out(['success' => false, 'error' => 'Download link must start with https://'], 400);
+            }
+            set_setting($pdo, 'app_latest_version', $ver);
+            set_setting($pdo, 'app_download_url', $dl ?: DEFAULT_DOWNLOAD_URL);
+            set_setting($pdo, 'app_update_notes', trim(substr((string)($b['app_update_notes'] ?? ''), 0, 300)));
+            json_out(['success' => true]);
 
         case 'GET /2fa/status':
             json_out(['success' => true, 'enabled' => twofa_enabled($pdo),
@@ -1202,10 +1311,10 @@ if ($PATH === '/buy') {
                 $what = ['No daily limit — unlimited projects', 'All workflows & editors', (int)$p['validity_days'] . ' days · 1 computer'];
             } elseif ((int)$p['unlimited']) {
                 $unit = 'Unlimited Smart AI weddings';
-                $what = ['Unlimited Smart AI shot review', 'Smart AI Assistant', 'Unlimited editing · 1 year'];
+                $what = ['Unlimited Smart AI shot review', 'AI music & voiceover', 'Smart AI Assistant', 'Unlimited editing · 1 year'];
             } else {
                 $unit = '₹' . number_format($price / max(1, (int)$p['credits'])) . ' per wedding';
-                $what = [(int)$p['credits'] . ' Smart AI weddings', 'Smart AI Assistant', 'Unlimited editing · ' . (int)$p['validity_days'] . ' days'];
+                $what = [(int)$p['credits'] . ' Smart AI weddings', 'AI music & voiceover', 'Smart AI Assistant', 'Unlimited editing · ' . (int)$p['validity_days'] . ' days'];
             }
             $save = $mrp > $price ? round(100 - $price * 100 / $mrp) : 0;
         ?>
@@ -1651,6 +1760,7 @@ const views = {
 
   async plans() {
     await loadPlans();
+    const FREE_LIMIT = (await api('/settings/free')).free_daily_projects ?? 1;
     main.innerHTML = `
       <div class="head"><h2>Plans &amp; pricing</h2></div>
       <div class="grid2">
@@ -1670,7 +1780,12 @@ const views = {
             <label class="check"><input type="checkbox" name="active" checked> Show on buy page</label>
             <div class="row"><button class="btn primary">Save plan</button><button type="button" class="btn" id="pf-reset">Clear</button></div>
           </form>
-          <p class="hint" style="margin-top:12px">Plans with price ₹0 are only for manual licenses and never appear on the buy page.</p>
+          <p class="hint" style="margin-top:12px">Plans with price ₹0 are only for manual licenses and never appear on the buy page. Price changes show in every installed app automatically.</p>
+          <form id="f-free" style="margin-top:18px">
+            <h3>Free plan</h3>
+            <div class="field"><label>Projects per day (0 = free plan off)</label><input name="free_daily_projects" type="number" min="0" max="50" value="${FREE_LIMIT}"></div>
+            <button class="btn primary">Save free plan</button>
+          </form>
         </div>
         <div class="card"><div class="tablewrap"><table><thead><tr><th>Plan</th><th>Price</th><th>Includes</th><th>Days</th><th>Buy page</th><th></th></tr></thead><tbody>
           ${PLANS.map((p) => `<tr><td><strong>${esc(p.name)}</strong>${p.badge ? ` <span class="pill warn">${esc(p.badge)}</span>` : ''}</td><td>${inr(p.price_inr)}${+p.mrp_inr ? `<div class="muted"><s>${inr(p.mrp_inr)}</s></div>` : ''}</td><td>${planWhat(p)}</td><td>${p.validity_days}</td>
@@ -1689,6 +1804,10 @@ const views = {
         document.getElementById('pf-title').textContent = 'Edit plan';
       }
       if (e.target.dataset.del && confirm('Delete this plan? Existing licenses are not affected.')) { await api('/plans/delete', { id: +e.target.dataset.del }); views.plans(); }
+    });
+    document.getElementById('f-free').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if ((await api('/settings/free', Object.fromEntries(new FormData(e.target)))).success) toast('Free plan saved');
     });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1746,6 +1865,24 @@ const views = {
             <div class="row"><button class="btn primary">Save AI settings</button><button type="button" class="btn" id="ai-test">Test connection</button></div>
           </form>
         </div>
+        <div class="card"><h3>AI Audio · ElevenLabs</h3>
+          <form id="f-audio">
+            <div class="field"><label>ElevenLabs API key ${s.elevenlabs_api_key ? '· saved ' + esc(s.elevenlabs_api_key) : ''}</label><input name="elevenlabs_api_key" type="password" placeholder="sk_… (leave empty to keep)" autocomplete="new-password"></div>
+            <div class="field"><label>Voiceover voice ID</label><input name="elevenlabs_voice_id" value="${esc(s.elevenlabs_voice_id)}" placeholder="From ElevenLabs → Voices → ID"></div>
+            <div class="field"><label>Music / voice generations per license per day</label><input name="audio_daily_limit" type="number" min="1" max="200" value="${s.audio_daily_limit}"></div>
+            <p class="hint">Smart AI packs get AI background music and Hindi/English voiceover. The key stays on this server (encrypted).</p>
+            <div class="row"><button class="btn primary">Save audio settings</button><button type="button" class="btn" id="audio-test">Test connection</button></div>
+          </form>
+        </div>
+        <div class="card"><h3>App update notice</h3>
+          <form id="f-update">
+            <div class="field"><label>Latest app version</label><input name="app_latest_version" value="${esc(s.app_latest_version)}" placeholder="e.g. 1.1.4 (empty = no notice)"></div>
+            <div class="field"><label>Download link</label><input name="app_download_url" value="${esc(s.app_download_url)}" placeholder="https://…"></div>
+            <div class="field"><label>What's new (optional)</label><input name="app_update_notes" value="${esc(s.app_update_notes)}" maxlength="300" placeholder="Short note shown in the app"></div>
+            <p class="hint">Apps older than this version show a "New version available" banner with the download link.</p>
+            <button class="btn primary block">Save update notice</button>
+          </form>
+        </div>
         <div class="card"><h3>Security</h3>
           <form id="f-pw">
             <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
@@ -1765,6 +1902,15 @@ const views = {
       if ((await api('/settings/ai', Object.fromEntries(new FormData(e.target)))).success) { toast('AI settings saved'); views.settings(); }
     });
     document.getElementById('ai-test').addEventListener('click', async () => { toast('Testing…'); const d = await api('/settings/ai-test', {}); if (d.success) toast(d.message); });
+    document.getElementById('f-audio').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if ((await api('/settings/audio', Object.fromEntries(new FormData(e.target)))).success) { toast('Audio settings saved'); views.settings(); }
+    });
+    document.getElementById('audio-test').addEventListener('click', async () => { toast('Testing…'); const d = await api('/settings/audio-test', {}); if (d.success) toast(d.message); });
+    document.getElementById('f-update').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if ((await api('/settings/update', Object.fromEntries(new FormData(e.target)))).success) { toast('Update notice saved'); views.settings(); }
+    });
     document.getElementById('f-pw').addEventListener('submit', async (e) => {
       e.preventDefault(); if ((await api('/settings/password', Object.fromEntries(new FormData(e.target)))).success) { e.target.reset(); toast('Password changed'); }
     });

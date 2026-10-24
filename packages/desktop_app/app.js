@@ -207,10 +207,19 @@
     const review = $("chk-ai-review");
     review.disabled = !l.has_credits;
     if (!l.has_credits) review.checked = false;
+    ["chk-ai-music", "chk-ai-voice"].forEach((id) => { $(id).disabled = !l.has_credits; if (!l.has_credits) $(id).checked = false; });
+    syncAiAudio();
+    const from = l.price_from || { local: 399, ai: 999 };
+    const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
+    const limit = l.free_limit ?? 1;
+    const limitText = limit ? `${limit} project${limit === 1 ? "" : "s"} per day` : "paused";
+    document.querySelectorAll(".free-limit-text").forEach((el) => (el.textContent = limitText));
+    document.querySelectorAll(".price-local").forEach((el) => (el.textContent = inr(from.local)));
+    document.querySelectorAll(".price-ai").forEach((el) => (el.textContent = inr(from.ai)));
     $("ai-review-note").textContent = l.has_credits
       ? `Smart AI looks at every candidate shot and picks the most emotional moments. Uses 1 wedding credit (${l.unlimited ? "unlimited plan" : l.credits_remaining + " left"}).`
       : (l.ai_enabled ? "No Smart AI weddings left — add a Smart AI pack to continue."
-        : "Needs a Smart AI pack (from ₹999). See Pricing.");
+        : `Needs a Smart AI pack (from ${inr(from.ai)}). See Pricing.`);
 
     const quota = $("quota");
     if (l.is_premium) {
@@ -220,11 +229,11 @@
       quota.innerHTML = "";
       const left = l.free_left_today ?? 1;
       const txt = document.createElement("span");
-      txt.textContent = left > 0 ? "Free plan · 1 project per day (today's project is still available)." : "Today's free project is used. It resets tomorrow.";
+      txt.textContent = left > 0 ? `Free plan · ${limitText} (${left} left today).` : (limit ? "Today's free projects are used. They reset tomorrow." : "The free plan is paused.");
       const go = document.createElement("button");
       go.className = "link";
       go.dataset.goto = "pricing";
-      go.textContent = "Go unlimited from ₹399/month →";
+      go.textContent = `Go unlimited from ${inr(from.local)}/month →`;
       quota.append(txt, " ", go);
     }
   }
@@ -279,10 +288,10 @@
       perks = ["No daily limit — unlimited projects", "All workflows & editors", `${p.validity_days} days · 1 computer`];
     } else if (+p.unlimited) {
       unit = "Unlimited Smart AI weddings";
-      perks = ["Unlimited Smart AI shot review", "Smart AI Assistant", "Unlimited editing · 1 year"];
+      perks = ["Unlimited Smart AI shot review", "AI music & voiceover", "Smart AI Assistant", "Unlimited editing · 1 year"];
     } else {
       unit = `₹${Math.round(price / Math.max(1, p.credits))} per wedding`;
-      perks = [`${p.credits} Smart AI weddings`, "Smart AI Assistant", `Unlimited editing · ${p.validity_days} days`];
+      perks = [`${p.credits} Smart AI weddings`, "AI music & voiceover", "Smart AI Assistant", `Unlimited editing · ${p.validity_days} days`];
     }
     const card = document.createElement("div");
     card.className = "plan card" + (p.badge ? " popular" : "");
@@ -466,6 +475,8 @@
         folder: loadedFolder, audio, formats, target_nle: nle, mode, ref_video: ref,
         instructions: $("in-notes").value.trim(),
         tier: $("chk-ai-review").checked && !LONG_MODES.includes(mode) ? "premium" : "free",
+        ai_music: $("chk-ai-review").checked && $("chk-ai-music").checked,
+        voiceover: $("chk-ai-review").checked && $("chk-ai-voice").checked ? ($("in-voice").value.trim() || "auto") : "",
         cut_level: cutLevel,
       });
       if (!started.success) {
@@ -733,7 +744,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.3 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.4 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");
@@ -753,7 +764,34 @@
   // ------------------------------------------------------------------
   // Start
   // ------------------------------------------------------------------
+  // AI music / voiceover ride on Smart AI: shown when Smart AI is switched on
+  function syncAiAudio() {
+    $("ai-audio").hidden = !$("chk-ai-review").checked;
+    $("in-voice").hidden = !$("chk-ai-voice").checked;
+  }
+  ["chk-ai-review", "chk-ai-voice"].forEach((id) => $(id).addEventListener("change", syncAiAudio));
+
+  // "New version available" banner (version set in the admin portal, else the latest GitHub release)
+  async function checkUpdate() {
+    try {
+      const u = await api("/api/update");
+      if (!u.available) return;
+      let hidden = "";
+      try { hidden = localStorage.getItem("avf-update-hidden") || ""; } catch (e) { /* storage off */ }
+      if (hidden === u.latest) return;
+      $("update-text").textContent = `v${u.latest} is ready (you have v${u.current})` + (u.notes ? ` · ${u.notes}` : "") + ".";
+      $("update-get").onclick = () => openUrl(u.url);
+      $("update-close").onclick = () => {
+        $("update-bar").hidden = true;
+        try { localStorage.setItem("avf-update-hidden", u.latest); } catch (e) { /* storage off */ }
+      };
+      $("update-bar").hidden = false;
+    } catch (e) { /* offline */ }
+  }
+
   if (START_TAB && PAGES[START_TAB]) go(START_TAB);
+  syncAiAudio();
+  checkUpdate();
   fetchStatus();
   fetchLicense();
   loadTools();

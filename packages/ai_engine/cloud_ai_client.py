@@ -142,6 +142,43 @@ class CloudAIClient:
         }
 
     # ------------------------------------------------------------------
+    # AI audio brief: music prompt + voiceover script for the edit
+    # ------------------------------------------------------------------
+    def audio_brief(self, mode: str, moments: List[str], story_note: str, instructions: str,
+                    music_seconds: int, voice_seconds: int) -> Dict[str, str]:
+        """Writes an instrumental music prompt and a short voiceover script that fit the footage."""
+        response = self._create(
+            max_tokens=4000,
+            messages=[{"role": "user", "content": (
+                f"An editor is cutting a {mode.replace('_', ' ')} video. Key moments in the footage: "
+                f"{', '.join(moments[:20]) or 'not reviewed'}. "
+                + (f"Story advice: {story_note}. " if story_note else "")
+                + (f"Editor's instructions: {instructions}. " if instructions else "")
+                + f"\n1. music_prompt: an English prompt for an AI music generator for a {music_seconds} s instrumental "
+                "track that fits this video - genre, mood, instruments (Indian instruments where it suits), tempo in "
+                "BPM and how it builds. Never name real artists, songs or films.\n"
+                f"2. voiceover_script: a voiceover of about {voice_seconds} seconds spoken "
+                f"(roughly {int(voice_seconds * 2.3)} words) for the opening of the video, warm and natural. Write it in "
+                "Hindi (Devanagari) unless the editor's instructions ask for English or Hinglish. Only the spoken "
+                "words - no stage directions, names in brackets or emojis."
+            )}],
+            output_config={"format": {"type": "json_schema", "schema": {
+                "type": "object",
+                "properties": {"music_prompt": {"type": "string"}, "voiceover_script": {"type": "string"}},
+                "required": ["music_prompt", "voiceover_script"],
+                "additionalProperties": False,
+            }}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to write the audio brief.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable audio brief.")
+        return {"music_prompt": data.get("music_prompt", ""), "voiceover_script": data.get("voiceover_script", "")}
+
+    # ------------------------------------------------------------------
     # AI assistant (tool use against the local editing tools)
     # ------------------------------------------------------------------
     def assistant_turn(

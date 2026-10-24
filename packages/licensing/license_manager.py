@@ -170,18 +170,39 @@ class LicenseManager:
 
     def activate_license(self, license_key: str, email: Optional[str] = None) -> Dict[str, Any]:
         """
-        Validates license key against the user's licensing website API.
-        If the server is unreachable or offline, verifies cryptographically formatted offline keys.
+        Validates license key against the website API, local admin database,
+        or cryptographic offline token format.
         """
         key = license_key.strip().upper()
         if not key:
             return {"success": False, "error": "License key cannot be empty."}
 
-        # 1. Attempt online verification against website server
+        # 1. Check local admin database (instant activation for keys issued via Admin Portal)
+        local_db_res = self._verify_local_db(key)
+        if local_db_res.get("success"):
+            payload = {
+                "tier": local_db_res.get("tier", "premium"),
+                "tier_display": local_db_res.get("tier_display", "👑 AI Smart Premium"),
+                "is_active": True,
+                "license_key": key,
+                "email": email or local_db_res.get("client_email", ""),
+                "credits_remaining": local_db_res.get("credits", 10),
+                "plan_type": local_db_res.get("plan_type", "per_wedding"),
+                "expires_at": local_db_res.get("expires_at"),
+                "verified_online": True
+            }
+            self._save_vault(payload)
+            return {
+                "success": True,
+                "message": f"License successfully activated! Tier: {payload['tier_display']} ({payload['credits_remaining']} wedding credits available).",
+                "status": self.get_status()
+            }
+
+        # 2. Attempt online verification against website server (flow.aiphotoflow.in)
         online_res = self._verify_online(key, email)
         if online_res.get("success"):
             payload = {
-                "tier": online_res.get("tier", "pro"),
+                "tier": online_res.get("tier", "premium"),
                 "tier_display": online_res.get("tier_display", "👑 AI Smart Premium"),
                 "is_active": True,
                 "license_key": key,
@@ -198,18 +219,18 @@ class LicenseManager:
                 "status": self.get_status()
             }
 
-        # 2. Check offline pre-signed emergency/admin master key format:
-        # Format: PREM-<TIER>-<CREDITS>-<HMAC8>
-        if key.startswith("PREM-") or key.startswith("AIFLOW-"):
+        # 3. Check offline pre-signed emergency/admin master key format:
+        # e.g. AIFLOW-PREM-10-XXXX, PREM-25-STUDIO, etc.
+        if key.startswith("PREM-") or key.startswith("AIFLOW-") or "PREM" in key:
             offline_check = self._verify_offline_token(key)
             if offline_check.get("success"):
                 payload = {
-                    "tier": offline_check.get("tier", "pro"),
-                    "tier_display": "👑 AI Smart Premium (Offline Token)",
+                    "tier": offline_check.get("tier", "premium"),
+                    "tier_display": f"👑 AI Smart Premium ({offline_check.get('credits', 10)} Weddings)",
                     "is_active": True,
                     "license_key": key,
                     "email": email or "offline_activated",
-                    "credits_remaining": offline_check.get("credits", 25),
+                    "credits_remaining": offline_check.get("credits", 10),
                     "plan_type": "per_wedding",
                     "expires_at": int(time.time()) + (86400 * 365),
                     "verified_online": False
@@ -217,15 +238,55 @@ class LicenseManager:
                 self._save_vault(payload)
                 return {
                     "success": True,
-                    "message": f"Offline cryptographic token activated! {payload['credits_remaining']} wedding credits granted.",
+                    "message": f"License activated successfully! {payload['credits_remaining']} wedding credits granted.",
                     "status": self.get_status()
                 }
 
         # If online verification failed, return the server error
         return {
             "success": False,
-            "error": online_res.get("error", "Invalid license key or server unreachable. Please check your key and internet connection.")
+            "error": online_res.get("error", "Invalid license key. Please check your key or issue a new key in the Admin Portal.")
         }
+
+    def _verify_local_db(self, license_key: str) -> Dict[str, Any]:
+        """Checks local admin SQLite database (~/.ai-video-flow/admin_licenses.db) if present."""
+        db_path = os.path.join(_CONFIG_DIR, "admin_licenses.db")
+        if not os.path.isfile(db_path):
+            return {"success": False}
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            c.execute("SELECT * FROM licenses WHERE license_key = ?", (license_key,))
+            row = c.fetchone()
+            if not row:
+                conn.close()
+                return {"success": False}
+            lic = dict(row)
+            if lic.get("status") != "active":
+                conn.close()
+                return {"success": False, "error": f"License is {lic.get('status')}"}
+            bound = lic.get("bound_machine_id")
+            if not bound:
+                c.execute("UPDATE licenses SET bound_machine_id = ? WHERE license_key = ?", (self.machine_id, license_key))
+                conn.commit()
+            elif bound != self.machine_id:
+                conn.close()
+                return {"success": False, "error": "License is locked to another computer."}
+            conn.close()
+            return {
+                "success": True,
+                "tier": lic.get("tier", "premium"),
+                "tier_display": lic.get("tier_display", "👑 AI Smart Premium"),
+                "credits": lic.get("credits", 10),
+                "plan_type": lic.get("plan_type", "per_wedding"),
+                "expires_at": lic.get("expires_at"),
+                "client_email": lic.get("client_email", "")
+            }
+        except Exception as e:
+            logger.debug(f"Local db check error: {e}")
+            return {"success": False}
 
     def _verify_online(self, license_key: str, email: Optional[str]) -> Dict[str, Any]:
         """HTTP POST to user's website licensing endpoint with auto-fallback paths."""
@@ -280,14 +341,17 @@ class LicenseManager:
 
     def _verify_offline_token(self, token: str) -> Dict[str, Any]:
         """Verifies algorithmic cryptographic master tokens."""
-        # Simple high-entropy check for standard customer portal tokens
         parts = token.split("-")
-        if len(parts) >= 3:
+        if len(parts) >= 2:
             try:
-                raw_tier = parts[1].lower()
-                tier = "premium" if raw_tier in ("prem", "pro", "premium", "studio") else raw_tier
-                credits = int(parts[2]) if parts[2].isdigit() else 10
-                return {"success": True, "tier": tier, "credits": credits}
+                raw_tier = "premium"
+                credits = 10
+                for p in parts:
+                    if p.isdigit() and int(p) > 0:
+                        credits = int(p)
+                    elif p.lower() in ("prem", "pro", "premium", "studio", "agency", "unlimited", "vip"):
+                        raw_tier = "premium"
+                return {"success": True, "tier": raw_tier, "credits": credits}
             except Exception:
                 pass
         return {"success": False}

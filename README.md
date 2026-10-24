@@ -48,6 +48,21 @@ Instead of spending days manually cutting shaky camera movements, syncing multi-
 
 ---
 
+## 💿 Standalone App (No Python Needed)
+
+Python and all AI libraries are bundled inside the app.
+
+* **macOS:** open `AI-Video-Flow-Mac-arm64.dmg` (Apple Silicon) or `AI-Video-Flow-Mac-x86_64.dmg` (Intel) → drag **AI Video Flow** into **Applications**. First launch: right-click the app → **Open**.
+* **Windows:** run `AI-Video-Flow-Windows-Setup.exe` → Desktop & Start Menu shortcuts are created.
+* Inside the app press **CONNECT ALL** once to register it with Claude Desktop.
+
+**Building the apps**
+* macOS: `bash packaging/build_mac_app.sh`
+* Windows (on a Windows PC): double-click `build_windows_exe.bat`
+* Both, in the cloud: GitHub → **Actions → Build Apps → Run workflow** (pushing a `v*` tag also publishes a Release).
+
+---
+
 ## 📦 1-Click Zero-Touch Installation
 
 ### 🖥️ Windows:

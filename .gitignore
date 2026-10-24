@@ -29,3 +29,11 @@ renders/
 *.log
 .system_generated/
 .gemini/
+
+# Standalone app build output
+build/
+.build-venv/
+# Standalone installers are >100MB: share via GitHub Releases, not git
+dist/AI-Video-Flow-Mac-*.dmg
+dist/AI-Video-Flow-Windows-Setup.exe
+dist/AI-Video-Flow-Windows-Portable.zip

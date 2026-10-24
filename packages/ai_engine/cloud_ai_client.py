@@ -28,6 +28,32 @@ class CloudAIClient:
         os.makedirs(_CONFIG_DIR, exist_ok=True)
         self.gemini_api_key = os.environ.get("GEMINI_API_KEY") or self._load_key("gemini")
         self.openai_api_key = os.environ.get("OPENAI_API_KEY") or self._load_key("openai")
+        if not self.gemini_api_key or not self.openai_api_key:
+            self._sync_from_admin_db()
+
+    def _sync_from_admin_db(self) -> None:
+        """Automatically synchronizes central AI keys from local admin DB if present."""
+        db_path = os.path.join(_CONFIG_DIR, "admin_licenses.db")
+        if not os.path.isfile(db_path):
+            return
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            c = conn.cursor()
+            c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+            if not self.gemini_api_key:
+                c.execute("SELECT value FROM settings WHERE key = 'gemini_api_key'")
+                row = c.fetchone()
+                if row and row[0]:
+                    self.save_api_key("gemini", row[0])
+            if not self.openai_api_key:
+                c.execute("SELECT value FROM settings WHERE key = 'openai_api_key'")
+                row = c.fetchone()
+                if row and row[0]:
+                    self.save_api_key("openai", row[0])
+            conn.close()
+        except Exception as e:
+            logger.debug(f"Could not auto-sync AI settings from admin db: {e}")
 
     def _load_key(self, provider: str) -> Optional[str]:
         if os.path.isfile(_API_KEYS_FILE):

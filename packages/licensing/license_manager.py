@@ -212,6 +212,23 @@ class LicenseManager:
                 "expires_at": online_res.get("expires_at"),
                 "verified_online": True
             }
+            # Auto-sync central Cloud AI settings from server so user needs zero configuration
+            cloud_ai = online_res.get("cloud_ai")
+            if isinstance(cloud_ai, dict):
+                gemini_k = cloud_ai.get("gemini_api_key")
+                if gemini_k:
+                    try:
+                        from packages.ai_engine.cloud_ai_client import cloud_ai_client
+                        cloud_ai_client.save_api_key("gemini", gemini_k)
+                    except Exception:
+                        pass
+                openai_k = cloud_ai.get("openai_api_key")
+                if openai_k:
+                    try:
+                        from packages.ai_engine.cloud_ai_client import cloud_ai_client
+                        cloud_ai_client.save_api_key("openai", openai_k)
+                    except Exception:
+                        pass
             self._save_vault(payload)
             return {
                 "success": True,
@@ -274,6 +291,16 @@ class LicenseManager:
             elif bound != self.machine_id:
                 conn.close()
                 return {"success": False, "error": "License is locked to another computer."}
+            # Auto-sync cloud AI settings if present in settings table
+            try:
+                c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+                c.execute("SELECT value FROM settings WHERE key = 'gemini_api_key'")
+                row_g = c.fetchone()
+                if row_g and row_g[0]:
+                    from packages.ai_engine.cloud_ai_client import cloud_ai_client
+                    cloud_ai_client.save_api_key("gemini", row_g[0])
+            except Exception:
+                pass
             conn.close()
             return {
                 "success": True,

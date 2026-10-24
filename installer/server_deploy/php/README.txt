@@ -21,6 +21,14 @@ HOW TO DEPLOY ON flow.aiphotoflow.in (1-MINUTE SETUP):
    admin123
    (You can change this password at line 14 in index.php)
 
+6. Central Cloud AI Setup (One-Click Client Plug-and-Play):
+   - In Admin Panel, find the "🔑 Central Cloud AI Setup" card.
+   - Enter your Google Gemini API Key.
+   - Click "⚡ Test API" to verify connection, then click "💾 Save API Keys".
+   - That's it! When clients install the Desktop App and activate their key,
+     the app automatically connects to your AI setup. Clients never have to touch
+     any API keys!
+
 API ENDPOINTS FOR CLIENT DESKTOP SOFTWARE:
 ------------------------------------------------------------------------
 - Verification API: https://flow.aiphotoflow.in/api/v1/license/verify

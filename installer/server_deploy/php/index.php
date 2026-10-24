@@ -42,7 +42,23 @@ $pdo->exec("
         job_name TEXT,
         timestamp INTEGER
     );
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
 ");
+
+function get_setting($pdo, $key, $default = '') {
+    $stmt = $pdo->prepare("SELECT value FROM settings WHERE key = ?");
+    $stmt->execute([$key]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ? $row['value'] : $default;
+}
+
+function set_setting($pdo, $key, $value) {
+    $stmt = $pdo->prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    $stmt->execute([$key, $value]);
+}
 
 $request_uri = $_SERVER['REQUEST_URI'] ?? '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -103,13 +119,23 @@ if (strpos($request_uri, '/verify') !== false) {
         ], 403);
     }
 
+    $cloud_ai = [];
+    if (in_array(strtolower($lic['tier']), ['pro', 'studio', 'premium', 'agency', 'prem'])) {
+        $cloud_ai = [
+            "gemini_api_key" => get_setting($pdo, 'gemini_api_key', ''),
+            "openai_api_key" => get_setting($pdo, 'openai_api_key', ''),
+            "model" => get_setting($pdo, 'active_model', 'gemini-1.5-flash')
+        ];
+    }
+
     json_response([
         "success" => true,
         "tier" => $lic['tier'],
         "tier_display" => $lic['tier_display'],
         "credits" => (int)$lic['credits'],
         "plan_type" => $lic['plan_type'],
-        "expires_at" => (int)$lic['expires_at']
+        "expires_at" => (int)$lic['expires_at'],
+        "cloud_ai" => $cloud_ai
     ]);
 }
 
@@ -208,6 +234,42 @@ if (strpos($request_uri, '/api/admin/toggle-status') !== false && $method === 'P
     $stmt = $pdo->prepare("UPDATE licenses SET status = ? WHERE license_key = ?");
     $stmt->execute([$status, $key]);
     json_response(["success" => true, "message" => "Status updated to $status for $key"]);
+}
+
+if (strpos($request_uri, '/api/admin/ai-settings') !== false && $method === 'GET') {
+    json_response([
+        "success" => true,
+        "gemini_api_key" => get_setting($pdo, 'gemini_api_key', ''),
+        "openai_api_key" => get_setting($pdo, 'openai_api_key', ''),
+        "active_model" => get_setting($pdo, 'active_model', 'gemini-1.5-flash')
+    ]);
+}
+
+if (strpos($request_uri, '/api/admin/save-ai-settings') !== false && $method === 'POST') {
+    $body = json_decode(file_get_contents('php://input'), true) ?? [];
+    $gemini = trim($body['gemini_api_key'] ?? '');
+    $openai = trim($body['openai_api_key'] ?? '');
+    $model = trim($body['active_model'] ?? 'gemini-1.5-flash');
+    set_setting($pdo, 'gemini_api_key', $gemini);
+    set_setting($pdo, 'openai_api_key', $openai);
+    set_setting($pdo, 'active_model', $model);
+    json_response(["success" => true, "message" => "Cloud AI API Settings saved successfully on flow.aiphotoflow.in!"]);
+}
+
+if (strpos($request_uri, '/api/admin/test-gemini') !== false && $method === 'POST') {
+    $body = json_decode(file_get_contents('php://input'), true) ?? [];
+    $key = trim($body['gemini_api_key'] ?? '') ?: get_setting($pdo, 'gemini_api_key', '');
+    if (empty($key)) {
+        json_response(["success" => false, "error" => "Please enter a Gemini API Key first."], 400);
+    }
+    $test_url = "https://generativelanguage.googleapis.com/v1beta/models?key=" . urlencode($key);
+    $ctx = stream_context_create(['http' => ['timeout' => 7]]);
+    $resp = @file_get_contents($test_url, false, $ctx);
+    if ($resp !== false) {
+        json_response(["success" => true, "message" => "Google Gemini Vision API Connected & Working!"]);
+    } else {
+        json_response(["success" => false, "error" => "Could not connect to Gemini API. Check your API key."], 400);
+    }
 }
 
 // -------------------------------------------------------------
@@ -397,6 +459,36 @@ if (isset($_GET['logout'])) {
         <code id="issued-key-text" style="font-size:14px;color:var(--accent);font-weight:700;word-break:break-all;">...</code>
         <button class="btn btn-sm btn-outline" style="margin-top:8px;" onclick="copyIssuedKey()">📋 Copy Key</button>
       </div>
+
+      <!-- Cloud AI API Setup Card -->
+      <div class="card" style="margin-top: 20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--card-border);padding-bottom:10px;">
+          <h2 style="margin:0;border:none;padding:0;font-size:16px;color:#38bdf8;">🔑 Central Cloud AI Setup</h2>
+          <span id="ai-conn-badge" style="font-size:10px;padding:3px 8px;border-radius:12px;background:rgba(245,158,11,0.2);color:#f59e0b;font-weight:700;">CHECKING...</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 14px 0;line-height:1.4;">
+          Yahan apni <strong>Google Gemini API Key</strong> dalein. Clients ko koi key enter nahi karni padegi — wo bas app install karke kaam shuru karenge!
+        </p>
+        <form id="form-ai-settings">
+          <label>Google Gemini API Key (Multimodal Vision)</label>
+          <input type="password" id="inp-gemini-key" placeholder="AIzaSy..." style="font-family:monospace;">
+
+          <label>OpenAI API Key (Optional)</label>
+          <input type="password" id="inp-openai-key" placeholder="sk-..." style="font-family:monospace;">
+
+          <label>Active Vision Model</label>
+          <select id="inp-active-model">
+            <option value="gemini-1.5-flash" selected>Google Gemini 1.5 Flash (Super Fast &amp; Recommended)</option>
+            <option value="gemini-1.5-pro">Google Gemini 1.5 Pro (Deep Cinematic Reasoning)</option>
+            <option value="gpt-4o">OpenAI GPT-4o Multimodal</option>
+          </select>
+
+          <div style="display:flex;gap:10px;">
+            <button type="submit" class="btn" style="flex:2;">💾 Save API Keys</button>
+            <button type="button" class="btn btn-outline" id="btn-test-gemini" style="flex:1;">⚡ Test API</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <!-- Right: All Licenses Table -->
@@ -553,7 +645,75 @@ if (isset($_GET['logout'])) {
       loadLicenses();
     }
 
+    async function loadAiSettings() {
+      try {
+        const res = await fetch('index.php/api/admin/ai-settings');
+        const data = await res.json();
+        const badge = document.getElementById('ai-conn-badge');
+        if (data.gemini_api_key) {
+          document.getElementById('inp-gemini-key').value = data.gemini_api_key;
+          badge.textContent = 'CONNECTED';
+          badge.style.background = 'rgba(16,185,129,0.2)';
+          badge.style.color = '#10b981';
+        } else {
+          badge.textContent = 'NOT CONFIGURED';
+          badge.style.background = 'rgba(239,68,68,0.2)';
+          badge.style.color = '#ef4444';
+        }
+        if (data.openai_api_key) {
+          document.getElementById('inp-openai-key').value = data.openai_api_key;
+        }
+        if (data.active_model) {
+          document.getElementById('inp-active-model').value = data.active_model;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    document.getElementById('form-ai-settings').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        gemini_api_key: document.getElementById('inp-gemini-key').value.trim(),
+        openai_api_key: document.getElementById('inp-openai-key').value.trim(),
+        active_model: document.getElementById('inp-active-model').value
+      };
+      const res = await fetch('index.php/api/admin/save-ai-settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      alert(data.message || 'Saved successfully!');
+      loadAiSettings();
+    });
+
+    document.getElementById('btn-test-gemini').addEventListener('click', async () => {
+      const key = document.getElementById('inp-gemini-key').value.trim();
+      const btn = document.getElementById('btn-test-gemini');
+      btn.textContent = 'Testing...';
+      try {
+        const res = await fetch('index.php/api/admin/test-gemini', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ gemini_api_key: key })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('✅ ' + data.message);
+          loadAiSettings();
+        } else {
+          alert('❌ ' + (data.error || 'Test failed'));
+        }
+      } catch (e) {
+        alert('Error: ' + e);
+      } finally {
+        btn.textContent = '⚡ Test API';
+      }
+    });
+
     loadLicenses();
+    loadAiSettings();
   </script>
 <?php endif; ?>
 </body>

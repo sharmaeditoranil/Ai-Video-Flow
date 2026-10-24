@@ -54,8 +54,37 @@ def init_db():
             timestamp INTEGER
         )
     """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
     conn.commit()
     conn.close()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = c.fetchone()
+        conn.close()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
+def set_setting(key: str, value: str) -> None:
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def generate_license_key(prefix: str = "AIFLOW-PREM", credits: int = 10) -> str:
@@ -95,6 +124,13 @@ class AdminRequestHandler(SimpleHTTPRequestHandler):
             rows = [dict(r) for r in c.fetchall()]
             conn.close()
             self._json({"success": True, "licenses": rows})
+        elif self.path == "/api/admin/ai-settings":
+            self._json({
+                "success": True,
+                "gemini_api_key": get_setting("gemini_api_key", ""),
+                "openai_api_key": get_setting("openai_api_key", ""),
+                "active_model": get_setting("active_model", "gemini-1.5-flash")
+            })
         else:
             self._json({"error": "Not Found"}, 404)
 
@@ -143,14 +179,21 @@ class AdminRequestHandler(SimpleHTTPRequestHandler):
                 return
 
             conn.close()
-            self._json({
+            resp_payload = {
                 "success": True,
                 "tier": lic["tier"],
                 "tier_display": lic["tier_display"],
                 "credits": lic["credits"],
                 "plan_type": lic["plan_type"],
                 "expires_at": lic["expires_at"]
-            })
+            }
+            if lic["tier"] in ("pro", "studio", "premium", "agency", "prem"):
+                resp_payload["cloud_ai"] = {
+                    "gemini_api_key": get_setting("gemini_api_key", ""),
+                    "openai_api_key": get_setting("openai_api_key", ""),
+                    "model": get_setting("active_model", "gemini-1.5-flash")
+                }
+            self._json(resp_payload)
 
         # 2. Desktop App Credit Consumption Endpoint
         elif self.path in ("/v1/license/consume", "/api/v1/license/consume"):
@@ -241,6 +284,55 @@ class AdminRequestHandler(SimpleHTTPRequestHandler):
             conn.commit()
             conn.close()
             self._json({"success": True, "message": f"License {key} is now {new_status}."})
+
+        # 7. Admin: Save Cloud AI Settings
+        elif self.path == "/api/admin/save-ai-settings":
+            gemini_key = data.get("gemini_api_key", "").strip()
+            openai_key = data.get("openai_api_key", "").strip()
+            model = data.get("active_model", "gemini-1.5-flash").strip()
+            set_setting("gemini_api_key", gemini_key)
+            set_setting("openai_api_key", openai_key)
+            set_setting("active_model", model)
+
+            # Sync to local cloud_ai_keys.json
+            try:
+                keys_file = os.path.expanduser("~/.ai-video-flow/cloud_ai_keys.json")
+                cur = {}
+                if os.path.isfile(keys_file):
+                    try:
+                        with open(keys_file, "r", encoding="utf-8") as f:
+                            cur = json.load(f)
+                    except Exception:
+                        cur = {}
+                if gemini_key:
+                    cur["gemini"] = gemini_key
+                if openai_key:
+                    cur["openai"] = openai_key
+                with open(keys_file, "w", encoding="utf-8") as f:
+                    json.dump(cur, f, indent=2)
+            except Exception:
+                pass
+
+            self._json({"success": True, "message": "Cloud AI API Settings saved successfully!"})
+
+        # 8. Admin: Test Gemini API Key
+        elif self.path == "/api/admin/test-gemini":
+            import urllib.request
+            key = data.get("gemini_api_key", "").strip() or get_setting("gemini_api_key", "")
+            if not key:
+                self._json({"success": False, "error": "Please enter a Gemini API Key first."}, 400)
+                return
+            try:
+                test_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                req = urllib.request.Request(test_url, method="GET")
+                with urllib.request.urlopen(req, timeout=7) as resp:
+                    if resp.status == 200:
+                        self._json({"success": True, "message": "Google Gemini Vision API Connected & Working!"})
+                        return
+            except Exception as e:
+                self._json({"success": False, "error": f"Gemini connection failed: {e}"}, 400)
+                return
+            self._json({"success": False, "error": "Could not connect to Gemini API."}, 400)
 
         else:
             self._json({"error": "Unknown API"}, 404)
@@ -392,6 +484,36 @@ def get_admin_html() -> str:
         <code id="issued-key-text" style="font-size:14px;color:var(--accent);font-weight:700;word-break:break-all;">...</code>
         <button class="btn btn-sm btn-outline" style="margin-top:8px;" onclick="copyIssuedKey()">📋 Copy Key</button>
       </div>
+
+      <!-- Cloud AI API Setup Card -->
+      <div class="card" style="margin-top: 20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid var(--card-border);padding-bottom:10px;">
+          <h2 style="margin:0;border:none;padding:0;font-size:16px;color:#38bdf8;">🔑 Central Cloud AI Setup</h2>
+          <span id="ai-conn-badge" style="font-size:10px;padding:3px 8px;border-radius:12px;background:rgba(245,158,11,0.2);color:#f59e0b;font-weight:700;">CHECKING...</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 14px 0;line-height:1.4;">
+          Yahan apni <strong>Google Gemini API Key</strong> dalein. Clients ko koi key enter nahi karni padegi — wo bas app install karke kaam shuru karenge!
+        </p>
+        <form id="form-ai-settings">
+          <label>Google Gemini API Key (Multimodal Vision)</label>
+          <input type="password" id="inp-gemini-key" placeholder="AIzaSy..." style="font-family:monospace;">
+
+          <label>OpenAI API Key (Optional)</label>
+          <input type="password" id="inp-openai-key" placeholder="sk-..." style="font-family:monospace;">
+
+          <label>Active Vision Model</label>
+          <select id="inp-active-model">
+            <option value="gemini-1.5-flash" selected>Google Gemini 1.5 Flash (Super Fast &amp; Recommended)</option>
+            <option value="gemini-1.5-pro">Google Gemini 1.5 Pro (Deep Cinematic Reasoning)</option>
+            <option value="gpt-4o">OpenAI GPT-4o Multimodal</option>
+          </select>
+
+          <div style="display:flex;gap:10px;">
+            <button type="submit" class="btn" style="flex:2;">💾 Save API Keys</button>
+            <button type="button" class="btn btn-outline" id="btn-test-gemini" style="flex:1;">⚡ Test API</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <!-- Right: All Licenses Table -->
@@ -474,6 +596,32 @@ def get_admin_html() -> str:
       }
     }
 
+    async function loadAiSettings() {
+      try {
+        const res = await fetch('/api/admin/ai-settings');
+        const data = await res.json();
+        const badge = document.getElementById('ai-conn-badge');
+        if (data.gemini_api_key) {
+          document.getElementById('inp-gemini-key').value = data.gemini_api_key;
+          badge.textContent = 'CONNECTED';
+          badge.style.background = 'rgba(16,185,129,0.2)';
+          badge.style.color = '#10b981';
+        } else {
+          badge.textContent = 'NOT CONFIGURED';
+          badge.style.background = 'rgba(239,68,68,0.2)';
+          badge.style.color = '#ef4444';
+        }
+        if (data.openai_api_key) {
+          document.getElementById('inp-openai-key').value = data.openai_api_key;
+        }
+        if (data.active_model) {
+          document.getElementById('inp-active-model').value = data.active_model;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     document.getElementById('form-create').addEventListener('submit', async (e) => {
       e.preventDefault();
       const payload = {
@@ -492,6 +640,47 @@ def get_admin_html() -> str:
         document.getElementById('issued-key-box').style.display = 'block';
         document.getElementById('issued-key-text').textContent = data.license_key;
         loadLicenses();
+      }
+    });
+
+    document.getElementById('form-ai-settings').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        gemini_api_key: document.getElementById('inp-gemini-key').value.trim(),
+        openai_api_key: document.getElementById('inp-openai-key').value.trim(),
+        active_model: document.getElementById('inp-active-model').value
+      };
+      const res = await fetch('/api/admin/save-ai-settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      alert(data.message || 'Saved successfully!');
+      loadAiSettings();
+    });
+
+    document.getElementById('btn-test-gemini').addEventListener('click', async () => {
+      const key = document.getElementById('inp-gemini-key').value.trim();
+      const btn = document.getElementById('btn-test-gemini');
+      btn.textContent = 'Testing...';
+      try {
+        const res = await fetch('/api/admin/test-gemini', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ gemini_api_key: key })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('✅ ' + data.message);
+          loadAiSettings();
+        } else {
+          alert('❌ ' + (data.error || 'Test failed'));
+        }
+      } catch (e) {
+        alert('Error: ' + e);
+      } finally {
+        btn.textContent = '⚡ Test API';
       }
     });
 
@@ -539,6 +728,7 @@ def get_admin_html() -> str:
     }
 
     loadLicenses();
+    loadAiSettings();
   </script>
 </body>
 </html>"""

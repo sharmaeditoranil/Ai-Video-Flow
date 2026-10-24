@@ -520,8 +520,8 @@ document.addEventListener("DOMContentLoaded", () => {
       btnSendToNle.innerHTML = "🟣 Send to Premiere";
       btnSendToNle.title = "Launch or focus Adobe Premiere Pro";
     } else if (val === "edius") {
-      btnSendToNle.innerHTML = "🟡 Send to EDIUS";
-      btnSendToNle.title = "Export & Open timeline in Grass Valley EDIUS";
+      btnSendToNle.innerHTML = "🟡 Send to EDIUS (25 fps)";
+      btnSendToNle.title = "Export 25 fps XML & Open in Grass Valley EDIUS (.EZP project)";
     } else {
       btnSendToNle.innerHTML = "⚡ Send to All NLEs";
       btnSendToNle.title = "Export and send to DaVinci, Premiere & EDIUS";
@@ -559,7 +559,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (res.success) {
             appendLog(`✅ EDIUS: ${res.message}`, "info", weddingConsole);
             (res.xmls || []).forEach(x => appendLog(`  • EDIUS XML: ${x.split("/").pop()}`, "info", weddingConsole));
-            appendLog("💡 Tip for EDIUS (Windows): Open EDIUS -> File -> Import Project -> FCP XML and select this file, or drag-and-drop the XML file directly into the EDIUS bin/timeline.", "info", weddingConsole);
+            appendLog("💡 Tip for EDIUS (Windows): Open EDIUS -> Create 25 fps PAL Project -> File -> Import Project -> FCP XML and select this file. Press Ctrl+S to save as .EZP project!", "info", weddingConsole);
             await api("/api/open-folder", { path: res.edius_dir || "" });
           } else {
             appendLog(`⚠️ EDIUS note: ${res.error || res.message}`, "warning", weddingConsole);

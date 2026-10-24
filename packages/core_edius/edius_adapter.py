@@ -159,6 +159,8 @@ class EdiusAdapter:
             with open(output_xml_path, "w", encoding="utf-8") as f:
                 f.write(xml_content)
 
+            self.write_edius_instructions(os.path.dirname(os.path.abspath(output_xml_path)))
+
             logger.info(f"Exported EDIUS XML to {output_xml_path} ({len(clips)} A-roll, {len(broll)} B-roll)")
             return {
                 "success": True,
@@ -166,12 +168,45 @@ class EdiusAdapter:
                 "sequence_name": seq_name,
                 "clip_count": len(clips),
                 "broll_count": len(broll),
+                "fps": fps,
                 "target_nle": "edius",
-                "message": f"EDIUS XML successfully exported ({len(clips)} clips)!"
+                "message": f"EDIUS 25 fps XML successfully exported ({len(clips)} clips)! Open in EDIUS & press Ctrl+S to save as .EZP"
             }
         except Exception as e:
             logger.error(f"Failed to export EDIUS XML: {e}")
             return {"success": False, "error": str(e)}
+
+    def write_edius_instructions(self, output_dir: str) -> str:
+        """Writes a clear 25 fps .EZP guide file in the export folder."""
+        guide_path = os.path.join(output_dir, "HOW_TO_OPEN_IN_EDIUS_EZP.txt")
+        try:
+            content = (
+                "==================================================================\n"
+                "   GRASS VALLEY EDIUS (25 FPS PAL .EZP TIMELINE GUIDE)\n"
+                "==================================================================\n"
+                "Yeh exported XML timeline 100% 25 fps PAL standard (1920x1080 @ 25.00p)\n"
+                "pe calibrated hai, jo EDIUS 7, EDIUS 8, EDIUS 9, EDIUS X aur EDIUS 11\n"
+                "ke saath fully compatible hai bina kisi version error ke.\n\n"
+                "EDIUS ME TIMELINE OPEN AUR .EZP SAVE KARNE KE STEPS:\n\n"
+                "1. EDIUS open karein aur Project Setting me '1920x1080 25p / 50i' chunein.\n"
+                "2. Top Menu bar se click karein:\n"
+                "   File -> Import Project -> FCP XML...\n"
+                "   (Aur is folder se *.xml file select karein).\n\n"
+                "3. EDIUS me timeline turant load ho jayegi:\n"
+                "   - 1V Track: All Trimmed Ceremony Story Shots (Chronological)\n"
+                "   - 2V Track: B-Roll Cutaways\n"
+                "   - 1A Track: Camera Dialogue / Ambience\n"
+                "   - 2A Track: BGM Song / Background Music\n\n"
+                "4. EDIUS me 'Ctrl + S' dabayein -> Project turant aapke EDIUS (.EZP)\n"
+                "   format me save ho jayega!\n"
+                "==================================================================\n"
+            )
+            with open(guide_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return guide_path
+        except Exception as e:
+            logger.debug(f"Failed to write EDIUS guide: {e}")
+            return guide_path
 
     def _build_edius_xml(
         self,

@@ -136,6 +136,308 @@ class PremiereAdapter:
             logger.error(f"Failed to launch Premiere Pro: {e}")
             return {"success": False, "error": str(e)}
 
+    # -------------------------------------------------------------------------
+    # ExtendScript Live Automation Bridge (macOS AppleScript / Windows COM)
+    # Zero external server or node_modules dependency required
+    # -------------------------------------------------------------------------
+
+    def eval_extendscript(self, jsx_code: str) -> Dict[str, Any]:
+        """
+        Executes raw ExtendScript code inside Adobe Premiere Pro.
+        Returns parsed JSON result.
+        """
+        self.refresh()
+        if not self._active_app:
+            return {"success": False, "error": "Adobe Premiere Pro is not installed."}
+
+        if not self.is_running():
+            return {"success": False, "error": "Adobe Premiere Pro is not running. Please open Premiere Pro first."}
+
+        app_name = self._active_app["name"]
+        wrapped_jsx = (
+            "(function(){\n"
+            "try {\n"
+            f"{jsx_code}\n"
+            "} catch(err) {\n"
+            "  return JSON.stringify({success: false, error: err.toString()});\n"
+            "}\n"
+            "})();"
+        )
+
+        try:
+            if self._system_os == "Darwin":
+                apple_script = (
+                    "on run argv\n"
+                    f"tell application \"{app_name}\"\n"
+                    "  DoScript (item 1 of argv)\n"
+                    "end tell\n"
+                    "end run"
+                )
+                res = subprocess.run(
+                    ["osascript", "-e", apple_script, wrapped_jsx],
+                    capture_output=True,
+                    text=True,
+                    timeout=25
+                )
+                if res.returncode != 0:
+                    return {"success": False, "error": res.stderr.strip() or "AppleScript DoScript failed"}
+                output_str = res.stdout.strip()
+            elif self._system_os == "Windows":
+                import tempfile
+                with tempfile.NamedTemporaryFile("w", suffix=".jsx", delete=False, encoding="utf-8") as tf:
+                    tf.write(wrapped_jsx)
+                    tmp_jsx = tf.name
+                res = subprocess.run(
+                    [self._active_app["executable"], "/cmd", tmp_jsx],
+                    capture_output=True,
+                    text=True,
+                    timeout=25
+                )
+                output_str = res.stdout.strip()
+                try:
+                    os.remove(tmp_jsx)
+                except Exception:
+                    pass
+            else:
+                return {"success": False, "error": f"Unsupported OS: {self._system_os}"}
+
+            import json
+            try:
+                parsed = json.loads(output_str)
+                if isinstance(parsed, dict) and "success" not in parsed:
+                    parsed["success"] = True
+                return parsed if isinstance(parsed, dict) else {"success": True, "result": parsed}
+            except Exception:
+                return {"success": True, "raw_output": output_str}
+
+        except Exception as e:
+            logger.error(f"ExtendScript error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_project_state(self) -> Dict[str, Any]:
+        """Queries live project state, bin structure, and sequence count from Premiere Pro."""
+        jsx = """
+        var proj = app.project;
+        if (!proj) return JSON.stringify({success: false, error: "No project open in Premiere Pro."});
+        var seqs = [];
+        for (var i = 0; i < proj.sequences.numSequences; i++) {
+            seqs.push(proj.sequences[i].name);
+        }
+        var activeSeq = proj.activeSequence ? proj.activeSequence.name : null;
+        return JSON.stringify({
+            success: true,
+            project_name: proj.name,
+            project_path: proj.path,
+            sequence_count: proj.sequences.numSequences,
+            sequences: seqs,
+            active_sequence: activeSeq
+        });
+        """
+        return self.eval_extendscript(jsx)
+
+    def get_timeline_state(self) -> Dict[str, Any]:
+        """Queries active sequence timeline tracks, clips, and duration."""
+        jsx = """
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({success: false, error: "No active sequence in Premiere Pro."});
+        var vCount = seq.videoTracks.numTracks;
+        var aCount = seq.audioTracks.numTracks;
+        var totalClips = 0;
+        for (var i = 0; i < vCount; i++) totalClips += seq.videoTracks[i].clips.numItems;
+        for (var j = 0; j < aCount; j++) totalClips += seq.audioTracks[j].clips.numItems;
+        return JSON.stringify({
+            success: true,
+            sequence_name: seq.name,
+            video_tracks: vCount,
+            audio_tracks: aCount,
+            total_clips: totalClips,
+            timebase: seq.timebase
+        });
+        """
+        return self.eval_extendscript(jsx)
+
+    def create_sequence(self, name: str, width: int = 1920, height: int = 1080, fps: float = 25.0) -> Dict[str, Any]:
+        """Creates a new sequence in the active Premiere Pro project."""
+        jsx = f"""
+        var proj = app.project;
+        if (!proj) return JSON.stringify({{success: false, error: "No open project in Premiere."}});
+        var seq = proj.createNewSequence("{name}", "");
+        return JSON.stringify({{success: true, sequence_name: seq ? seq.name : "{name}"}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def import_media(self, file_paths: List[str], target_bin: str = "AI_Media") -> Dict[str, Any]:
+        """Imports an array of file paths into a designated bin in Premiere Pro."""
+        import json
+        files_json = json.dumps([os.path.abspath(f) for f in file_paths])
+        jsx = f"""
+        var proj = app.project;
+        if (!proj) return JSON.stringify({{success: false, error: "No open project."}});
+        var bin = null;
+        for (var i = 0; i < proj.rootItem.children.numItems; i++) {{
+            var item = proj.rootItem.children[i];
+            if (item.type === 2 && item.name === "{target_bin}") {{
+                bin = item;
+                break;
+            }}
+        }}
+        if (!bin) {{
+            bin = proj.rootItem.createBin("{target_bin}");
+        }}
+        var files = {files_json};
+        var res = proj.importFiles(files, true, bin, false);
+        return JSON.stringify({{success: res, imported_count: files.length, target_bin: "{target_bin}"}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def create_bin(self, bin_name: str) -> Dict[str, Any]:
+        """Creates a new bin in the Premiere project root."""
+        jsx = f"""
+        var proj = app.project;
+        if (!proj) return JSON.stringify({{success: false, error: "No open project."}});
+        var bin = proj.rootItem.createBin("{bin_name}");
+        return JSON.stringify({{success: true, bin_name: bin ? bin.name : "{bin_name}"}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def add_marker(self, timecode_seconds: float, name: str = "AI Marker", comments: str = "", color: str = "Yellow") -> Dict[str, Any]:
+        """Adds a timeline marker at a specified timecode in the active sequence."""
+        jsx = f"""
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({{success: false, error: "No active sequence."}});
+        var markers = seq.markers;
+        var m = markers.createMarker({timecode_seconds});
+        m.name = "{name}";
+        m.comments = "{comments}";
+        return JSON.stringify({{success: true, timecode: {timecode_seconds}, name: "{name}"}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def razor_at_time(self, seconds: float) -> Dict[str, Any]:
+        """Splits (razors) all sequence tracks at the given timecode in seconds via QE DOM."""
+        jsx = f"""
+        app.enableQE();
+        var qseq = qe.project.getActiveSequence();
+        if (!qseq) return JSON.stringify({{success: false, error: "No active QE sequence."}});
+        var frameRate = 25.0;
+        var totalFrames = Math.round({seconds} * frameRate);
+        var frames = totalFrames % Math.round(frameRate);
+        var totalSecs = Math.floor(totalFrames / Math.round(frameRate));
+        var secs = totalSecs % 60;
+        var mins = Math.floor(totalSecs / 60) % 60;
+        var hours = Math.floor(totalSecs / 3600);
+        function pad(n) {{ return n < 10 ? '0' + n : '' + n; }}
+        var tc = pad(hours) + ':' + pad(mins) + ':' + pad(secs) + ':' + pad(frames);
+        qseq.razor(tc);
+        return JSON.stringify({{success: true, timecode: tc, seconds: {seconds}}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def ripple_delete_range(self, start_seconds: float, end_seconds: float) -> Dict[str, Any]:
+        """Razors boundaries and ripple deletes clips within the range."""
+        jsx = f"""
+        app.enableQE();
+        var qseq = qe.project.getActiveSequence();
+        if (!qseq) return JSON.stringify({{success: false, error: "No active QE sequence."}});
+        var frameRate = 25.0;
+        function toTC(s) {{
+            var tf = Math.round(s * frameRate);
+            var f = tf % Math.round(frameRate);
+            var ts = Math.floor(tf / Math.round(frameRate));
+            var sec = ts % 60;
+            var min = Math.floor(ts / 60) % 60;
+            var hr = Math.floor(ts / 3600);
+            function p(n) {{ return n < 10 ? '0' + n : '' + n; }}
+            return p(hr) + ':' + p(min) + ':' + p(sec) + ':' + p(f);
+        }}
+        qseq.razor(toTC({start_seconds}));
+        qseq.razor(toTC({end_seconds}));
+        return JSON.stringify({{success: true, start_tc: toTC({start_seconds}), end_tc: toTC({end_seconds})}});
+        """
+        return self.eval_extendscript(jsx)
+
+    def place_broll_cutaway(
+        self,
+        file_path: str,
+        start_seconds: float,
+        duration_seconds: float = 2.4,
+        track_index: int = 2
+    ) -> Dict[str, Any]:
+        """
+        Places a B-Roll cutaway clip on Video Track 2 without overwriting A1/V1 speech.
+        Inspired by Ambar AI (Robelob/Ambar-AI-Video-Editor-Plugin-For-Premiere-Pro).
+        """
+        norm_p = os.path.abspath(file_path).replace("\\", "/")
+        jsx = f"""
+        var proj = app.project;
+        var seq = proj.activeSequence;
+        if (!seq) return JSON.stringify({{success: false, error: "No active sequence."}});
+        var vTrackIdx = {track_index - 1};
+        if (vTrackIdx >= seq.videoTracks.numTracks) {{
+            return JSON.stringify({{success: false, error: "Target track V{track_index} does not exist."}});
+        }}
+        var track = seq.videoTracks[vTrackIdx];
+        // Find or import project item
+        var targetItem = null;
+        function searchBin(bin) {{
+            for (var i = 0; i < bin.children.numItems; i++) {{
+                var it = bin.children[i];
+                if (it.type === 1 && it.getMediaPath && it.getMediaPath().replace(/\\\\/g, '/') === "{norm_p}") {{
+                    targetItem = it;
+                    return;
+                }} else if (it.type === 2) {{
+                    searchBin(it);
+                    if (targetItem) return;
+                }}
+            }}
+        }}
+        searchBin(proj.rootItem);
+        if (targetItem) {{
+            var timeInTicks = String(Math.round({start_seconds} * 254016000000));
+            track.overwriteClip(targetItem, timeInTicks);
+            return JSON.stringify({{success: true, track: {track_index}, start_seconds: {start_seconds}}});
+        }} else {{
+            return JSON.stringify({{success: false, error: "Clip not found in project. Please import it first."}});
+        }}
+        """
+        return self.eval_extendscript(jsx)
+
+    def organize_bins_automatically(self) -> Dict[str, Any]:
+        """
+        Automatically organizes root items into professional studio bins:
+        01_A-Roll_Dialogue, 02_B-Roll_Cutaways, 03_Ceremony_Rituals, 04_Music_BGM, 05_Voiceover_Audio
+        """
+        jsx = """
+        var proj = app.project;
+        if (!proj) return JSON.stringify({success: false, error: "No open project."});
+        var bins = {
+            aroll: proj.rootItem.createBin("01_A-Roll_Dialogue"),
+            broll: proj.rootItem.createBin("02_B-Roll_Cutaways"),
+            music: proj.rootItem.createBin("03_Music_BGM"),
+            audio: proj.rootItem.createBin("04_Audio_VO"),
+            titles: proj.rootItem.createBin("05_Graphics_Titles")
+        };
+        var moved = 0;
+        for (var i = proj.rootItem.children.numItems - 1; i >= 0; i--) {
+            var item = proj.rootItem.children[i];
+            if (item.type === 1) { // Clip item
+                var name = item.name.toLowerCase();
+                if (name.indexOf(".mp3") !== -1 || name.indexOf(".wav") !== -1 || name.indexOf("music") !== -1 || name.indexOf("song") !== -1) {
+                    item.moveBin(bins.music);
+                    moved++;
+                } else if (name.indexOf("broll") !== -1 || name.indexOf("cutaway") !== -1) {
+                    item.moveBin(bins.broll);
+                    moved++;
+                } else {
+                    item.moveBin(bins.aroll);
+                    moved++;
+                }
+            }
+        }
+        return JSON.stringify({success: true, organized_clips: moved});
+        """
+        return self.eval_extendscript(jsx)
+
     def open_timeline(self, xml_path: str) -> Dict[str, Any]:
         """
         Opens or imports an XML timeline directly in Adobe Premiere Pro.
@@ -170,10 +472,14 @@ class PremiereAdapter:
         output_dir: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Converts an AI wedding plan into standard Premiere-compatible FCP XML.
+        Converts an AI edit plan into standard Premiere-compatible FCP XML.
+        Supports multi-track video (V1 Primary + V2 B-Roll Cutaways) and dual audio (A1 + A2 ducking).
         """
         name = plan.get("sequence_name", "AI_Wedding_Timeline")
         clips = plan.get("clips", [])
+        broll_clips = plan.get("broll_clips") or plan.get("broll_cutaways") or []
+        aspect_ratio = plan.get("aspect_ratio", "16:9")
+
         if not output_dir:
             output_dir = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output", "timelines")
         os.makedirs(output_dir, exist_ok=True)
@@ -184,7 +490,10 @@ class PremiereAdapter:
 
         # Directly generate authentic Apple FCP7 XML (<xmeml version="4">)
         try:
-            self._write_native_premiere_xml(xml_file, name, clips, fps, audio_path=audio_path)
+            self._write_native_premiere_xml(
+                xml_file, name, clips, fps=fps, audio_path=audio_path,
+                aspect_ratio=aspect_ratio, broll_clips=broll_clips
+            )
             
             # Generate accompanying AI Color & Light Balance 3D LUT for Premiere Lumetri Color
             lut_file = self.generate_premiere_color_look(output_dir)
@@ -194,7 +503,8 @@ class PremiereAdapter:
                 "xml_path": xml_file,
                 "lut_path": lut_file,
                 "timeline_name": name,
-                "clip_count": len(clips)
+                "clip_count": len(clips),
+                "broll_count": len(broll_clips)
             }
         except Exception as e:
             logger.error(f"Native Premiere XML generation failed: {e}")
@@ -252,11 +562,14 @@ class PremiereAdapter:
         sequence_name: str,
         clips: List[Dict[str, Any]],
         fps: float = 25.0,
-        audio_path: str = ""
+        audio_path: str = "",
+        aspect_ratio: str = "16:9",
+        broll_clips: Optional[List[Dict[str, Any]]] = None
     ) -> None:
         """
         Directly writes an authentic Apple FCP7 XML (<xmeml version="4">)
         which Adobe Premiere Pro natively parses without external dependencies.
+        Supports multi-track video (V1 A-Roll + V2 B-Roll Cutaways) and dual audio tracks.
         """
         import xml.etree.ElementTree as ET
 
@@ -281,7 +594,7 @@ class PremiereAdapter:
         ET.SubElement(rate_elem, "ntsc").text = "FALSE"
         ET.SubElement(samplechar, "pixelaspectratio").text = "square"
 
-        is_vertical = ("9:16" in str(plan.get("aspect_ratio", "")) or 
+        is_vertical = ("9:16" in str(aspect_ratio) or 
                        "9x16" in sequence_name.lower() or 
                        "reel" in sequence_name.lower() or 
                        "shorts" in sequence_name.lower() or
@@ -293,6 +606,7 @@ class PremiereAdapter:
             ET.SubElement(samplechar, "width").text = "1920"
             ET.SubElement(samplechar, "height").text = "1080"
 
+        # Video Track 1: Primary A-Roll Timeline
         vtrack = ET.SubElement(video, "track")
 
         curr_frame = 0
@@ -328,6 +642,42 @@ class PremiereAdapter:
             frate = ET.SubElement(file_elem, "rate")
             ET.SubElement(frate, "timebase").text = str(int(fps))
             ET.SubElement(frate, "ntsc").text = "FALSE"
+
+            curr_frame += dur_frames
+
+        # Video Track 2: B-Roll Cutaways (Ambar AI Feature)
+        if broll_clips:
+            vtrack2 = ET.SubElement(video, "track")
+            for b_idx, bclip in enumerate(broll_clips, 1):
+                b_path = bclip.get("file_path") or ""
+                if not b_path:
+                    continue
+                b_start = int(bclip.get("timeline_start", 0.0) * fps)
+                b_in = int(bclip.get("in_frame", 0))
+                b_dur = int(bclip.get("duration", 2.4) * fps)
+                b_out = b_in + b_dur
+
+                b_item = ET.SubElement(vtrack2, "clipitem", id=f"clipitem-v2-{b_idx}")
+                ET.SubElement(b_item, "name").text = os.path.basename(b_path)
+                ET.SubElement(b_item, "duration").text = str(b_dur)
+
+                bcrate = ET.SubElement(b_item, "rate")
+                ET.SubElement(bcrate, "timebase").text = str(int(fps))
+                ET.SubElement(bcrate, "ntsc").text = "FALSE"
+
+                ET.SubElement(b_item, "start").text = str(b_start)
+                ET.SubElement(b_item, "end").text = str(b_start + b_dur)
+                ET.SubElement(b_item, "in").text = str(b_in)
+                ET.SubElement(b_item, "out").text = str(b_out)
+
+                bfile_elem = ET.SubElement(b_item, "file", id=f"file-v2-{b_idx}")
+                ET.SubElement(bfile_elem, "name").text = os.path.basename(b_path)
+                norm_bp = os.path.abspath(b_path).replace("\\", "/")
+                ET.SubElement(bfile_elem, "pathurl").text = f"file://localhost/{norm_bp.lstrip('/')}"
+
+                bfrate = ET.SubElement(bfile_elem, "rate")
+                ET.SubElement(bfrate, "timebase").text = str(int(fps))
+                ET.SubElement(bfrate, "ntsc").text = "FALSE"
 
             curr_frame += dur_frames
 

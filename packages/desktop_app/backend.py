@@ -396,8 +396,21 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             if "full_film" in formats:
                 plans["full_film"] = story_planner.plan_full_film(analyzed)
 
+        # 3.5. Intelligent B-Roll Cutaway Generation for Track V2 (Ambar AI Feature)
+        from packages.ai_engine.broll_placer import broll_placer
+        for p_key, p in plans.items():
+            broll_cuts = broll_placer.suggest_broll_cutaways(
+                primary_clips=p.get("clips", []),
+                all_analyzed_clips=analyzed,
+                target_track=2
+            )
+            p["broll_clips"] = broll_cuts
+            if broll_cuts:
+                _log(job_id, f"  🎬 Video Track V2: Generated {len(broll_cuts)} intelligent B-Roll cutaways for {p.get('sequence_name')}", "info")
+
         for p in plans.values():
-            _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips, "
+            _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips "
+                         f"(+ {len(p.get('broll_clips', []))} B-roll), "
                          f"{p.get('total_duration', 0)}s ({p.get('aspect_ratio', '16:9')})")
         _progress(job_id, 80)
 
@@ -582,6 +595,15 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/premiere/open":
             self._json(premiere_adapter.open_timeline(data.get("xml_path", "")))
+
+        elif self.path == "/api/premiere/state":
+            self._json(premiere_adapter.get_project_state())
+
+        elif self.path == "/api/premiere/timeline-state":
+            self._json(premiere_adapter.get_timeline_state())
+
+        elif self.path == "/api/premiere/organize-bins":
+            self._json(premiere_adapter.organize_bins_automatically())
 
         elif self.path == "/api/browse":
             self._json(browse(data.get("kind", "folder"), data.get("prompt", "Select")))

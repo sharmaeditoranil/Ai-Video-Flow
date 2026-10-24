@@ -703,6 +703,133 @@ MCP_TOOLS = [
             },
             "required": ["xml_path"]
         }
+    },
+    {
+        "name": "premiere_eval_extendscript",
+        "description": "Executes raw ExtendScript code directly inside Adobe Premiere Pro via native OS scripting bridge (zero external servers).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "jsx_code": {"type": "string", "description": "ExtendScript (JavaScript ES3) code to run inside Premiere Pro"}
+            },
+            "required": ["jsx_code"]
+        }
+    },
+    {
+        "name": "premiere_get_project_state",
+        "description": "Queries live project state, open project name, path, and all sequences from Adobe Premiere Pro.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "premiere_get_timeline_state",
+        "description": "Queries the active sequence timeline in Premiere Pro, returning video tracks, audio tracks, and clip counts.",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "premiere_create_sequence",
+        "description": "Creates a new sequence inside Adobe Premiere Pro with custom dimensions and frame rate.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name for the new sequence"},
+                "width": {"type": "integer", "description": "Horizontal resolution in pixels (default 1920, 1080 for vertical)"},
+                "height": {"type": "integer", "description": "Vertical resolution in pixels (default 1080, 1920 for vertical)"},
+                "fps": {"type": "number", "description": "Frame rate (default 25.0)"}
+            },
+            "required": ["name"]
+        }
+    },
+    {
+        "name": "premiere_import_media",
+        "description": "Imports an array of media file paths into a target bin inside Adobe Premiere Pro.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_paths": {"type": "array", "items": {"type": "string"}, "description": "List of video/audio file paths to import"},
+                "target_bin": {"type": "string", "description": "Name of the target project bin (default 'AI_Media')"}
+            },
+            "required": ["file_paths"]
+        }
+    },
+    {
+        "name": "premiere_create_bin",
+        "description": "Creates a new folder bin inside the active Premiere Pro project.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bin_name": {"type": "string", "description": "Name of the new bin"}
+            },
+            "required": ["bin_name"]
+        }
+    },
+    {
+        "name": "premiere_add_marker",
+        "description": "Places a colored timeline marker with comments at a specified timecode in Premiere Pro.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "timecode_seconds": {"type": "number", "description": "Position in seconds where the marker should be placed"},
+                "name": {"type": "string", "description": "Marker label or headline"},
+                "comments": {"type": "string", "description": "Detailed notes or correction instructions"},
+                "color": {"type": "string", "description": "Marker color (Yellow, Green, Cyan, Magenta, Red)"}
+            },
+            "required": ["timecode_seconds"]
+        }
+    },
+    {
+        "name": "premiere_razor_at_time",
+        "description": "Splits (razors) all sequence tracks at the given timecode in seconds using the Premiere QE DOM.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "number", "description": "Exact sequence timecode in seconds to split"}
+            },
+            "required": ["seconds"]
+        }
+    },
+    {
+        "name": "premiere_ripple_delete_range",
+        "description": "Razors start and end points and ripple-deletes the range (removing dead-air pauses or false takes).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "start_seconds": {"type": "number", "description": "Start of range to delete in seconds"},
+                "end_seconds": {"type": "number", "description": "End of range to delete in seconds"}
+            },
+            "required": ["start_seconds", "end_seconds"]
+        }
+    },
+    {
+        "name": "premiere_place_broll",
+        "description": "Places a B-Roll cutaway clip on Video Track 2 (V2) without breaking speech or A-Roll dialogue on V1/A1.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string", "description": "File path of the B-Roll video clip"},
+                "start_seconds": {"type": "number", "description": "Timeline position in seconds where cutaway appears"},
+                "duration_seconds": {"type": "number", "description": "Duration of cutaway (default 2.4s)"},
+                "track_index": {"type": "integer", "description": "Target video track (default 2 for Track V2)"}
+            },
+            "required": ["file_path", "start_seconds"]
+        }
+    },
+    {
+        "name": "premiere_organize_bins",
+        "description": "Automatically organizes project items into professional studio bins (01_A-Roll, 02_B-Roll, 03_Music, 04_Audio, 05_Titles).",
+        "inputSchema": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "ai_suggest_broll_cutaways",
+        "description": "Analyzes primary cut sequence and available raw clips to calculate intelligent B-Roll cutaway timings for Track V2.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "primary_clips": {"type": "array", "items": {"type": "object"}, "description": "List of primary A-Roll clips"},
+                "all_analyzed_clips": {"type": "array", "items": {"type": "object"}, "description": "All available raw footage clips"},
+                "target_track": {"type": "integer", "description": "Target video track (default 2)"}
+            },
+            "required": ["primary_clips", "all_analyzed_clips"]
+        }
     }
 ]
 
@@ -1077,6 +1204,79 @@ def handle_tool_call(tool_name: str, arguments: Dict[str, Any]) -> Any:
     elif tool_name == "premiere_open_timeline":
         from packages.core_premiere.premiere_adapter import premiere_adapter
         return premiere_adapter.open_timeline(arguments.get("xml_path", ""))
+
+    elif tool_name == "premiere_eval_extendscript":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.eval_extendscript(arguments.get("jsx_code", ""))
+
+    elif tool_name == "premiere_get_project_state":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.get_project_state()
+
+    elif tool_name == "premiere_get_timeline_state":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.get_timeline_state()
+
+    elif tool_name == "premiere_create_sequence":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.create_sequence(
+            name=arguments.get("name", "AI_Sequence"),
+            width=int(arguments.get("width", 1920)),
+            height=int(arguments.get("height", 1080)),
+            fps=float(arguments.get("fps", 25.0))
+        )
+
+    elif tool_name == "premiere_import_media":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.import_media(
+            file_paths=arguments.get("file_paths", []),
+            target_bin=arguments.get("target_bin", "AI_Media")
+        )
+
+    elif tool_name == "premiere_create_bin":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.create_bin(arguments.get("bin_name", "AI_Bin"))
+
+    elif tool_name == "premiere_add_marker":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.add_marker(
+            timecode_seconds=float(arguments.get("timecode_seconds", 0.0)),
+            name=arguments.get("name", "AI Marker"),
+            comments=arguments.get("comments", ""),
+            color=arguments.get("color", "Yellow")
+        )
+
+    elif tool_name == "premiere_razor_at_time":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.razor_at_time(float(arguments.get("seconds", 0.0)))
+
+    elif tool_name == "premiere_ripple_delete_range":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.ripple_delete_range(
+            start_seconds=float(arguments.get("start_seconds", 0.0)),
+            end_seconds=float(arguments.get("end_seconds", 0.0))
+        )
+
+    elif tool_name == "premiere_place_broll":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.place_broll_cutaway(
+            file_path=arguments.get("file_path", ""),
+            start_seconds=float(arguments.get("start_seconds", 0.0)),
+            duration_seconds=float(arguments.get("duration_seconds", 2.4)),
+            track_index=int(arguments.get("track_index", 2))
+        )
+
+    elif tool_name == "premiere_organize_bins":
+        from packages.core_premiere.premiere_adapter import premiere_adapter
+        return premiere_adapter.organize_bins_automatically()
+
+    elif tool_name == "ai_suggest_broll_cutaways":
+        from packages.ai_engine.broll_placer import broll_placer
+        return broll_placer.suggest_broll_cutaways(
+            primary_clips=arguments.get("primary_clips", []),
+            all_analyzed_clips=arguments.get("all_analyzed_clips", []),
+            target_track=int(arguments.get("target_track", 2))
+        )
 
     else:
         raise ValueError(f"Unknown tool: '{tool_name}'")

@@ -520,6 +520,26 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const btnPremiereOrganize = document.getElementById("btn-premiere-organize");
+  if (btnPremiereOrganize) {
+    btnPremiereOrganize.addEventListener("click", async () => {
+      try {
+        appendLog("📁 Organizing Adobe Premiere Pro project bins (A-Roll, B-Roll, Music, SFX)...", "info", weddingConsole);
+        btnPremiereOrganize.disabled = true;
+        const res = await api("/api/premiere/organize-bins", {});
+        if (res.success) {
+          appendLog(`✅ Premiere Pro Bins Organized: ${res.message || "Smart Bins created"}`, "info", weddingConsole);
+        } else {
+          appendLog(`⚠️ Premiere Pro bin note: ${res.error || res.message}`, "warning", weddingConsole);
+        }
+      } catch (e) {
+        appendLog("Error organizing bins: " + e, "error", weddingConsole);
+      } finally {
+        btnPremiereOrganize.disabled = false;
+      }
+    });
+  }
+
   // ------------------------------------------------------------------
   // All AI Tools tab (auto-generated forms from MCP tool schemas)
   // ------------------------------------------------------------------
@@ -532,7 +552,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnRunTool = document.getElementById("btn-run-tool");
   const toolSearch = document.getElementById("tool-search");
 
-  const GROUPS = [["resolve_", "DaVinci Resolve"], ["ai_", "AI Engine"], ["hyperframes_", "HyperFrames"]];
+  const GROUPS = [
+    ["resolve_", "DaVinci Resolve"],
+    ["premiere_", "Adobe Premiere Pro"],
+    ["ai_", "AI Engine"],
+    ["hyperframes_", "HyperFrames"]
+  ];
 
   function browseKindFor(key) {
     if (/folder|_dir$|output_dir/.test(key)) return "folder";

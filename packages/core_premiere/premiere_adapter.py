@@ -272,6 +272,27 @@ class PremiereAdapter:
         # Media & Tracks
         media = ET.SubElement(sequence, "media")
         video = ET.SubElement(media, "video")
+
+        # Sequence Format & Resolution
+        format_elem = ET.SubElement(video, "format")
+        samplechar = ET.SubElement(format_elem, "samplecharacteristics")
+        rate_elem = ET.SubElement(samplechar, "rate")
+        ET.SubElement(rate_elem, "timebase").text = str(int(fps))
+        ET.SubElement(rate_elem, "ntsc").text = "FALSE"
+        ET.SubElement(samplechar, "pixelaspectratio").text = "square"
+
+        is_vertical = ("9:16" in str(plan.get("aspect_ratio", "")) or 
+                       "9x16" in sequence_name.lower() or 
+                       "reel" in sequence_name.lower() or 
+                       "shorts" in sequence_name.lower() or
+                       "vertical" in sequence_name.lower())
+        if is_vertical:
+            ET.SubElement(samplechar, "width").text = "1080"
+            ET.SubElement(samplechar, "height").text = "1920"
+        else:
+            ET.SubElement(samplechar, "width").text = "1920"
+            ET.SubElement(samplechar, "height").text = "1080"
+
         vtrack = ET.SubElement(video, "track")
 
         curr_frame = 0

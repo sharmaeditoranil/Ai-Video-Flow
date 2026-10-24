@@ -886,3 +886,223 @@ body {
     align-self: flex-start;
   }
 }
+
+/* -------------------------------------------------------------
+ * Workflow Mode Selector & Reference Video Engine
+ * ------------------------------------------------------------- */
+.edit-modes-container {
+  margin-bottom: 24px;
+  background: rgba(18, 20, 29, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 20px 22px;
+  backdrop-filter: blur(16px);
+}
+
+.edit-modes-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.step-num {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.step-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.step-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.edit-modes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.edit-mode-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 14px 14px;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  user-select: none;
+}
+
+.edit-mode-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(99, 102, 241, 0.45);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.edit-mode-card.active {
+  background: linear-gradient(165deg, rgba(99, 102, 241, 0.16) 0%, rgba(139, 92, 246, 0.08) 100%);
+  border-color: #6366f1;
+  box-shadow: 0 0 0 1px #6366f1, 0 10px 28px rgba(99, 102, 241, 0.22);
+}
+
+.mode-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mode-check-indicator {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+  transition: all 0.2s ease;
+}
+
+.edit-mode-card.active .mode-check-indicator {
+  background: #6366f1;
+  color: white;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.6);
+}
+
+.mode-icon-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+.mode-titles h4 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin: 0 0 2px 0;
+}
+
+.mode-duration {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  display: block;
+}
+
+.mode-desc {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.4;
+  margin: 0;
+  flex: 1;
+}
+
+.mode-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mode-tags span {
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+}
+
+/* Workflow Mode Badges */
+.badge-reels { background: rgba(236, 72, 153, 0.16); color: #f472b6; border: 1px solid rgba(236, 72, 153, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-wedding { background: rgba(232, 185, 95, 0.16); color: #e8b95f; border: 1px solid rgba(232, 185, 95, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-youtube { background: rgba(239, 68, 68, 0.16); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-podcast { background: rgba(59, 130, 246, 0.16); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-commercial { background: rgba(168, 85, 247, 0.16); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-lecture { background: rgba(16, 185, 129, 0.16); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+.badge-music { background: rgba(245, 158, 11, 0.16); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-size: 0.68rem; padding: 2px 7px; border-radius: 10px; }
+
+/* Reference Video Box */
+.ref-video-card {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.25s ease;
+}
+
+.ref-video-card.highlight-ref {
+  border-color: rgba(236, 72, 153, 0.6);
+  background: linear-gradient(145deg, rgba(236, 72, 153, 0.08) 0%, rgba(139, 92, 246, 0.05) 100%);
+  box-shadow: 0 0 20px rgba(236, 72, 153, 0.15);
+}
+
+.ref-video-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.ref-video-header label {
+  margin-bottom: 0 !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.badge-accent {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(139, 92, 246, 0.25));
+  border: 1px solid rgba(236, 72, 153, 0.5);
+  color: #f472b6;
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 8px;
+}
+
+.ref-optional-tag {
+  font-size: 0.7rem;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.field-hint {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  line-height: 1.45;
+  margin-top: 8px;
+  padding: 7px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-left: 3px solid #6366f1;
+  border-radius: 0 6px 6px 0;
+}
+
+.ref-video-card.highlight-ref .field-hint {
+  border-left-color: #ec4899;
+}

@@ -259,13 +259,13 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
     return len(entries) if resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")) else 0
 
 
-def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve") -> None:
+def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding", ref_video: str = "") -> None:
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
         from packages.ai_engine.story_planner import story_planner
 
-        _log(job_id, f"Scanning footage folder: {folder}", "info")
+        _log(job_id, f"Scanning footage folder: {folder} (Workflow: {mode.upper()})", "info")
         scan = scan_folder(folder)
         if not scan["success"]:
             raise RuntimeError(scan["error"])
@@ -285,10 +285,36 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                              f"(score {res.get('quality_score', 0):.0f})")
             except Exception as e:
                 _log(job_id, f"[{i}/{len(videos)}] Skipped {os.path.basename(vp)}: {e}", "warning")
-            _progress(job_id, int(i / len(videos) * 70))
+            _progress(job_id, int(i / len(videos) * 65))
 
         if not analyzed:
             raise RuntimeError("None of the clips could be analysed.")
+
+        # 1.5. Analyze Reference Video (if provided by editor)
+        ref_lut_path = None
+        if ref_video and os.path.isfile(ref_video):
+            try:
+                _log(job_id, f"🎯 Analyzing Reference Reel / Video: {os.path.basename(ref_video)}", "info")
+                import cv2
+                from packages.ai_engine.color_transfer_engine import ColorTransferEngine
+                cap = cv2.VideoCapture(ref_video)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if total_frames > 0:
+                    mid_frame = int(total_frames * 0.35)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, mid_frame)
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        os.makedirs(OUTPUT_DIR, exist_ok=True)
+                        ref_frame_path = os.path.join(OUTPUT_DIR, "ref_extracted_frame.jpg")
+                        cv2.imwrite(ref_frame_path, frame)
+                        cte = ColorTransferEngine(luts_dir=os.path.join(OUTPUT_DIR, "luts"))
+                        lut_res = cte.generate_3d_lut(ref_frame_path, lut_name="AI_Reference_Reel_Look")
+                        if lut_res.get("success"):
+                            ref_lut_path = lut_res.get("lut_path")
+                            _log(job_id, f"  🎨 Extracted Reference 3D LUT: {os.path.basename(ref_lut_path)}", "info")
+                cap.release()
+            except Exception as e:
+                _log(job_id, f"Reference video note: {e}", "warning")
 
         # 2. Music beats
         beat_times = None
@@ -303,24 +329,90 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
         _progress(job_id, 75)
 
-        # 3. Story plans
+        # 3. Story plans tailored by workflow mode
         plans = {}
-        if "teaser" in formats:
-            plans["teaser"] = story_planner.plan_teaser(analyzed)
-        if "highlight" in formats:
-            plans["highlight"] = story_planner.plan_highlight(analyzed, beat_times=beat_times)
-        if "full_film" in formats:
-            plans["full_film"] = story_planner.plan_full_film(analyzed)
+        if mode == "reels":
+            if "teaser" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True)
+                p["sequence_name"] = "01_Instagram_Reel_9x16"
+                p["aspect_ratio"] = "9:16 (1080x1920)"
+                plans["teaser"] = p
+            if "highlight" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=True)
+                p["sequence_name"] = "02_Shorts_Teaser_30s"
+                p["aspect_ratio"] = "9:16 (1080x1920)"
+                plans["highlight"] = p
+        elif mode == "youtube":
+            if "teaser" in formats or "highlight" in formats:
+                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=360.0)
+                p["sequence_name"] = "01_YouTube_Main_Edit"
+                plans["highlight"] = p
+            if "full_film" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=True)
+                p["sequence_name"] = "02_YouTube_Shorts_Highlights"
+                p["aspect_ratio"] = "9:16 (1080x1920)"
+                plans["teaser"] = p
+        elif mode == "podcast":
+            if "teaser" in formats or "highlight" in formats:
+                p = story_planner.plan_full_film(analyzed)
+                p["sequence_name"] = "01_Podcast_Full_Episode"
+                plans["highlight"] = p
+            if "full_film" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True)
+                p["sequence_name"] = "02_Viral_Podcast_Clip_9x16"
+                p["aspect_ratio"] = "9:16 (1080x1920)"
+                plans["teaser"] = p
+        elif mode == "commercial":
+            if "teaser" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=False)
+                p["sequence_name"] = "01_Commercial_Ad_30s"
+                plans["teaser"] = p
+            if "highlight" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=15.0, is_vertical=True)
+                p["sequence_name"] = "02_Social_Teaser_15s"
+                p["aspect_ratio"] = "9:16 (1080x1920)"
+                plans["highlight"] = p
+        elif mode == "lecture":
+            if "teaser" in formats or "highlight" in formats:
+                p = story_planner.plan_full_film(analyzed)
+                p["sequence_name"] = "01_Masterclass_Lecture_Clean"
+                plans["highlight"] = p
+        elif mode == "music_video":
+            if "teaser" in formats or "highlight" in formats:
+                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=180.0)
+                p["sequence_name"] = "01_Music_Video_Cut"
+                plans["highlight"] = p
+            if "full_film" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=False)
+                p["sequence_name"] = "02_Cinematic_Mood_Montage"
+                plans["teaser"] = p
+        else:  # Default: wedding
+            if "teaser" in formats:
+                plans["teaser"] = story_planner.plan_teaser(analyzed)
+            if "highlight" in formats:
+                plans["highlight"] = story_planner.plan_highlight(analyzed, beat_times=beat_times)
+            if "full_film" in formats:
+                plans["full_film"] = story_planner.plan_full_film(analyzed)
+
         for p in plans.values():
             _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips, "
-                         f"{p.get('total_duration', 0)}s")
+                         f"{p.get('total_duration', 0)}s ({p.get('aspect_ratio', '16:9')})")
         _progress(job_id, 80)
 
         # 4. Save plan to disk
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        plan_file = os.path.join(OUTPUT_DIR, f"wedding_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
+        plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
         with open(plan_file, "w", encoding="utf-8") as f:
-            json.dump({"folder": folder, "audio": audio_path, "analyzed": analyzed, "plans": plans, "target_nle": target_nle}, f, indent=2, default=str)
+            json.dump({
+                "folder": folder,
+                "audio": audio_path,
+                "mode": mode,
+                "ref_video": ref_video,
+                "ref_lut_path": ref_lut_path,
+                "analyzed": analyzed,
+                "plans": plans,
+                "target_nle": target_nle
+            }, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
         # 5. Build timelines in DaVinci Resolve
@@ -502,7 +594,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/run-wedding":
             formats = data.get("formats") or ["teaser", "highlight", "full_film"]
             target_nle = data.get("target_nle") or "resolve"
-            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle)
+            mode = data.get("mode") or "wedding"
+            ref_video = (data.get("ref_video") or "").strip()
+            job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video)
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/tool":

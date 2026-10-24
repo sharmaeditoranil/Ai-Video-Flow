@@ -27,7 +27,7 @@
           <span class="icon">⚡</span> Dashboard
         </button>
         <button class="nav-item" data-tab="wedding">
-          <span class="icon">💍</span> Wedding AI Engine
+          <span class="icon">🎬</span> AI Studio & Timelines
         </button>
         <button class="nav-item" data-tab="tools">
           <span class="icon">🧰</span> All AI Tools
@@ -205,11 +205,168 @@
         </div>
       </section>
 
-      <!-- Tab: Wedding AI Engine -->
+      <!-- Tab: AI Video Studio & Timelines -->
       <section class="tab-pane" id="pane-wedding">
         <div class="section-header">
-          <h2>💍 Wedding AI Culling & Auto-Timeline Studio</h2>
-          <p>Drop your 1000-1500 raw wedding clips. The AI will remove shaky starts, detect clear in-focus moments, and create 3 separate timelines.</p>
+          <h2>🎬 Smart AI Timeline Studio</h2>
+          <p>Choose your editing workflow — Instagram Reels, Wedding Film, or YouTube Video. AI intelligently trims shake/silence, beat-syncs, and creates ready-to-edit timelines.</p>
+        </div>
+
+        <!-- 1. Workflow Mode Selection Cards -->
+        <div class="edit-modes-container">
+          <div class="edit-modes-header">
+            <span class="step-num">Step 1</span>
+            <span class="step-title">Select Editing Workflow</span>
+            <span class="step-hint">Click a card to auto-configure aspect ratio, pacing &amp; timeline targets</span>
+          </div>
+          <div class="edit-modes-grid">
+            <!-- Mode 1: Instagram Reels / Shorts -->
+            <div class="edit-mode-card" data-mode="reels" id="mode-card-reels">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-reels">📱 9:16 Vertical</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">⚡</span>
+                <div class="mode-titles">
+                  <h4>Instagram Reels &amp; Shorts</h4>
+                  <span class="mode-duration">30s – 60s High Retention</span>
+                </div>
+              </div>
+              <p class="mode-desc">Fast 3-second hook selection, beat-synced rapid cuts, and optional reference reel rhythm &amp; color matching.</p>
+              <div class="mode-tags">
+                <span>Hook Trimmer</span>
+                <span>Beat Drops</span>
+                <span>Reference Reel Match</span>
+              </div>
+            </div>
+
+            <!-- Mode 2: Wedding Cinematic Film (Default) -->
+            <div class="edit-mode-card active" data-mode="wedding" id="mode-card-wedding">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-wedding">💍 16:9 Cinema &amp; 9:16</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">🎬</span>
+                <div class="mode-titles">
+                  <h4>Wedding Cinematic Film</h4>
+                  <span class="mode-duration">1000+ Raw Clips Culling</span>
+                </div>
+              </div>
+              <p class="mode-desc">Removes camera shakes &amp; blur, keeps sharp in-focus moments, and generates 3 timelines (Teaser, Highlight &amp; Full Film).</p>
+              <div class="mode-tags">
+                <span>Shaky Start Cull</span>
+                <span>3 Timelines</span>
+                <span>Natural Audio Ducking</span>
+              </div>
+            </div>
+
+            <!-- Mode 3: YouTube & Vlog -->
+            <div class="edit-mode-card" data-mode="youtube" id="mode-card-youtube">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-youtube">🎥 16:9 Landscape</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">🎙️</span>
+                <div class="mode-titles">
+                  <h4>YouTube Video &amp; Vlog</h4>
+                  <span class="mode-duration">Dead-Air &amp; Voice Focus</span>
+                </div>
+              </div>
+              <p class="mode-desc">Automatically removes pauses &amp; silences, creates seamless jump cuts, and normalizes voice to -14 LUFS broadcast standard.</p>
+              <div class="mode-tags">
+                <span>Silence Cutter</span>
+                <span>-14 LUFS Voice</span>
+                <span>Jump-Cut Polish</span>
+              </div>
+            </div>
+
+            <!-- Mode 4: Podcast & Multi-Cam Interview -->
+            <div class="edit-mode-card" data-mode="podcast" id="mode-card-podcast">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-podcast">🎙️ 16:9 &amp; 9:16 Shorts</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">👥</span>
+                <div class="mode-titles">
+                  <h4>Podcast &amp; Interview</h4>
+                  <span class="mode-duration">Multi-Camera Speaker Switch</span>
+                </div>
+              </div>
+              <p class="mode-desc">Detects active speaker from audio waveforms, auto-switches multi-camera angles, and extracts viral vertical moments.</p>
+              <div class="mode-tags">
+                <span>Active Speaker Cut</span>
+                <span>Multi-Cam Sync</span>
+                <span>Voice Gate &amp; EQ</span>
+              </div>
+            </div>
+
+            <!-- Mode 5: Commercial Brand Ad & Promo -->
+            <div class="edit-mode-card" data-mode="commercial" id="mode-card-commercial">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-commercial">⚡ 15s / 30s TV &amp; Web</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">💎</span>
+                <div class="mode-titles">
+                  <h4>Commercial Ad &amp; Promo</h4>
+                  <span class="mode-duration">High-Impact Brand Film</span>
+                </div>
+              </div>
+              <p class="mode-desc">Ultra high-energy rhythm, punchy product close-ups, dynamic speed ramps, and reference commercial color grading.</p>
+              <div class="mode-tags">
+                <span>Speed Ramping</span>
+                <span>Reference Mood LUT</span>
+                <span>Punchy 15s/30s</span>
+              </div>
+            </div>
+
+            <!-- Mode 6: Course, Tutorial & Lecture -->
+            <div class="edit-mode-card" data-mode="lecture" id="mode-card-lecture">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-lecture">📚 16:9 Screen &amp; Cam</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">🎓</span>
+                <div class="mode-titles">
+                  <h4>Course &amp; Masterclass</h4>
+                  <span class="mode-duration">Slide &amp; Screen Sync</span>
+                </div>
+              </div>
+              <p class="mode-desc">Syncs presenter camera with screen recording slides, removes retakes and false starts, and builds timeline chapters.</p>
+              <div class="mode-tags">
+                <span>Slide Cut Detection</span>
+                <span>Retake Trimmer</span>
+                <span>Chapter Markers</span>
+              </div>
+            </div>
+
+            <!-- Mode 7: Music Video & Cinematic Montage -->
+            <div class="edit-mode-card" data-mode="music_video" id="mode-card-music_video">
+              <div class="mode-card-top">
+                <span class="mode-badge badge-music">🎵 2.39:1 Cinema &amp; 9:16</span>
+                <span class="mode-check-indicator">✓</span>
+              </div>
+              <div class="mode-icon-title">
+                <span class="mode-icon">🎸</span>
+                <div class="mode-titles">
+                  <h4>Music Video &amp; Montage</h4>
+                  <span class="mode-duration">Audio Beat-Drop Grid</span>
+                </div>
+              </div>
+              <p class="mode-desc">Cuts video footage exactly on drum snares and kick drops, with reference video color palette matching.</p>
+              <div class="mode-tags">
+                <span>Kick/Snare Drops</span>
+                <span>Reference Look Match</span>
+                <span>Speed-Ramp Transitions</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <a class="qa-ad qa-ad-strip" href="https://quickartphotography.in/master-class/" data-ad="wedding" target="_blank" rel="noopener">
@@ -234,9 +391,10 @@
 
         <div class="workflow-grid">
           <div class="panel-box">
-            <h3>1. Input Footage & Audio</h3>
+            <h3>2. Footage, Audio &amp; Reference</h3>
+            
             <div class="form-group">
-              <label>Wedding Raw Clips Folder</label>
+              <label id="label-folder-path">Raw Video Footage Folder</label>
               <div class="input-action">
                 <input type="text" id="input-folder-path" placeholder="/Volumes/HardDrive/Wedding_Shoot_Rohit">
                 <button class="btn btn-secondary" id="btn-browse-folder">Browse</button>
@@ -245,8 +403,26 @@
               <div class="folder-info" id="folder-info">Select or paste the folder containing your raw clips, then press Load.</div>
             </div>
 
+            <!-- Reference Video Box (Especially for Reels & Matching Moods) -->
+            <div class="form-group ref-video-card" id="group-ref-video">
+              <div class="ref-video-header">
+                <label for="input-ref-video">
+                  🎯 Reference Video / Reel
+                  <span class="badge badge-accent" id="badge-ref-video">AI Pacing &amp; Color Match</span>
+                </label>
+                <span class="ref-optional-tag">Optional</span>
+              </div>
+              <div class="input-action">
+                <input type="text" id="input-ref-video" placeholder="Optional: Select reference Reel (MP4/MOV) to match cut rhythm & lighting look...">
+                <button class="btn btn-secondary" id="btn-browse-ref-video">Browse Reel</button>
+              </div>
+              <div class="field-hint" id="ref-video-hint">
+                💡 <strong>Reel Reference Engine:</strong> Agar aap koi Instagram Reel ya reference video choose karte hain, toh AI uske cut rhythm (tempo) aur lighting/color mood ko extract karke aapke project me apply karega.
+              </div>
+            </div>
+
             <div class="form-group">
-              <label>Background Wedding Song (MP3 / WAV)</label>
+              <label id="label-audio-path">Background Music / Song (MP3 / WAV)</label>
               <div class="input-action">
                 <input type="text" id="input-audio-path" placeholder="Optional: /Music/wedding_song.mp3">
                 <button class="btn btn-secondary" id="btn-browse-audio">Browse</button>
@@ -254,25 +430,25 @@
             </div>
 
             <div class="form-group">
-              <label>Output Sequences to Create</label>
-              <div class="checkbox-row">
-                <label><input type="checkbox" checked id="chk-teaser"> 01_Teaser_60s (Reel)</label>
-                <label><input type="checkbox" checked id="chk-highlight"> 02_Cinematic_Highlight_4m</label>
-                <label><input type="checkbox" checked id="chk-fullfilm"> 03_Full_Wedding_Film</label>
+              <label id="label-sequences">Output Sequences to Create</label>
+              <div class="checkbox-row" id="seq-checkboxes">
+                <label id="lbl-chk-teaser"><input type="checkbox" checked id="chk-teaser"> <span id="text-chk-teaser">01_Teaser_60s (9:16 Vertical Reel)</span></label>
+                <label id="lbl-chk-highlight"><input type="checkbox" checked id="chk-highlight"> <span id="text-chk-highlight">02_Cinematic_Highlight_4m (16:9 Cinema)</span></label>
+                <label id="lbl-chk-fullfilm"><input type="checkbox" checked id="chk-fullfilm"> <span id="text-chk-fullfilm">03_Full_Wedding_Film (Chronological Rituals)</span></label>
               </div>
             </div>
 
             <div class="form-group">
               <label>Target Editing Software</label>
               <div class="radio-row">
-                <label><input type="radio" name="target_nle" value="resolve" checked> 🎬 DaVinci Resolve (Live Media Pool & Timelines)</label>
-                <label><input type="radio" name="target_nle" value="premiere"> 🟣 Adobe Premiere Pro (Native XML & Project Sequence)</label>
+                <label><input type="radio" name="target_nle" value="resolve" checked> 🎬 DaVinci Resolve (Live Media Pool &amp; Timelines)</label>
+                <label><input type="radio" name="target_nle" value="premiere"> 🟣 Adobe Premiere Pro (Native XML &amp; Project Sequence)</label>
                 <label><input type="radio" name="target_nle" value="both"> ⚡ Both (DaVinci Resolve + Premiere Pro)</label>
               </div>
             </div>
 
             <button class="btn btn-primary btn-block" id="btn-run-wedding-ai">
-              ✨ Start AI In-Clip Trimming & Build Timelines
+              ✨ Start AI In-Clip Trimming &amp; Build Timelines
             </button>
             <div class="progress" id="wedding-progress"><div class="progress-bar"></div></div>
             <div style="display:flex;gap:10px;margin-top:12px;">

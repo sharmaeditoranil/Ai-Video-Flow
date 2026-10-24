@@ -278,6 +278,131 @@ document.addEventListener("DOMContentLoaded", () => {
   if (btnOpenOutput) btnOpenOutput.addEventListener("click", () => api("/api/open-folder", {}));
 
   // ------------------------------------------------------------------
+  // Workflow Modes & Reference Video Engine
+  // ------------------------------------------------------------------
+  let currentWorkflowMode = "wedding";
+  const editModeCards = document.querySelectorAll(".edit-mode-card");
+  const refVideoGroup = document.getElementById("group-ref-video");
+  const refVideoInput = document.getElementById("input-ref-video");
+  const btnBrowseRefVideo = document.getElementById("btn-browse-ref-video");
+  const refVideoHint = document.getElementById("ref-video-hint");
+  const chkTeaser = document.getElementById("chk-teaser");
+  const chkHighlight = document.getElementById("chk-highlight");
+  const chkFullFilm = document.getElementById("chk-fullfilm");
+  const textChkTeaser = document.getElementById("text-chk-teaser");
+  const textChkHighlight = document.getElementById("text-chk-highlight");
+  const textChkFullfilm = document.getElementById("text-chk-fullfilm");
+  const lblChkFullfilm = document.getElementById("lbl-chk-fullfilm");
+
+  const WORKFLOW_CONFIGS = {
+    reels: {
+      folderLabel: "Clips / Shoot Folder for Reels",
+      btnText: "⚡ Start AI Reel Generation & Reference Match",
+      hint: "💡 <strong>Reel Reference Engine:</strong> Select any reference Instagram Reel. AI analyzes its cut speed/rhythm and extracts its color grade into a 3D LUT (.cube) for your reel.",
+      highlightRef: true,
+      seq1: "01_Instagram_Reel_9x16 (Viral Hook + Beat Sync)",
+      seq2: "02_Shorts_Teaser_30s (9:16 Vertical)",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    },
+    wedding: {
+      folderLabel: "Wedding Raw Clips Folder",
+      btnText: "✨ Start AI In-Clip Trimming & Build Timelines",
+      hint: "💡 <strong>Optional Reference:</strong> Select any master reference video if you want AI to extract and match its color grading mood to your wedding timelines.",
+      highlightRef: false,
+      seq1: "01_Teaser_60s (9:16 Vertical Reel)",
+      seq2: "02_Cinematic_Highlight_4m (16:9 Cinema)",
+      seq3: "03_Full_Wedding_Film (Chronological Rituals)",
+      chk1: true, chk2: true, chk3: true
+    },
+    youtube: {
+      folderLabel: "Raw Footage / Episode Takes Folder",
+      btnText: "🎙️ Start AI Silence Removal & YouTube Edit",
+      hint: "💡 <strong>Pacing & Look Reference:</strong> Select an inspiring YouTube video to match cut frequency and color tone.",
+      highlightRef: false,
+      seq1: "01_YouTube_Main_Edit (Silence & Dead-Air Cut)",
+      seq2: "02_YouTube_Shorts_Highlights (9:16 Vertical)",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    },
+    podcast: {
+      folderLabel: "Multi-Cam Video & Audio Folder",
+      btnText: "👥 Start AI Multi-Cam & Dialogue Polish",
+      hint: "💡 <strong>Multi-Cam Reference:</strong> AI uses speaker waveforms to auto-switch camera angles and cuts viral clips.",
+      highlightRef: false,
+      seq1: "01_Podcast_Full_Episode (Multi-Cam Switch)",
+      seq2: "02_Viral_Podcast_Clips (9:16 Vertical)",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    },
+    commercial: {
+      folderLabel: "Product / Brand Shoot Clips Folder",
+      btnText: "💎 Build High-Energy Commercial Sequence",
+      hint: "💡 <strong>Commercial Mood Reference:</strong> Select reference ad to match punchy speed-ramping and cinematic brand color grading.",
+      highlightRef: true,
+      seq1: "01_Commercial_Ad_30s (High-Impact TV/Web)",
+      seq2: "02_Social_Teaser_15s (9:16 Vertical)",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    },
+    lecture: {
+      folderLabel: "Course Recording / Screen Capture Folder",
+      btnText: "🎓 Clean Stumbles & Build Lecture Sequence",
+      hint: "💡 <strong>Lecture Engine:</strong> Detects slide changes, trims false starts and retakes, and normalizes presenter audio.",
+      highlightRef: false,
+      seq1: "01_Masterclass_Lecture_Clean (Slide Sync)",
+      seq2: "02_Topic_Chapter_Breakdown",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    },
+    music_video: {
+      folderLabel: "Performance & B-Roll Clips Folder",
+      btnText: "🎸 Generate Beat-Synced Music Video",
+      hint: "💡 <strong>Music Video Mood Reference:</strong> Select a reference video to match color grading palette and dynamic cut rhythm.",
+      highlightRef: true,
+      seq1: "01_Music_Video_Cut (Beat-Matched Drops)",
+      seq2: "02_Cinematic_Mood_Montage (2.39:1 / 16:9)",
+      seq3: "",
+      chk1: true, chk2: true, chk3: false
+    }
+  };
+
+  function selectWorkflowMode(mode) {
+    currentWorkflowMode = mode;
+    editModeCards.forEach((c) => {
+      c.classList.toggle("active", c.dataset.mode === mode);
+    });
+    const cfg = WORKFLOW_CONFIGS[mode] || WORKFLOW_CONFIGS.wedding;
+    const folderLbl = document.getElementById("label-folder-path");
+    if (folderLbl) folderLbl.textContent = cfg.folderLabel;
+    if (btnRunWedding) btnRunWedding.textContent = cfg.btnText;
+    if (refVideoHint) refVideoHint.innerHTML = cfg.hint;
+    if (refVideoGroup) refVideoGroup.classList.toggle("highlight-ref", !!cfg.highlightRef);
+
+    if (textChkTeaser) textChkTeaser.textContent = cfg.seq1;
+    if (textChkHighlight) textChkHighlight.textContent = cfg.seq2;
+    if (textChkFullfilm) textChkFullfilm.textContent = cfg.seq3;
+
+    if (chkTeaser) chkTeaser.checked = cfg.chk1;
+    if (chkHighlight) chkHighlight.checked = cfg.chk2;
+    if (chkFullFilm) chkFullFilm.checked = cfg.chk3;
+
+    if (lblChkFullfilm) {
+      lblChkFullfilm.style.display = cfg.seq3 ? "flex" : "none";
+    }
+  }
+
+  editModeCards.forEach((card) => {
+    card.addEventListener("click", () => selectWorkflowMode(card.dataset.mode));
+  });
+
+  if (btnBrowseRefVideo && refVideoInput) {
+    btnBrowseRefVideo.addEventListener("click", () => {
+      browseInto(refVideoInput, "video", "Select Reference Reel or Video", btnBrowseRefVideo);
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Background job polling
   // ------------------------------------------------------------------
   function pollJob(jobId, box, onProgress) {
@@ -303,13 +428,14 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!(await loadFolder())) return;
       }
       const formats = [];
-      if (document.getElementById("chk-teaser").checked) formats.push("teaser");
-      if (document.getElementById("chk-highlight").checked) formats.push("highlight");
-      if (document.getElementById("chk-fullfilm").checked) formats.push("full_film");
+      if (chkTeaser && chkTeaser.checked) formats.push("teaser");
+      if (chkHighlight && chkHighlight.checked) formats.push("highlight");
+      if (chkFullFilm && chkFullFilm.checked) formats.push("full_film");
       if (!formats.length) return alert("Select at least one output sequence.");
 
       const targetNleInput = document.querySelector('input[name="target_nle"]:checked');
       const target_nle = targetNleInput ? targetNleInput.value : "resolve";
+      const ref_video = refVideoInput ? refVideoInput.value.trim() : "";
 
       store.set("avf.audio", audioInput.value.trim());
       btnRunWedding.disabled = true;
@@ -317,7 +443,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const bar = progress.querySelector(".progress-bar");
       bar.style.width = "0%";
       try {
-        const { job_id } = await api("/api/run-wedding", { folder: loadedFolder, audio: audioInput.value.trim(), formats, target_nle });
+        const { job_id } = await api("/api/run-wedding", {
+          folder: loadedFolder,
+          audio: audioInput.value.trim(),
+          formats,
+          target_nle,
+          mode: currentWorkflowMode,
+          ref_video
+        });
         await pollJob(job_id, weddingConsole, (p) => { bar.style.width = `${p}%`; });
         fetchStatus();
       } catch (e) {

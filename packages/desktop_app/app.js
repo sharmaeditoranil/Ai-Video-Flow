@@ -629,7 +629,8 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (btnSelectPremium) {
-    btnSelectPremium.addEventListener("click", () => {
+    btnSelectPremium.addEventListener("click", async () => {
+      await updateLicenseDisplay();
       if (!currentLicenseState.is_premium || currentLicenseState.credits_remaining <= 0) {
         alert("⚠️ You need active Wedding Credits or a Pro License for AI Smart Premium.\n\nPlease activate your license key or purchase credits on our website.");
         if (modalTierSelect) modalTierSelect.style.display = "none";

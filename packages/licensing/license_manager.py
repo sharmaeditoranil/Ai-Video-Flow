@@ -378,6 +378,19 @@ class LicenseManager:
             vault["credits_remaining"] = curr - 1
             self._save_vault(vault)
 
+            # Update local admin SQLite db if present
+            try:
+                db_path = os.path.join(_CONFIG_DIR, "admin_licenses.db")
+                if os.path.isfile(db_path):
+                    import sqlite3
+                    conn = sqlite3.connect(db_path)
+                    c = conn.cursor()
+                    c.execute("UPDATE licenses SET credits = credits - 1 WHERE license_key = ? AND credits > 0", (vault.get("license_key", ""),))
+                    conn.commit()
+                    conn.close()
+            except Exception:
+                pass
+
         # Notify website server asynchronously if reachable
         try:
             self._sync_credit_consumption(vault.get("license_key", ""), job_name)

@@ -729,6 +729,14 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if self.path == "/api/license/status":
+            self._json(license_manager.get_status())
+            return
+
+        if self.path == "/api/cloud-ai/status":
+            self._json(cloud_ai_client.get_status())
+            return
+
         if self.path.startswith("/api/job/"):
             job_id = self.path.rsplit("/", 1)[-1]
             with JOBS_LOCK:

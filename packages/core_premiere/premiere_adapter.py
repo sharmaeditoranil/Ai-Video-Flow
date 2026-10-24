@@ -310,32 +310,127 @@ class PremiereAdapter:
 
             curr_frame += dur_frames
 
-        # Audio Track (if background wedding song is provided)
-        if audio_path and os.path.exists(audio_path) and curr_frame > 0:
-            audio_elem = ET.SubElement(media, "audio")
-            atrack = ET.SubElement(audio_elem, "track")
-            aclipitem = ET.SubElement(atrack, "clipitem", id="clipitem-a-1")
-            ET.SubElement(aclipitem, "name").text = os.path.basename(audio_path)
-            ET.SubElement(aclipitem, "duration").text = str(curr_frame)
+        # -------------------------------------------------------------
+        # Audio Section: Track A1 (Camera Audio) + Track A2 (BGM Music with Ducking)
+        # -------------------------------------------------------------
+        audio_elem = ET.SubElement(media, "audio")
+
+        # Track A1: Synced Camera Native Audio (vows, speeches, ambient sound)
+        atrack1 = ET.SubElement(audio_elem, "track")
+        a1_frame = 0
+        for idx, clip in enumerate(clips, 1):
+            file_path = clip.get("file_path") or clip.get("path") or ""
+            if not file_path:
+                continue
+
+            in_frame = int(clip.get("in_frame", 0))
+            out_frame = int(clip.get("out_frame", in_frame + int(fps * 3)))
+            dur_frames = max(out_frame - in_frame, int(fps * 0.5))
+
+            aclipitem = ET.SubElement(atrack1, "clipitem", id=f"clipitem-a1-{idx}")
+            ET.SubElement(aclipitem, "name").text = os.path.basename(file_path)
+            ET.SubElement(aclipitem, "duration").text = str(dur_frames)
 
             arate = ET.SubElement(aclipitem, "rate")
             ET.SubElement(arate, "timebase").text = str(int(fps))
             ET.SubElement(arate, "ntsc").text = "FALSE"
 
-            ET.SubElement(aclipitem, "start").text = "0"
-            ET.SubElement(aclipitem, "end").text = str(curr_frame)
-            ET.SubElement(aclipitem, "in").text = "0"
-            ET.SubElement(aclipitem, "out").text = str(curr_frame)
+            ET.SubElement(aclipitem, "start").text = str(a1_frame)
+            ET.SubElement(aclipitem, "end").text = str(a1_frame + dur_frames)
+            ET.SubElement(aclipitem, "in").text = str(in_frame)
+            ET.SubElement(aclipitem, "out").text = str(out_frame)
 
-            afile_elem = ET.SubElement(aclipitem, "file", id="file-a-1")
-            ET.SubElement(afile_elem, "name").text = os.path.basename(audio_path)
+            afile_elem = ET.SubElement(aclipitem, "file", id=f"file-a1-{idx}")
+            ET.SubElement(afile_elem, "name").text = os.path.basename(file_path)
+            norm_p = os.path.abspath(file_path).replace("\\", "/")
+            url = f"file://localhost/{norm_p.lstrip('/')}"
+            ET.SubElement(afile_elem, "pathurl").text = url
+
+            frate = ET.SubElement(afile_elem, "rate")
+            ET.SubElement(frate, "timebase").text = str(int(fps))
+            ET.SubElement(frate, "ntsc").text = "FALSE"
+
+            a1_frame += dur_frames
+
+        # Track A2: Background Music with Auto-Ducking Volume Keyframes
+        if audio_path and os.path.exists(audio_path) and curr_frame > 0:
+            atrack2 = ET.SubElement(audio_elem, "track")
+            bgm_clipitem = ET.SubElement(atrack2, "clipitem", id="clipitem-bgm-1")
+            ET.SubElement(bgm_clipitem, "name").text = os.path.basename(audio_path)
+            ET.SubElement(bgm_clipitem, "duration").text = str(curr_frame)
+
+            brate = ET.SubElement(bgm_clipitem, "rate")
+            ET.SubElement(brate, "timebase").text = str(int(fps))
+            ET.SubElement(brate, "ntsc").text = "FALSE"
+
+            ET.SubElement(bgm_clipitem, "start").text = "0"
+            ET.SubElement(bgm_clipitem, "end").text = str(curr_frame)
+            ET.SubElement(bgm_clipitem, "in").text = "0"
+            ET.SubElement(bgm_clipitem, "out").text = str(curr_frame)
+
+            bgm_file = ET.SubElement(bgm_clipitem, "file", id="file-bgm-1")
+            ET.SubElement(bgm_file, "name").text = os.path.basename(audio_path)
             norm_ap = os.path.abspath(audio_path).replace("\\", "/")
             aurl = f"file://localhost/{norm_ap.lstrip('/')}"
-            ET.SubElement(afile_elem, "pathurl").text = aurl
+            ET.SubElement(bgm_file, "pathurl").text = aurl
 
-            afrate = ET.SubElement(afile_elem, "rate")
-            ET.SubElement(afrate, "timebase").text = str(int(fps))
-            ET.SubElement(afrate, "ntsc").text = "FALSE"
+            bfrate = ET.SubElement(bgm_file, "rate")
+            ET.SubElement(bfrate, "timebase").text = str(int(fps))
+            ET.SubElement(bfrate, "ntsc").text = "FALSE"
+
+            # Auto-Ducking Volume Automation Filter on BGM
+            filt = ET.SubElement(bgm_clipitem, "filter")
+            eff = ET.SubElement(filt, "effect")
+            ET.SubElement(eff, "name").text = "Audio Levels"
+            ET.SubElement(eff, "effectid").text = "audiolevels"
+            param = ET.SubElement(eff, "parameter")
+            ET.SubElement(param, "parameterid").text = "level"
+            ET.SubElement(param, "name").text = "Level"
+
+            # Baseline 0dB
+            kf0 = ET.SubElement(param, "keyframe")
+            ET.SubElement(kf0, "when").text = "0"
+            ET.SubElement(kf0, "value").text = "1.0"
+
+            # Detect speech/dialogue segments from clips to duck BGM by -12dB (0.25)
+            timeline_pos = 0
+            for clip in clips:
+                dur = max(int(clip.get("out_frame", 0)) - int(clip.get("in_frame", 0)), int(fps * 0.5))
+                has_speech = clip.get("has_dialogue") or clip.get("speech") or (clip.get("quality_score", 0) > 85)
+                if has_speech and dur > int(fps * 1.5):
+                    # Duck down 12 frames before speech
+                    duck_start = max(timeline_pos - int(fps * 0.5), 0)
+                    duck_in = timeline_pos
+                    duck_out = timeline_pos + dur
+                    duck_end = min(duck_out + int(fps * 0.5), curr_frame)
+
+                    kf_a = ET.SubElement(param, "keyframe")
+                    ET.SubElement(kf_a, "when").text = str(duck_start)
+                    ET.SubElement(kf_a, "value").text = "1.0"
+
+                    kf_b = ET.SubElement(param, "keyframe")
+                    ET.SubElement(kf_b, "when").text = str(duck_in)
+                    ET.SubElement(kf_b, "value").text = "0.25"
+
+                    kf_c = ET.SubElement(param, "keyframe")
+                    ET.SubElement(kf_c, "when").text = str(duck_out)
+                    ET.SubElement(kf_c, "value").text = "0.25"
+
+                    kf_d = ET.SubElement(param, "keyframe")
+                    ET.SubElement(kf_d, "when").text = str(duck_end)
+                    ET.SubElement(kf_d, "value").text = "1.0"
+
+                timeline_pos += dur
+
+            # Smooth 2-second fade-out at the end of the sequence
+            fade_start = max(curr_frame - int(fps * 2.0), 0)
+            kf_fade1 = ET.SubElement(param, "keyframe")
+            ET.SubElement(kf_fade1, "when").text = str(fade_start)
+            ET.SubElement(kf_fade1, "value").text = "1.0"
+
+            kf_fade2 = ET.SubElement(param, "keyframe")
+            ET.SubElement(kf_fade2, "when").text = str(curr_frame)
+            ET.SubElement(kf_fade2, "value").text = "0.0"
 
         ET.SubElement(sequence, "duration").text = str(curr_frame)
 

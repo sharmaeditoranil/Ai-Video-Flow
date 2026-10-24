@@ -143,6 +143,15 @@ class EdiusAdapter:
             if not clips:
                 return {"success": False, "error": "No clips present in plan to export."}
 
+            if plan.get("tracks"):
+                # Multi-camera: one track per camera at its synced time
+                from packages.ai_engine.fcp_xml import write_track_sequence
+                seq_name = sequence_name or plan.get("sequence_name") or "EDIUS_Multicam"
+                n = write_track_sequence(output_xml_path, seq_name, plan["tracks"], fps=fps)
+                self.write_edius_instructions(os.path.dirname(os.path.abspath(output_xml_path)))
+                return {"success": True, "xml_path": output_xml_path, "sequence_name": seq_name, "clip_count": n,
+                        "tracks": len(plan["tracks"]), "fps": fps, "target_nle": "edius"}
+
             broll = broll_clips or plan.get("broll_clips") or []
             seq_name = sequence_name or plan.get("sequence_name") or "EDIUS_Wedding_Timeline"
             os.makedirs(os.path.dirname(os.path.abspath(output_xml_path)), exist_ok=True)

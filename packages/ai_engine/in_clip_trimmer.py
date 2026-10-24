@@ -71,12 +71,14 @@ class InClipTrimmer:
         stability_scores = []
         sharpness_scores = []
         sample_frame_indices = []
+        luma = []  # brightness of every frame, used to find photographer flashes for multi-camera sync
 
         curr_frame_idx = 0
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
+            luma.append(float(frame[::24, ::24].mean()))
 
             if curr_frame_idx % frame_interval == 0:
                 # Resize frame for ultra-fast processing
@@ -171,8 +173,25 @@ class InClipTrimmer:
             "full_out_seconds": round(full_out_frame / native_fps, 2),
             "full_duration": full_dur,
             "quality_score": round(best_score, 1),
-            "shot_type": shot_type
+            "shot_type": shot_type,
+            "flash_times": self._flash_times(luma, native_fps),
         }
+
+    @staticmethod
+    def _flash_times(luma: List[float], fps: float) -> List[float]:
+        """Seconds (from clip start) where a photo flash lit the scene: a 1-3 frame brightness spike."""
+        flashes: List[float] = []
+        n = len(luma)
+        for i in range(6, n - 3):
+            base = sorted(luma[i - 6:i])[3]
+            if luma[i] - base < 22:
+                continue
+            if min(luma[i + 1:i + 4]) - base > 12:  # stays bright = lights turned on, not a flash
+                continue
+            t = i / fps
+            if not flashes or t - flashes[-1] > 0.5:
+                flashes.append(round(t, 3))
+        return flashes
 
     def _find_full_film_window(
         self,

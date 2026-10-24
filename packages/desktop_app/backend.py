@@ -288,8 +288,40 @@ def _progress(job_id: str, pct: int) -> None:
         JOBS[job_id]["progress"] = pct
 
 
+def _append_tracks_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any]) -> int:
+    """Multi-camera plan: camera N goes on video track N at its synced position."""
+    project = resolve_adapter._current_project
+    tl = project.GetCurrentTimeline() if project else None
+    if not tl:
+        return 0
+    while tl.GetTrackCount("video") < len(plan["tracks"]):
+        tl.AddTrack("video")
+    while tl.GetTrackCount("audio") < len(plan["tracks"]):
+        tl.AddTrack("audio", "stereo")
+    tl_fps = float(project.GetSetting("timelineFrameRate") or 25.0)
+    start = int(tl.GetStartFrame() or 0)
+    entries = []
+    for t_index, track in enumerate(plan["tracks"], 1):
+        for c in track:
+            item = items_by_path.get(os.path.normpath(c["file_path"]))
+            if not item:
+                continue
+            entries.append({"mediaPoolItem": item, "startFrame": int(c["in_frame"]), "endFrame": max(int(c["in_frame"]) + 1, int(c["out_frame"]) - 1),
+                            "trackIndex": t_index, "recordFrame": start + int(round(c["timeline_start"] * tl_fps))})
+    if not entries:
+        return 0
+    try:
+        placed = resolve_adapter._current_project.GetMediaPool().AppendToTimeline(entries)
+        return len(placed or [])
+    except Exception as e:
+        logger.error(f"Multicam append failed: {e}")
+        return 0
+
+
 def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any]) -> int:
     """Builds trimmed AppendToTimeline entries for a plan and appends them. Returns clips placed."""
+    if plan.get("tracks"):
+        return _append_tracks_to_resolve(plan, items_by_path)
     entries = []
     for c in plan.get("clips", []):
         item = items_by_path.get(os.path.normpath(c.get("file_path") or ""))
@@ -676,6 +708,19 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if not analyzed:
             raise RuntimeError("None of the clips could be analysed.")
 
+        # Multi-camera sync: real recording time per clip, camera clocks lined up with photo flashes
+        from packages.ai_engine import multicam_sync
+        sync_report = multicam_sync.sync(analyzed, folder)
+        analyzed.sort(key=lambda c: c["abs_start"])
+        multicam = len(sync_report["cameras"]) > 1
+        if multicam:
+            _log(job_id, f"Multi-camera footage: {len(sync_report['cameras'])} cameras found.", "info")
+            for cam, r in sync_report["cameras"].items():
+                how = ("reference camera" if cam == sync_report["reference"]
+                       else f"clock {r['offset_sec']:+.1f} s, synced by {r['flash_matches']} flashes" if r["method"] == "flash sync"
+                       else "camera clock (no matching flashes)")
+                _log(job_id, f"  • {cam}: {r['clips']} clips · {how}")
+
         # 1.5. Analyze Reference Video (if provided by editor)
         ref_lut_path = None
         if ref_video and os.path.isfile(ref_video):
@@ -759,11 +804,21 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                     analyzed, beat_times=beat_times, ref_video_path=ref_video
                 )
             if "full_film" in formats:
-                plans["full_film"] = story_planner.plan_full_film(analyzed)
+                if multicam:
+                    plans["full_film"] = multicam_sync.plan_multicam_tracks(analyzed)
+                    plans["multicam_edit"] = multicam_sync.plan_multicam_film(analyzed)
+                    plans["multicam_edit"]["sequence_name"] = "04_Multicam_Auto_Edit"
+                    _log(job_id, f"  Full Film: each camera on its own track (V1–V{len(plans['full_film']['tracks'])}), "
+                                 "all footage kept and lined up in time. 04_Multicam_Auto_Edit switches between them.", "info")
+                else:
+                    plans["full_film"] = story_planner.plan_full_film(analyzed)
 
         # 3.5. Intelligent B-Roll Cutaway Generation for Track V2 (Ambar AI Feature)
         from packages.ai_engine.broll_placer import broll_placer
         for p_key, p in plans.items():
+            if p.get("multicam"):
+                p["broll_clips"] = []  # the camera tracks already use V2 and above
+                continue
             broll_cuts = broll_placer.suggest_broll_cutaways(
                 primary_clips=p.get("clips", []),
                 all_analyzed_clips=analyzed,

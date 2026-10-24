@@ -486,6 +486,17 @@ class PremiereAdapter:
 
         safe_name = "".join(c for c in name if c.isalnum() or c in ("_", "-"))
         xml_file = os.path.join(output_dir, f"{safe_name}_Premiere.xml")
+
+        if plan.get("tracks"):
+            # Multi-camera: V1/V2/V3 = camera 1/2/3 at their synced time (plus matching camera audio)
+            try:
+                from packages.ai_engine.fcp_xml import write_track_sequence
+                n = write_track_sequence(xml_file, name, plan["tracks"], fps=fps)
+                return {"success": True, "xml_path": xml_file, "timeline_name": name, "clip_count": n,
+                        "tracks": len(plan["tracks"])}
+            except Exception as e:
+                logger.error(f"Multicam Premiere XML failed: {e}")
+                return {"success": False, "error": str(e)}
         audio_path = plan.get("audio_path") or plan.get("audio") or ""
 
         # Directly generate authentic Apple FCP7 XML (<xmeml version="4">)

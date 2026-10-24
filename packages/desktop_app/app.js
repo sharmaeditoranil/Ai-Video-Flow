@@ -329,7 +329,7 @@
   // AI Studio
   // ------------------------------------------------------------------
   const OUTPUTS = {
-    wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — chronological"]],
+    wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — real-time order · 2-3 cameras: one track per camera, synced"]],
     reels: [["teaser", "Instagram Reel — 45 s, 9:16"], ["highlight", "Shorts Teaser — 30 s, 9:16"]],
     youtube: [["highlight", "Main edit — about 6 min"], ["full_film", "Shorts highlights — 60 s, 9:16"]],
     music_video: [["highlight", "Music video cut — about 3 min, on the beat"], ["full_film", "Mood montage — 60 s"]],

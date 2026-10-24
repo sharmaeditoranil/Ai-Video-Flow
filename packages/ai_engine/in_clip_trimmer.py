@@ -108,13 +108,32 @@ class InClipTrimmer:
 
             curr_frame_idx += 1
 
-        cap.release()
-
         # Find the optimal Golden Window
         in_frame, out_frame, best_score = self._find_golden_window(
             sample_frame_indices, stability_scores, sharpness_scores,
             native_fps, total_frames, duration
         )
+
+        shot_type = "mid"
+        try:
+            mid_f = (in_frame + out_frame) // 2
+            cap.set(cv2.CAP_PROP_POS_FRAMES, mid_f)
+            r, mid_img = cap.read()
+            if r and mid_img is not None:
+                sw = cv2.resize(mid_img, (320, 180))
+                ycrcb = cv2.cvtColor(sw, cv2.COLOR_BGR2YCrCb)
+                mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+                skin_pct = (np.count_nonzero(mask) / mask.size) * 100.0
+                if skin_pct > 24.0:
+                    shot_type = "close_up"
+                elif skin_pct > 7.0:
+                    shot_type = "mid"
+                else:
+                    shot_type = "wide"
+        except Exception:
+            pass
+
+        cap.release()
 
         return {
             "file_path": video_path,
@@ -128,7 +147,8 @@ class InClipTrimmer:
             "trimmed_duration": round((out_frame - in_frame) / native_fps, 2),
             "trimmed_head_seconds": round(in_frame / native_fps, 2),
             "trimmed_tail_seconds": round((total_frames - out_frame) / native_fps, 2),
-            "quality_score": round(best_score, 1)
+            "quality_score": round(best_score, 1),
+            "shot_type": shot_type
         }
 
     def _find_golden_window(

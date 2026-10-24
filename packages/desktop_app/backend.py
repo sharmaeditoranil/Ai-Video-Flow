@@ -38,6 +38,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
+APP_VERSION = "1.1.0"  # launcher only reuses an already-running server with the same version
 
 # Background jobs: job_id -> {"status", "logs", "result", "error"}
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -412,6 +413,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if self.path == "/api/version":
+            self._json({"app": "ai-video-flow", "version": APP_VERSION})
+            return
+
         if self.path == "/api/tools":
             self._json(list_tools())
             return
@@ -463,6 +468,16 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/tool":
             job_id = start_job(tool_job, data.get("name", ""), data.get("arguments") or {})
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/open-url":
+            # Open links (e.g. sponsored ads) in the user's normal browser, not inside the app window
+            url = str(data.get("url") or "")
+            if url.startswith(("https://", "http://")):
+                import webbrowser
+                webbrowser.open(url)
+                self._json({"success": True})
+            else:
+                self._json({"success": False, "error": "Only web links can be opened."}, 400)
 
         elif self.path == "/api/open-folder":
             path = data.get("path") or OUTPUT_DIR

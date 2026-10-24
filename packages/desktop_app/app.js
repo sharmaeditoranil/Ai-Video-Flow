@@ -440,6 +440,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const seen = new Set();
       tools = res.tools.filter((t) => !seen.has(t.name) && seen.add(t.name));
       toolCount = tools.length;
+      const metricTools = document.getElementById("metric-tools");
+      if (metricTools) metricTools.textContent = `${toolCount} Tools Active`;
       renderToolList();
     } catch (e) {
       toolList.innerHTML = '<div class="muted">Backend not reachable.</div>';
@@ -515,6 +517,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnDiagConnect = document.getElementById("btn-diag-connect");
   if (btnRefreshDiag) btnRefreshDiag.addEventListener("click", loadDiagnostics);
   if (btnDiagConnect) btnDiagConnect.addEventListener("click", async () => { await handleConnectAll(); loadDiagnostics(); });
+
+  // ------------------------------------------------------------------
+  // Sponsored ads: open landing page in the system browser
+  // ------------------------------------------------------------------
+  document.querySelectorAll(".qa-ad").forEach((ad) => {
+    ad.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const url = ad.getAttribute("href");
+      try {
+        const res = await api("/api/open-url", { url });
+        if (res.success) return;
+      } catch (err) { /* fall through */ }
+      window.open(url, "_blank");
+    });
+  });
 
   // Poll status initially and every 5 seconds
   loadTools();

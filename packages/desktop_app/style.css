@@ -55,14 +55,11 @@ body {
 }
 
 .brand-logo {
-  width: 40px;
-  height: 40px;
-  background: linear-gradient(135deg, var(--primary), var(--accent-cyan));
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
+  object-fit: cover;
   box-shadow: 0 4px 15px var(--primary-glow);
 }
 
@@ -580,4 +577,251 @@ body {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-muted);
+}
+
+/* Quick Art Photography Academy ads */
+.qa-ad {
+  display: block;
+  color: var(--text-main);
+  text-decoration: none;
+  border: 1px solid rgba(232, 185, 95, 0.35);
+  background: linear-gradient(135deg, rgba(232, 185, 95, 0.12), rgba(22, 28, 41, 0.9));
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+.qa-ad:hover {
+  border-color: #e8b95f;
+  transform: translateY(-1px);
+}
+
+.qa-ad-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: #e8b95f;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.qa-ad-brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.qa-ad-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.qa-ad-cta {
+  color: #e8b95f;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.qa-ad-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.qa-ad-side strong {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.qa-ad-banner {
+  display: grid;
+  grid-template-columns: minmax(240px, 40%) 1fr;
+  overflow: hidden;
+  margin-bottom: 32px;
+}
+
+.qa-ad-photo {
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  object-fit: cover;
+  object-position: center 20%;
+  background: #000;
+}
+
+.qa-ad-body {
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.qa-ad-body h2 {
+  font-size: 1.45rem;
+  line-height: 1.25;
+}
+
+.qa-ad-body p {
+  color: var(--text-muted);
+}
+
+.qa-ad-skills {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.qa-ad-skills li {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.qa-ad-banner .qa-ad-cta {
+  align-self: flex-start;
+  color: white;
+}
+
+.qa-ad-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 22px;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, rgba(232, 185, 95, 0.14) 0%, rgba(20, 24, 36, 0.92) 50%, rgba(15, 17, 26, 0.98) 100%);
+  border: 1px solid rgba(232, 185, 95, 0.38);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(16px);
+  text-decoration: none;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.qa-ad-strip:hover {
+  border-color: rgba(232, 185, 95, 0.75);
+  box-shadow: 0 12px 36px rgba(232, 185, 95, 0.18), 0 8px 32px rgba(0, 0, 0, 0.5);
+  transform: translateY(-2px);
+}
+
+.qa-ad-strip-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.qa-ad-strip-logo-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  padding: 2px;
+  border: 1.5px solid rgba(232, 185, 95, 0.55);
+  box-shadow: 0 0 14px rgba(232, 185, 95, 0.25);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.8);
+}
+
+.qa-ad-strip-logo-wrap img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.qa-ad-strip-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.qa-ad-strip-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.qa-ad-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.75px;
+  color: #121018;
+  background: linear-gradient(135deg, #e8b95f 0%, #f7d28b 100%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(232, 185, 95, 0.3);
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.qa-ad-strip-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.2px;
+}
+
+.qa-ad-strip-desc {
+  font-size: 0.82rem;
+  color: #9aa5b8;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.qa-ad-strip-desc strong {
+  color: #e8b95f;
+  font-weight: 600;
+}
+
+.qa-ad-strip-right {
+  flex-shrink: 0;
+}
+
+.qa-ad-cta-btn {
+  background: linear-gradient(135deg, #e8b95f, #d49b38) !important;
+  color: #121018 !important;
+  font-weight: 700 !important;
+  font-size: 0.82rem !important;
+  padding: 8px 16px !important;
+  border-radius: 8px !important;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 16px rgba(232, 185, 95, 0.3) !important;
+  transition: all 0.2s ease !important;
+}
+
+.qa-ad-strip:hover .qa-ad-cta-btn {
+  box-shadow: 0 6px 20px rgba(232, 185, 95, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 900px) {
+  .qa-ad-banner { grid-template-columns: 1fr; }
+  .qa-ad-photo { max-height: 220px; }
+  .qa-ad-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 16px;
+  }
+  .qa-ad-strip-right {
+    align-self: flex-start;
+  }
 }

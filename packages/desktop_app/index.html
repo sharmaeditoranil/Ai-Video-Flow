@@ -281,13 +281,15 @@
 
       <!-- Tab: Diagnostics -->
       <section class="tab-pane" id="pane-diagnostics">
-        <div class="section-header">
-          <h2>🔍 Diagnostics & Status</h2>
-          <p>Environment, installed AI libraries, DaVinci Resolve and Claude Desktop connection details.</p>
-        </div>
-        <div class="cta-group" style="margin-bottom:16px">
-          <button class="btn btn-secondary" id="btn-refresh-diag">🔄 Refresh</button>
-          <button class="btn btn-primary" id="btn-diag-connect">🚀 Re-run CONNECT ALL</button>
+        <div class="section-header section-header-row">
+          <div class="section-header-text">
+            <h2>🔍 Diagnostics & Status</h2>
+            <p>Environment, installed AI libraries, DaVinci Resolve and Claude Desktop connection details.</p>
+          </div>
+          <div class="cta-group">
+            <button class="btn btn-secondary" id="btn-refresh-diag">🔄 Refresh</button>
+            <button class="btn btn-primary" id="btn-diag-connect">🚀 Re-run CONNECT ALL</button>
+          </div>
         </div>
         <div class="diag-grid" id="diag-grid"><div class="muted">Loading diagnostics...</div></div>
       </section>

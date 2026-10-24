@@ -52,7 +52,7 @@ class LicenseManager:
 
     def __init__(self, license_server_url: Optional[str] = None):
         self.license_server_url = license_server_url or os.environ.get(
-            "AI_LICENSE_SERVER_URL", "https://video.aiphotoflow.in/api/v1/license"
+            "AI_LICENSE_SERVER_URL", "https://flow.aiphotoflow.in/api/v1/license"
         )
         self.machine_id = get_machine_fingerprint()
         os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -233,9 +233,11 @@ class LicenseManager:
         candidate_urls = [
             f"{base_url}/verify",
             f"{base_url}/index.php/verify",
+            "https://flow.aiphotoflow.in/api/v1/license/verify",
+            "https://flow.aiphotoflow.in/verify",
+            "https://flow.aiphotoflow.in/index.php/verify",
             "https://video.aiphotoflow.in/api/v1/license/verify",
-            "https://video.aiphotoflow.in/verify",
-            "https://video.aiphotoflow.in/index.php/verify"
+            "https://video.aiphotoflow.in/verify"
         ]
         # Deduplicate while preserving order
         seen = set()
@@ -274,7 +276,7 @@ class LicenseManager:
                 last_err = str(e)
                 continue
 
-        return {"success": False, "error": f"Connection to video.aiphotoflow.in failed ({last_err}). Check key or try offline activation."}
+        return {"success": False, "error": f"Connection to flow.aiphotoflow.in failed ({last_err}). Check key or try offline activation."}
 
     def _verify_offline_token(self, token: str) -> Dict[str, Any]:
         """Verifies algorithmic cryptographic master tokens."""
@@ -330,9 +332,11 @@ class LicenseManager:
         candidate_urls = [
             f"{base_url}/consume",
             f"{base_url}/index.php/consume",
+            "https://flow.aiphotoflow.in/api/v1/license/consume",
+            "https://flow.aiphotoflow.in/consume",
+            "https://flow.aiphotoflow.in/index.php/consume",
             "https://video.aiphotoflow.in/api/v1/license/consume",
-            "https://video.aiphotoflow.in/consume",
-            "https://video.aiphotoflow.in/index.php/consume"
+            "https://video.aiphotoflow.in/consume"
         ]
         req_body = json.dumps({
             "license_key": license_key,

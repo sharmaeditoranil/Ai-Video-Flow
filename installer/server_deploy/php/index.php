@@ -1,7 +1,7 @@
 <?php
 /**
  * AI Video Flow - SaaS License & Credit Verification Server
- * Domain: video.aiphotoflow.in
+ * Domain: flow.aiphotoflow.in (also compatible with video.aiphotoflow.in)
  * 
  * Supports:
  * - Desktop App Live API: POST /verify and POST /consume
@@ -83,7 +83,7 @@ if (strpos($request_uri, '/verify') !== false) {
     $lic = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$lic) {
-        json_response(["success" => false, "error" => "Invalid License Key on video.aiphotoflow.in"], 400);
+        json_response(["success" => false, "error" => "Invalid License Key on flow.aiphotoflow.in"], 400);
     }
 
     if ($lic['status'] !== 'active') {
@@ -99,7 +99,7 @@ if (strpos($request_uri, '/verify') !== false) {
     } elseif ($bound !== $machine_id) {
         json_response([
             "success" => false,
-            "error" => "License is locked to another computer. Contact video.aiphotoflow.in admin to reset machine lock."
+            "error" => "License is locked to another computer. Contact flow.aiphotoflow.in admin to reset machine lock."
         ], 403);
     }
 
@@ -133,7 +133,7 @@ if (strpos($request_uri, '/consume') !== false) {
     $rem = (int)$lic['credits'];
     if ($lic['plan_type'] !== 'unlimited') {
         if ($rem <= 0) {
-            json_response(["success" => false, "error" => "0 wedding credits remaining on video.aiphotoflow.in"], 400);
+            json_response(["success" => false, "error" => "0 wedding credits remaining on flow.aiphotoflow.in"], 400);
         }
         $rem -= 1;
         $up = $pdo->prepare("UPDATE licenses SET credits = ? WHERE license_key = ?");
@@ -235,7 +235,7 @@ if (isset($_GET['logout'])) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AI Video Flow – SaaS Admin Portal (video.aiphotoflow.in)</title>
+  <title>AI Video Flow – SaaS Admin Portal (flow.aiphotoflow.in)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>
@@ -338,7 +338,7 @@ if (isset($_GET['logout'])) {
   <div style="max-width: 400px; margin: 100px auto;" class="card">
     <div style="text-align: center; margin-bottom: 20px;">
       <h1 style="color: var(--accent); margin: 0 0 6px 0; font-size: 24px;">👑 SaaS Admin Portal</h1>
-      <p style="color: var(--muted); font-size: 13px; margin: 0;">video.aiphotoflow.in</p>
+      <p style="color: var(--muted); font-size: 13px; margin: 0;">flow.aiphotoflow.in</p>
     </div>
     <?php if (isset($login_error)): ?>
       <div style="background: rgba(239,68,68,0.2); border: 1px solid var(--danger); color: #fca5a5; padding: 10px; border-radius: 8px; font-size: 12px; margin-bottom: 14px;">
@@ -357,7 +357,7 @@ if (isset($_GET['logout'])) {
   <div class="header">
     <div class="brand">
       <h1>AI Video Flow – SaaS Admin Portal</h1>
-      <p>Domain: <strong style="color:#38bdf8;">video.aiphotoflow.in</strong> | Client License &amp; Credit Management</p>
+      <p>Domain: <strong style="color:#38bdf8;">flow.aiphotoflow.in</strong> | Client License &amp; Credit Management</p>
     </div>
     <div style="display:flex;gap:12px;align-items:center;">
       <div class="stat-pill">Total Issued: <strong id="total-count" style="color:#fff;">0</strong></div>

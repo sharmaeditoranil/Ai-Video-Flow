@@ -21,11 +21,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
+        shell: bash
         run: |
+          set -o pipefail
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt -r packaging/requirements-build.txt
+          python -m pip install -r requirements.txt -r packaging/requirements-build.txt 2>&1 | tee pip.log \
+            || { echo "::error title=pip failed::$(tail -30 pip.log | tr '\n' '|')"; exit 1; }
       - name: PyInstaller
-        run: pyinstaller --noconfirm --clean --log-level WARN --distpath build/dist --workpath build/work packaging/ai_video_flow.spec
+        shell: bash
+        run: |
+          set -o pipefail
+          pyinstaller --noconfirm --clean --log-level WARN --distpath build/dist --workpath build/work packaging/ai_video_flow.spec 2>&1 | tee build.log \
+            || { echo "::error title=PyInstaller failed::$(tail -30 build.log | tr '\n' '|')"; exit 1; }
       - name: Smoke test MCP helper
         shell: bash
         run: |
@@ -41,6 +48,7 @@ jobs:
 
   macos:
     strategy:
+      fail-fast: false
       matrix:
         runner: [macos-latest, macos-15-intel]
     runs-on: ${{ matrix.runner }}
@@ -50,14 +58,18 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build app and DMG
-        run: PYTHON="$(which python)" bash packaging/build_mac_app.sh
+        run: |
+          set -o pipefail
+          PYTHON="$(which python)" bash packaging/build_mac_app.sh 2>&1 | tee build.log \
+            || { echo "::error title=Mac build failed::$(tail -40 build.log | tr '\n' '|')"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: AI-Video-Flow-Mac-${{ matrix.runner }}
           path: dist/AI-Video-Flow-Mac-*.dmg
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish whatever built successfully, even if one platform failed
+    if: always() && startsWith(github.ref, 'refs/tags/v')
     needs: [windows, macos]
     runs-on: ubuntu-latest
     steps:

@@ -43,6 +43,8 @@ dist/AI-Video-Flow-Windows-Portable.zip
 server/config.php
 server/data/
 dist/flow-server-bundle.zip
+dist/license-server-bundle.zip
+dist/old-domain-forwarder.zip
 dist/index.php
 dist/htaccess.txt
 dist/flow-server-bundle*/

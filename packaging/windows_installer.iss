@@ -2,7 +2,7 @@
 ; Built by packaging\build_windows_app.bat (or CI) after PyInstaller has produced build\dist\AI Video Flow\
 
 #define AppName "AI Video Flow"
-#define AppVersion "1.1.8"
+#define AppVersion "1.1.9"
 #define AppExe "AI Video Flow.exe"
 
 [Setup]

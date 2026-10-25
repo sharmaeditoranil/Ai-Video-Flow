@@ -327,7 +327,7 @@
     const localBox = $("plans-local"), aiBox = $("plans-ai"), note = $("plans-note");
     let data;
     try { data = await api("/api/plans"); } catch (e) { data = { success: false, plans: [] }; }
-    const buyUrl = data.buy_url || license.buy_url || "https://flow.aiphotoflow.in/index.php/buy";
+    const buyUrl = data.buy_url || license.buy_url || "https://license.aivideoflow.in/index.php/buy";
     localBox.querySelectorAll(".plan:not(.free-plan)").forEach((c) => c.remove());
     aiBox.innerHTML = "";
     const freeBtn = localBox.querySelector(".free-plan button");
@@ -747,7 +747,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.8 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.9 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Builds the upload-ready server bundle for flow.aiphotoflow.in and syncs the public key into the app.
+Builds the upload-ready server bundle for license.aivideoflow.in and syncs the public key into the app.
+Also builds the forwarder for the old domain (flow.aiphotoflow.in), so already installed apps keep working.
 
 Secrets live outside the repository in ~/.ai-video-flow-admin/signing_key.json:
   - Ed25519 signing key (licenses are signed with it; the app only has the public half)
@@ -21,7 +22,8 @@ import zipfile
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SECRETS = os.path.expanduser("~/.ai-video-flow-admin/signing_key.json")
 PUBLIC_KEY_PY = os.path.join(ROOT, "packages", "licensing", "public_key.py")
-BUNDLE = os.path.join(ROOT, "dist", "flow-server-bundle.zip")
+BUNDLE = os.path.join(ROOT, "dist", "license-server-bundle.zip")
+FORWARDER = os.path.join(ROOT, "dist", "old-domain-forwarder.zip")
 
 
 def load_secrets() -> dict:
@@ -64,6 +66,8 @@ def main() -> None:
         z.write(os.path.join(ROOT, "server", ".htaccess"), ".htaccess")
         z.writestr("config.php", config_php(s))
     os.chmod(BUNDLE, 0o600)
+    with zipfile.ZipFile(FORWARDER, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(os.path.join(ROOT, "server", "old_domain_proxy.php"), "index.php")
 
     if "--local" in sys.argv:
         local_cfg = os.path.join(ROOT, "server", "config.php")
@@ -72,6 +76,7 @@ def main() -> None:
         os.chmod(local_cfg, 0o600)
 
     print(f"Server bundle: {BUNDLE}")
+    print(f"Old-domain forwarder: {FORWARDER}")
     print(f"Public key synced to: {PUBLIC_KEY_PY}")
 
 

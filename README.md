@@ -50,7 +50,7 @@ Instead of spending days manually cutting shaky camera movements, syncing multi-
 
 ## 🔐 Licensing, payments & AI (server)
 
-Licenses, Razorpay payments and Claude AI run on the license server (`server/`, deployed to flow.aiphotoflow.in).
+Licenses, Razorpay payments and Claude AI run on the license server (`server/`, deployed to license.aivideoflow.in; the old flow.aiphotoflow.in only forwards to it).
 Licenses are Ed25519-signed by the server; the app only holds the public key, and every paid AI call is checked
 and relayed by the server, so the Claude API key never reaches customers. Setup guide: [SERVER_SETUP.md](SERVER_SETUP.md).
 

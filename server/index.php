@@ -1,6 +1,6 @@
 <?php
 /**
- * AI Video Flow - License, Payments & AI Relay Server  (flow.aiphotoflow.in)
+ * AI Video Flow - License, Payments & AI Relay Server  (license.aivideoflow.in)
  *
  * - Admin portal: users, licenses, plans, orders, usage, settings (login + CSRF protected)
  * - Desktop API: activate / refresh / consume -> Ed25519-signed license tokens
@@ -245,7 +245,20 @@ function body_json(): array
 
 function client_ip(): string
 {
+    // Requests relayed by the old-domain forwarder (old_domain_proxy.php) carry the customer's own IP,
+    // vouched for with a secret both servers derive from config.php
+    $proof = (string)($_SERVER['HTTP_X_AVF_PROXY'] ?? '');
+    $ip = (string)($_SERVER['HTTP_X_AVF_CLIENT_IP'] ?? '');
+    if ($proof !== '' && filter_var($ip, FILTER_VALIDATE_IP) && hash_equals(proxy_secret(), $proof)) {
+        return $ip;
+    }
     return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+}
+
+function proxy_secret(): string
+{
+    global $CONFIG;
+    return hash_hmac('sha256', 'avf-domain-proxy', (string)$CONFIG['settings_key']);
 }
 
 function h(?string $s): string

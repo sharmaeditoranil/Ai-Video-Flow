@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.9 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.10 · AI editing assistant</div>
         </div>
       </div>
 
@@ -147,6 +147,7 @@
                   <input id="in-folder" type="text" placeholder="/Volumes/Drive/Wedding_Rohit_Priya" spellcheck="false">
                   <button class="btn" id="btn-browse-folder">Browse</button>
                   <button class="btn" id="btn-load-folder">Load</button>
+                  <button class="btn" id="btn-clear-folder" title="Remove / Clear loaded folder" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕ Remove</button>
                 </div>
                 <div class="hint" id="folder-info">Choose the folder with your raw clips (subfolders are included).</div>
 
@@ -155,12 +156,14 @@
                 <div class="input-row">
                   <input id="in-audio" type="text" placeholder="/Music/wedding_song.mp3" spellcheck="false">
                   <button class="btn" id="btn-browse-audio">Browse</button>
+                  <button class="btn" id="btn-clear-audio" title="Remove song" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
 
                 <label class="lbl" for="in-ref">Reference video for the colour look <span class="opt">optional</span></label>
                 <div class="input-row">
                   <input id="in-ref" type="text" placeholder="A reel or film whose colours you like" spellcheck="false">
                   <button class="btn" id="btn-browse-ref">Browse</button>
+                  <button class="btn" id="btn-clear-ref" title="Remove reference video" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
                 <div class="hint">A matching 3D LUT (.cube) is created in the output folder.</div>
                 </div>

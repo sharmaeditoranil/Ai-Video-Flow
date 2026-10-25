@@ -68,8 +68,10 @@ class InClipTrimmer:
         frame_interval = max(1, int(round(native_fps / self.sample_fps)))
         
         prev_gray = None
+        prev_mag = None
         stability_scores = []
         sharpness_scores = []
+        action_scores = []
         sample_frame_indices = []
         luma = []  # brightness of every frame, used to find photographer flashes for multi-camera sync
 
@@ -90,11 +92,10 @@ class InClipTrimmer:
 
                 # 1. Sharpness / Focus score (Laplacian Variance)
                 lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                # Normalized sharpness (typical values 50 - 500+)
                 sharpness_norm = min(100.0, max(0.0, (lap_var / 300.0) * 100.0))
                 sharpness_scores.append(sharpness_norm)
 
-                # 2. Stability / Camera Shake Score (Optical Flow)
+                # 2. Stability & Purposeful Action Detection (Optical Flow)
                 if prev_gray is not None:
                     flow = cv2.calcOpticalFlowFarneback(
                         prev_gray, gray, None, 
@@ -102,15 +103,33 @@ class InClipTrimmer:
                         iterations=2, poly_n=5, poly_sigma=1.1, flags=0
                     )
                     mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-                    mean_mag = np.mean(mag)
-                    std_mag = np.std(mag)
-                    # Sudden erratic jerk has high std/mean
-                    jerk_factor = mean_mag + 1.5 * std_mag
-                    # Inverted: lower jerk = higher stability
-                    stability_norm = max(0.0, min(100.0, 100.0 - (jerk_factor * 8.0)))
+                    mean_mag = float(np.mean(mag))
+                    std_mag = float(np.std(mag))
+
+                    # Camera Jerk vs Smooth Cinematic Motion (acceleration + variance)
+                    accel = abs(mean_mag - prev_mag) if prev_mag is not None else 0.0
+                    jerk = (accel * 3.5) + (std_mag * 1.5)
+                    stability_norm = max(0.0, min(100.0, 100.0 - (jerk * 6.0)))
                     stability_scores.append(stability_norm)
+
+                    # 3. Purposeful Action / Movement Recognition
+                    # Wedding actions (subject moving, smiling, turning, garland, dancing, eye contact):
+                    # - If mean_mag < 0.40: Dead static / actor just standing waiting for cue (low score)
+                    # - If 0.60 <= mean_mag <= 5.5: Golden Action Zone (actor actively performing action!)
+                    # - If mean_mag > 12.0: Erratic camera jerk / fast ground pan (penalized)
+                    if mean_mag < 0.40:
+                        action_norm = 15.0 + (mean_mag / 0.40) * 20.0
+                    elif mean_mag <= 5.0:
+                        action_norm = 80.0 + min(20.0, (mean_mag - 0.40) * 5.0)
+                    else:
+                        action_norm = max(10.0, 100.0 - (mean_mag - 5.0) * 8.0)
+
+                    action_scores.append(action_norm)
+                    prev_mag = mean_mag
                 else:
                     stability_scores.append(85.0)
+                    action_scores.append(50.0)
+                    prev_mag = 0.0
 
                 prev_gray = gray
                 sample_frame_indices.append(curr_frame_idx)
@@ -123,9 +142,9 @@ class InClipTrimmer:
             native_fps, total_frames, duration
         )
 
-        # 2. Golden Window (Punchy 2.5 - 6s window for Teaser / Fast Highlight)
-        in_frame, out_frame, best_score = self._find_golden_window(
-            sample_frame_indices, stability_scores, sharpness_scores,
+        # 2. Golden Window: selects the true ACTION segment (skips pre-action waiting)
+        in_frame, out_frame, best_score, action_peak_frame = self._find_golden_window(
+            sample_frame_indices, stability_scores, sharpness_scores, action_scores,
             native_fps, total_frames, duration
         )
 
@@ -163,6 +182,8 @@ class InClipTrimmer:
             "out_frame": out_frame,
             "in_seconds": round(in_frame / native_fps, 2),
             "out_seconds": round(out_frame / native_fps, 2),
+            "action_peak_seconds": round(action_peak_frame / native_fps, 2),
+            "action_peak_frame": action_peak_frame,
             "trimmed_duration": trim_dur,
             "trimmed_head_seconds": round(in_frame / native_fps, 2),
             "trimmed_tail_seconds": round((total_frames - out_frame) / native_fps, 2),
@@ -256,22 +277,28 @@ class InClipTrimmer:
         sample_indices: List[int],
         stability: List[float],
         sharpness: List[float],
+        action: List[float],
         native_fps: float,
         total_frames: int,
         duration: float
-    ) -> Tuple[int, int, float]:
+    ) -> Tuple[int, int, float, int]:
         """
-        Uses sliding window over the combined quality curve to find
-        the continuous section with maximum stability & clarity.
+        Uses sliding window to find the continuous section with optimal
+        ACTIVE ACTION, focus sharpness & smooth motion.
+        Skips the pre-action idle waiting prelude where subjects just stand still.
         """
-        if not stability or not sharpness:
-            # Fallback: trim default 15% from head and 10% from tail
-            in_f = int(total_frames * 0.15)
-            out_f = int(total_frames * 0.90)
-            return in_f, out_f, 70.0
+        if not stability or not sharpness or not action:
+            in_f = int(total_frames * 0.20)
+            out_f = int(total_frames * 0.85)
+            peak_f = int((in_f + out_f) / 2)
+            return in_f, out_f, 70.0, peak_f
 
         n = len(stability)
-        combined = [0.6 * s + 0.4 * f for s, f in zip(stability, sharpness)]
+        # 40% Action Energy + 35% Sharpness/Focus + 25% Smooth Stability
+        combined = [
+            (0.40 * act) + (0.35 * f) + (0.25 * s)
+            for act, f, s in zip(action, sharpness, stability)
+        ]
 
         window_samples = max(2, int(round(self.min_subclip_duration * self.sample_fps)))
         max_samples = int(round(self.max_subclip_duration * self.sample_fps))
@@ -286,18 +313,26 @@ class InClipTrimmer:
                 window_scores = combined[i : i + w_size]
                 avg_score = float(np.mean(window_scores))
                 min_score = float(np.min(window_scores))
+                avg_action = float(np.mean(action[i : i + w_size]))
 
+                # Penalty if window is idle / waiting (actor just standing still before action starts)
+                idle_penalty = 25.0 if avg_action < 40.0 else 0.0
                 # Penalty for start of clip (cameraman hand start jerk)
-                start_penalty = 10.0 if i < int(self.sample_fps * 1.5) else 0.0
+                start_penalty = 12.0 if i < int(self.sample_fps * 1.5) else 0.0
                 # Penalty for end of clip (cameraman looking down before stop)
-                end_penalty = 10.0 if (i + w_size) > (n - int(self.sample_fps * 1.0)) else 0.0
+                end_penalty = 12.0 if (i + w_size) > (n - int(self.sample_fps * 1.0)) else 0.0
 
-                composite = (avg_score * 0.7 + min_score * 0.3) - start_penalty - end_penalty
+                composite = (avg_score * 0.75 + min_score * 0.25) - idle_penalty - start_penalty - end_penalty
 
                 if composite > best_score:
                     best_score = composite
                     best_start_idx = i
                     best_end_idx = i + w_size - 1
+
+        # Identify action peak frame within the chosen window
+        rel_peak = int(np.argmax(action[best_start_idx : best_end_idx + 1]))
+        peak_idx = best_start_idx + rel_peak
+        action_peak_frame = sample_indices[peak_idx]
 
         in_frame = sample_indices[best_start_idx]
         out_frame = sample_indices[min(len(sample_indices) - 1, best_end_idx)]
@@ -306,7 +341,7 @@ class InClipTrimmer:
         in_frame = max(0, min(in_frame, total_frames - 1))
         out_frame = max(in_frame + int(native_fps * 1.5), min(out_frame, total_frames))
 
-        return in_frame, out_frame, max(0.0, min(100.0, best_score))
+        return in_frame, out_frame, max(0.0, min(100.0, best_score)), action_peak_frame
 
 
     def _fallback_smart_trim(self, video_path: str) -> Dict[str, Any]:
@@ -338,41 +373,41 @@ class InClipTrimmer:
             pass
 
         total_frames = int(duration * fps)
-        # Trim first 2.5s (camera shake start) and last 1.0s (camera shut down) for teaser/highlight
-        head_trim = min(2.5, max(0.0, duration * 0.20))
+        # Skip initial 2.2s (actor prep / camera settling) and last 1.0s (stop)
+        head_trim = min(2.5, max(1.0, duration * 0.22)) if duration > 4.5 else 0.0
         tail_trim = min(1.0, max(0.0, duration * 0.10))
 
         in_sec = head_trim
         out_sec = max(in_sec + 2.0, duration - tail_trim)
+        action_peak_sec = round(in_sec + (out_sec - in_sec) * 0.45, 2)
+        action_peak_frame = int(action_peak_sec * fps)
 
         # Full Film Window: Gentle trimming, cuts at most 0.4s start / 0.3s end
         full_head = min(0.4, max(0.0, duration * 0.05)) if duration > 4.0 else 0.0
         full_tail = min(0.3, max(0.0, duration * 0.04)) if duration > 4.0 else 0.0
+
         full_in_sec = full_head
-        full_out_sec = max(full_in_sec + 1.5, duration - full_tail)
+        full_out_sec = max(full_in_sec + 1.0, duration - full_tail)
 
         return {
             "file_path": video_path,
             "duration": round(duration, 2),
-            "native_fps": round(fps, 2),
+            "native_fps": fps,
             "total_frames": total_frames,
-            # Golden Window
             "in_frame": int(in_sec * fps),
             "out_frame": int(out_sec * fps),
             "in_seconds": round(in_sec, 2),
             "out_seconds": round(out_sec, 2),
+            "action_peak_seconds": action_peak_sec,
+            "action_peak_frame": action_peak_frame,
             "trimmed_duration": round(out_sec - in_sec, 2),
-            "trimmed_head_seconds": round(in_sec, 2),
-            "trimmed_tail_seconds": round(duration - out_sec, 2),
-            # Full Film Window (Conservative: preserves 90-100% of footage)
             "full_in_frame": int(full_in_sec * fps),
             "full_out_frame": int(full_out_sec * fps),
             "full_in_seconds": round(full_in_sec, 2),
             "full_out_seconds": round(full_out_sec, 2),
             "full_duration": round(full_out_sec - full_in_sec, 2),
-            "quality_score": 82.5,
-            "shot_type": "mid",
-            "engine": "Smart Trimmer Fallback"
+            "quality_score": 75.0,
+            "shot_type": "mid"
         }
 
 

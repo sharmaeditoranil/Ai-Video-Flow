@@ -110,15 +110,28 @@ class StoryPlanner:
                 role = "Chronological Beat Cut"
 
             in_sec = clip.get("in_seconds", 0.0)
+            out_sec = clip.get("out_seconds", in_sec + cut_dur)
+            action_peak = clip.get("action_peak_seconds", in_sec + (cut_dur * 0.45))
+            clip_dur = clip.get("duration", out_sec)
             native_fps = clip.get("native_fps", 25.0)
+
+            # Center cut around Action Peak (skips pre-action waiting, captures true motion)
+            if (out_sec - in_sec) > cut_dur and action_peak > in_sec:
+                target_in = max(in_sec, action_peak - (cut_dur * 0.45))
+                target_out = min(clip_dur, target_in + cut_dur)
+                if (target_out - target_in) < cut_dur:
+                    target_in = max(0.0, target_out - cut_dur)
+            else:
+                target_in = in_sec
+                target_out = min(clip_dur, in_sec + cut_dur)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(clip.get("file_path", "")),
                 "file_path": clip.get("file_path"),
                 "timeline_start": round(curr_time, 2),
                 "timeline_end": round(curr_time + cut_dur, 2),
-                "in_frame": int(in_sec * native_fps),
-                "out_frame": int((in_sec + cut_dur) * native_fps),
+                "in_frame": int(target_in * native_fps),
+                "out_frame": int(target_out * native_fps),
                 "duration": cut_dur,
                 "shot_type": clip.get("shot_type", "mid"),
                 "role": role
@@ -243,15 +256,28 @@ class StoryPlanner:
                 return False
             actual_dur = snap_duration(cut_dur, curr_time)
             in_sec = clip.get("in_seconds", 0.0)
+            out_sec = clip.get("out_seconds", in_sec + actual_dur)
+            action_peak = clip.get("action_peak_seconds", in_sec + (actual_dur * 0.45))
+            clip_dur = clip.get("duration", out_sec)
             fps = clip.get("native_fps", 25.0)
+
+            # Center cut around Action Peak (skips pre-action waiting, captures true motion)
+            if (out_sec - in_sec) > actual_dur and action_peak > in_sec:
+                target_in = max(in_sec, action_peak - (actual_dur * 0.45))
+                target_out = min(clip_dur, target_in + actual_dur)
+                if (target_out - target_in) < actual_dur:
+                    target_in = max(0.0, target_out - actual_dur)
+            else:
+                target_in = in_sec
+                target_out = min(clip_dur, in_sec + actual_dur)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(fpath),
                 "file_path": fpath,
                 "timeline_start": round(curr_time, 2),
                 "timeline_end": round(curr_time + actual_dur, 2),
-                "in_frame": int(in_sec * fps),
-                "out_frame": int((in_sec + actual_dur) * fps),
+                "in_frame": int(target_in * fps),
+                "out_frame": int(target_out * fps),
                 "duration": actual_dur,
                 "shot_type": clip.get("shot_type", "mid"),
                 "role": role,

@@ -47,6 +47,9 @@ dist/license-server-bundle.zip
 dist/old-domain-forwarder.zip
 dist/index.php
 dist/htaccess.txt
-dist/flow-server-bundle*/
-server/config*.php
 !server/config.sample.php
+
+# Local website deliverables
+website/
+aivideoflow_in_website.zip
+

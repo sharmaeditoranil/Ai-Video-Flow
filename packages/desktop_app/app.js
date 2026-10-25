@@ -449,9 +449,27 @@
     if (await browseInto($("in-folder"), "folder", "Select your raw footage folder")) loadFolder();
   });
   $("btn-load-folder").addEventListener("click", loadFolder);
+  $("btn-clear-folder").addEventListener("click", () => {
+    $("in-folder").value = "";
+    store.set("avf.folder", "");
+    loadedFolder = null;
+    const info = $("folder-info");
+    info.className = "hint";
+    info.textContent = LONG_MODES.includes(mode)
+      ? "Put the full podcast / class recording here. Several files are joined in name order."
+      : "Choose the folder with your raw clips (subfolders are included).";
+  });
   $("in-folder").addEventListener("keydown", (e) => { if (e.key === "Enter") loadFolder(); });
   $("btn-browse-audio").addEventListener("click", () => browseInto($("in-audio"), "audio", "Select the song"));
+  $("btn-clear-audio").addEventListener("click", () => {
+    $("in-audio").value = "";
+    store.set("avf.audio", "");
+  });
   $("btn-browse-ref").addEventListener("click", () => browseInto($("in-ref"), "video", "Select a reference video"));
+  $("btn-clear-ref").addEventListener("click", () => {
+    $("in-ref").value = "";
+    store.set("avf.ref", "");
+  });
 
   $("btn-run").addEventListener("click", async () => {
     if (!loadedFolder || loadedFolder !== $("in-folder").value.trim()) {
@@ -747,7 +765,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.9 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.10 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

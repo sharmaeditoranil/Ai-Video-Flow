@@ -30,7 +30,7 @@ from packages.licensing.public_key import LICENSE_PUBLIC_KEY_B64
 
 logger = logging.getLogger("ai_video_flow.licensing")
 
-APP_VERSION = "1.1.10"
+APP_VERSION = "1.1.11"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://license.aivideoflow.in/index.php").rstrip("/")
 RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"

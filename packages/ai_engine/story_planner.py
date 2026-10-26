@@ -111,19 +111,20 @@ class StoryPlanner:
 
             in_sec = clip.get("in_seconds", 0.0)
             out_sec = clip.get("out_seconds", in_sec + cut_dur)
+            action_start = clip.get("action_start_seconds", in_sec)
             action_peak = clip.get("action_peak_seconds", in_sec + (cut_dur * 0.45))
             clip_dur = clip.get("duration", out_sec)
             native_fps = clip.get("native_fps", 25.0)
 
             # Center cut around Action Peak (skips pre-action waiting, captures true motion)
             if (out_sec - in_sec) > cut_dur and action_peak > in_sec:
-                target_in = max(in_sec, action_peak - (cut_dur * 0.45))
+                target_in = max(action_start, in_sec, action_peak - (cut_dur * 0.45))
                 target_out = min(clip_dur, target_in + cut_dur)
                 if (target_out - target_in) < cut_dur:
-                    target_in = max(0.0, target_out - cut_dur)
+                    target_in = max(action_start, 0.0, target_out - cut_dur)
             else:
-                target_in = in_sec
-                target_out = min(clip_dur, in_sec + cut_dur)
+                target_in = max(action_start, in_sec)
+                target_out = min(clip_dur, target_in + cut_dur)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(clip.get("file_path", "")),
@@ -257,19 +258,20 @@ class StoryPlanner:
             actual_dur = snap_duration(cut_dur, curr_time)
             in_sec = clip.get("in_seconds", 0.0)
             out_sec = clip.get("out_seconds", in_sec + actual_dur)
+            action_start = clip.get("action_start_seconds", in_sec)
             action_peak = clip.get("action_peak_seconds", in_sec + (actual_dur * 0.45))
             clip_dur = clip.get("duration", out_sec)
             fps = clip.get("native_fps", 25.0)
 
-            # Center cut around Action Peak (skips pre-action waiting, captures true motion)
+            # Center cut around Action Peak & ensure it starts AT or AFTER action_start (skips pre-action waiting)
             if (out_sec - in_sec) > actual_dur and action_peak > in_sec:
-                target_in = max(in_sec, action_peak - (actual_dur * 0.45))
+                target_in = max(action_start, in_sec, action_peak - (actual_dur * 0.45))
                 target_out = min(clip_dur, target_in + actual_dur)
                 if (target_out - target_in) < actual_dur:
-                    target_in = max(0.0, target_out - actual_dur)
+                    target_in = max(action_start, 0.0, target_out - actual_dur)
             else:
-                target_in = in_sec
-                target_out = min(clip_dur, in_sec + actual_dur)
+                target_in = max(action_start, in_sec)
+                target_out = min(clip_dur, target_in + actual_dur)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(fpath),
@@ -380,14 +382,14 @@ class StoryPlanner:
         timeline_entries = []
 
         for clip in analyzed_clips:
-            # Prefer conservative full film cut points (preserving 85-100% of clip)
-            in_sec = clip.get("full_in_seconds", clip.get("in_seconds", 0.0))
-            out_sec = clip.get("full_out_seconds", clip.get("out_seconds", clip.get("duration", 0.0)))
+            # Prefer conservative full film cut points (preserving action, skipping idle pre-roll)
+            in_sec = clip.get("full_in_seconds", clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
+            out_sec = clip.get("full_out_seconds", clip.get("action_end_seconds", clip.get("out_seconds", clip.get("duration", 0.0))))
             dur = max(1.0, round(out_sec - in_sec, 2))
             fps = clip.get("native_fps", 25.0)
 
-            in_frame = int(clip.get("full_in_frame", in_sec * fps))
-            out_frame = int(clip.get("full_out_frame", out_sec * fps))
+            in_frame = int(clip.get("full_in_frame", clip.get("action_start_frame", in_sec * fps)))
+            out_frame = int(clip.get("full_out_frame", clip.get("action_end_frame", out_sec * fps)))
 
             timeline_entries.append({
                 "clip_name": os.path.basename(clip.get("file_path", "")),

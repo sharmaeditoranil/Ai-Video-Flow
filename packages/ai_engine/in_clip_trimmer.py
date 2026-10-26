@@ -53,6 +53,12 @@ class InClipTrimmer:
                 "out_frame": total_frames,
                 "in_seconds": 0.0,
                 "out_seconds": duration,
+                "action_start_seconds": 0.0,
+                "action_start_frame": 0,
+                "action_end_seconds": duration,
+                "action_end_frame": total_frames,
+                "action_peak_seconds": round(duration * 0.5, 2),
+                "action_peak_frame": total_frames // 2,
                 "trimmed_duration": duration,
                 "full_in_frame": 0,
                 "full_out_frame": total_frames,
@@ -136,16 +142,25 @@ class InClipTrimmer:
 
             curr_frame_idx += 1
 
-        # 1. Full Film Window (Conservative: preserves 85% to 100% of footage)
-        full_in_frame, full_out_frame = self._find_full_film_window(
-            sample_frame_indices, stability_scores, sharpness_scores,
+        # 1. Discover Action Boundaries (action start onset, action end finish, action peak)
+        action_start_frame, action_end_frame, action_peak_frame = self._find_action_boundaries(
+            sample_frame_indices, action_scores, stability_scores, sharpness_scores,
             native_fps, total_frames, duration
         )
 
-        # 2. Golden Window: selects the true ACTION segment (skips pre-action waiting)
+        # 2. Full Film Window: trims pre-action waiting prelude, keeps 100% of real action
+        full_in_frame, full_out_frame = self._find_full_film_window(
+            sample_frame_indices, stability_scores, sharpness_scores,
+            native_fps, total_frames, duration,
+            action_start_frame=action_start_frame, action_end_frame=action_end_frame
+        )
+
+        # 3. Golden Window: selects the peak active action segment (starts AT or AFTER action start)
         in_frame, out_frame, best_score, action_peak_frame = self._find_golden_window(
             sample_frame_indices, stability_scores, sharpness_scores, action_scores,
-            native_fps, total_frames, duration
+            native_fps, total_frames, duration,
+            action_start_frame=action_start_frame, action_end_frame=action_end_frame,
+            action_peak_frame=action_peak_frame
         )
 
         shot_type = "mid"
@@ -182,12 +197,16 @@ class InClipTrimmer:
             "out_frame": out_frame,
             "in_seconds": round(in_frame / native_fps, 2),
             "out_seconds": round(out_frame / native_fps, 2),
+            "action_start_seconds": round(action_start_frame / native_fps, 2),
+            "action_start_frame": action_start_frame,
+            "action_end_seconds": round(action_end_frame / native_fps, 2),
+            "action_end_frame": action_end_frame,
             "action_peak_seconds": round(action_peak_frame / native_fps, 2),
             "action_peak_frame": action_peak_frame,
             "trimmed_duration": trim_dur,
             "trimmed_head_seconds": round(in_frame / native_fps, 2),
             "trimmed_tail_seconds": round((total_frames - out_frame) / native_fps, 2),
-            # Full Film Window (Conservative: keeps 85% - 100% of good footage!)
+            # Full Film Window (Action preserved: trims pre-action waiting prelude!)
             "full_in_frame": full_in_frame,
             "full_out_frame": full_out_frame,
             "full_in_seconds": round(full_in_frame / native_fps, 2),
@@ -221,6 +240,83 @@ class InClipTrimmer:
                 flashes.append(round(t, 3))
         return flashes
 
+    def _find_action_boundaries(
+        self,
+        sample_indices: List[int],
+        action: List[float],
+        stability: List[float],
+        sharpness: List[float],
+        native_fps: float,
+        total_frames: int,
+        duration: float
+    ) -> Tuple[int, int, int]:
+        """
+        Detects purposeful action boundary within the footage:
+        - action_start_frame: where subject actually begins motion (removes pre-action idle waiting).
+        - action_end_frame: where action concludes (removes dead tail / camera floor drop).
+        - action_peak_frame: maximum purposeful action frame.
+        """
+        if not sample_indices or not action:
+            return 0, total_frames, total_frames // 2
+
+        n = len(sample_indices)
+        if n < 4:
+            return 0, total_frames, total_frames // 2
+
+        peak_idx = int(np.argmax(action))
+        peak_score = float(action[peak_idx])
+
+        # Clip has purposeful action if peak energy is active
+        has_distinct_action = (peak_score >= 52.0)
+        head_min_idx = min(int(round(self.sample_fps * 0.8)), n // 4)
+
+        if has_distinct_action:
+            # Action onset: scan forward from start to peak_idx
+            # Find the first index where movement begins and is sustained
+            onset_idx = head_min_idx
+            for i in range(head_min_idx, peak_idx + 1):
+                next_score = action[min(n - 1, i + 1)]
+                if action[i] >= 45.0 or (action[i] >= 38.0 and next_score >= 45.0):
+                    # Natural 0.3s breath cushion so movement begins cleanly
+                    cushion = int(round(self.sample_fps * 0.3))
+                    onset_idx = max(head_min_idx, i - cushion)
+                    break
+
+            # Action conclusion: scan backward from tail towards peak_idx
+            tail_max_idx = max(peak_idx, n - 1 - min(int(round(self.sample_fps * 0.8)), n // 4))
+            finish_idx = tail_max_idx
+            for j in range(tail_max_idx, peak_idx - 1, -1):
+                prev_score = action[max(0, j - 1)]
+                if action[j] >= 45.0 or (action[j] >= 38.0 and prev_score >= 45.0):
+                    cushion = int(round(self.sample_fps * 0.3))
+                    finish_idx = min(n - 1, j + cushion)
+                    break
+
+            start_f = sample_indices[onset_idx]
+            end_f = sample_indices[finish_idx]
+        else:
+            # Static / scenery shot: trim initial REC jerk and shutdown jerk only
+            start_idx = 0
+            for i in range(min(int(self.sample_fps * 1.0), n // 4)):
+                if stability[i] < 35.0 or sharpness[i] < 12.0:
+                    start_idx = i + 1
+                else:
+                    break
+            end_idx = n - 1
+            for j in range(n - 1, max(0, n - 1 - min(int(self.sample_fps * 1.0), n // 4)), -1):
+                if stability[j] < 35.0 or sharpness[j] < 12.0:
+                    end_idx = j - 1
+                else:
+                    break
+            start_f = sample_indices[start_idx]
+            end_f = sample_indices[end_idx]
+
+        peak_f = sample_indices[peak_idx]
+        start_f = max(0, min(start_f, total_frames - 1))
+        end_f = max(start_f + int(native_fps * 1.2), min(end_f, total_frames))
+        peak_f = max(start_f, min(peak_f, end_f))
+        return start_f, end_f, peak_f
+
     def _find_full_film_window(
         self,
         sample_indices: List[int],
@@ -228,31 +324,29 @@ class InClipTrimmer:
         sharpness: List[float],
         native_fps: float,
         total_frames: int,
-        duration: float
+        duration: float,
+        action_start_frame: Optional[int] = None,
+        action_end_frame: Optional[int] = None
     ) -> Tuple[int, int]:
         """
-        Conservative trimmer for Full Wedding Film.
-        Preserves 85% to 100% of each clip duration!
-        Only trims genuine camera jerk when clicking the REC button at start (max 0.8s)
-        or when tilting to floor / stopping at tail (max 0.6s).
-        If the camera is already steady, trims 0 seconds.
+        Trimmer for Full Wedding Film.
+        Starts cleanly where action begins, discarding pre-action waiting prelude!
         """
+        if action_start_frame is not None and action_end_frame is not None:
+            return action_start_frame, action_end_frame
+
         if not sample_indices or not stability:
             return 0, total_frames
 
         n = len(sample_indices)
-
-        # Check head for button-press jerk (first 1.2s max or 10% of clip)
         max_head = min(int(self.sample_fps * 1.2), max(1, int(n * 0.10)))
         start_idx = 0
         for i in range(max_head):
-            # Only trim if severe camera jerk / blur right at button press
             if stability[i] < 35.0 or sharpness[i] < 12.0:
                 start_idx = i + 1
             else:
                 break
 
-        # Check tail for camera shutdown / ground tilt (last 1.0s max or 10% of clip)
         max_tail = min(int(self.sample_fps * 1.0), max(1, int(n * 0.10)))
         end_idx = n - 1
         for i in range(n - 1, max(0, n - 1 - max_tail), -1):
@@ -267,7 +361,6 @@ class InClipTrimmer:
 
         in_f = sample_indices[start_idx]
         out_f = sample_indices[end_idx]
-
         in_f = max(0, min(in_f, total_frames - 1))
         out_f = max(in_f + int(native_fps * 1.0), min(out_f, total_frames))
         return in_f, out_f
@@ -280,12 +373,14 @@ class InClipTrimmer:
         action: List[float],
         native_fps: float,
         total_frames: int,
-        duration: float
+        duration: float,
+        action_start_frame: Optional[int] = None,
+        action_end_frame: Optional[int] = None,
+        action_peak_frame: Optional[int] = None
     ) -> Tuple[int, int, float, int]:
         """
-        Uses sliding window to find the continuous section with optimal
-        ACTIVE ACTION, focus sharpness & smooth motion.
-        Skips the pre-action idle waiting prelude where subjects just stand still.
+        Finds the continuous section with optimal ACTIVE ACTION, focus sharpness & smooth motion.
+        Constrained to start AT or AFTER action start, ensuring no idle waiting prelude enters.
         """
         if not stability or not sharpness or not action:
             in_f = int(total_frames * 0.20)
@@ -294,7 +389,6 @@ class InClipTrimmer:
             return in_f, out_f, 70.0, peak_f
 
         n = len(stability)
-        # 40% Action Energy + 35% Sharpness/Focus + 25% Smooth Stability
         combined = [
             (0.40 * act) + (0.35 * f) + (0.25 * s)
             for act, f, s in zip(action, sharpness, stability)
@@ -303,20 +397,30 @@ class InClipTrimmer:
         window_samples = max(2, int(round(self.min_subclip_duration * self.sample_fps)))
         max_samples = int(round(self.max_subclip_duration * self.sample_fps))
 
+        # Find sample index corresponding to action_start_frame
+        min_start_idx = 0
+        if action_start_frame is not None:
+            for idx, f in enumerate(sample_indices):
+                if f >= action_start_frame:
+                    min_start_idx = idx
+                    break
+
         best_score = -1.0
-        best_start_idx = 0
-        best_end_idx = min(n - 1, window_samples)
+        best_start_idx = min_start_idx
+        best_end_idx = min(n - 1, min_start_idx + window_samples)
 
         # Slide window of variable size between min and max duration
         for w_size in range(window_samples, min(n, max_samples) + 1):
-            for i in range(n - w_size + 1):
+            # Enforce that search starts at or after action start
+            search_start = min_start_idx if min_start_idx + w_size <= n else max(0, n - w_size)
+            for i in range(search_start, n - w_size + 1):
                 window_scores = combined[i : i + w_size]
                 avg_score = float(np.mean(window_scores))
                 min_score = float(np.min(window_scores))
                 avg_action = float(np.mean(action[i : i + w_size]))
 
-                # Penalty if window is idle / waiting (actor just standing still before action starts)
-                idle_penalty = 25.0 if avg_action < 40.0 else 0.0
+                # Penalty if window is idle / waiting (actor standing still before action starts)
+                idle_penalty = 35.0 if avg_action < 42.0 else 0.0
                 # Penalty for start of clip (cameraman hand start jerk)
                 start_penalty = 12.0 if i < int(self.sample_fps * 1.5) else 0.0
                 # Penalty for end of clip (cameraman looking down before stop)
@@ -332,7 +436,7 @@ class InClipTrimmer:
         # Identify action peak frame within the chosen window
         rel_peak = int(np.argmax(action[best_start_idx : best_end_idx + 1]))
         peak_idx = best_start_idx + rel_peak
-        action_peak_frame = sample_indices[peak_idx]
+        chosen_peak_frame = sample_indices[peak_idx]
 
         in_frame = sample_indices[best_start_idx]
         out_frame = sample_indices[min(len(sample_indices) - 1, best_end_idx)]
@@ -341,7 +445,7 @@ class InClipTrimmer:
         in_frame = max(0, min(in_frame, total_frames - 1))
         out_frame = max(in_frame + int(native_fps * 1.5), min(out_frame, total_frames))
 
-        return in_frame, out_frame, max(0.0, min(100.0, best_score)), action_peak_frame
+        return in_frame, out_frame, max(0.0, min(100.0, best_score)), chosen_peak_frame
 
 
     def _fallback_smart_trim(self, video_path: str) -> Dict[str, Any]:
@@ -398,6 +502,10 @@ class InClipTrimmer:
             "out_frame": int(out_sec * fps),
             "in_seconds": round(in_sec, 2),
             "out_seconds": round(out_sec, 2),
+            "action_start_seconds": round(in_sec, 2),
+            "action_start_frame": int(in_sec * fps),
+            "action_end_seconds": round(out_sec, 2),
+            "action_end_frame": int(out_sec * fps),
             "action_peak_seconds": action_peak_sec,
             "action_peak_frame": action_peak_frame,
             "trimmed_duration": round(out_sec - in_sec, 2),

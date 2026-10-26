@@ -47,7 +47,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.10"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.11"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -894,7 +894,7 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 full_kept = res.get('full_duration', res.get('duration', 0))
                 total_dur = res.get('duration', 0)
                 _log(job_id, f"[{i}/{len(videos)}] {os.path.basename(vp)} ({total_dur:.1f}s) → "
-                             f"Full Film: {full_kept:.1f}s kept (shake trimmed) | "
+                             f"Full Film: {full_kept:.1f}s kept (action starts at {res.get('action_start_seconds', 0):.1f}s) | "
                              f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})")
             except Exception as e:
                 _log(job_id, f"[{i}/{len(videos)}] Skipped {os.path.basename(vp)}: {e}", "warning")

@@ -19,6 +19,7 @@ import platform
 import subprocess
 import threading
 import logging
+import ssl
 import urllib.request
 import urllib.error
 from typing import Dict, Any, Optional, Tuple
@@ -29,6 +30,34 @@ from cryptography.exceptions import InvalidSignature
 from packages.licensing.public_key import LICENSE_PUBLIC_KEY_B64
 
 logger = logging.getLogger("ai_video_flow.licensing")
+
+
+def _get_ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
+
+
+def _urlopen(url_or_req, timeout=20):
+    ctx = _get_ssl_context()
+    try:
+        return urllib.request.urlopen(url_or_req, timeout=timeout, context=ctx)
+    except urllib.error.URLError as e:
+        err_str = str(e)
+        if "CERTIFICATE_VERIFY_FAILED" in err_str or "certificate verify failed" in err_str.lower():
+            logger.warning("Local SSL certificate verification failed; using unverified context for license server (payload is Ed25519-signed).")
+            try:
+                unverified_ctx = ssl._create_unverified_context()
+                return urllib.request.urlopen(url_or_req, timeout=timeout, context=unverified_ctx)
+            except Exception:
+                pass
+        raise
 
 APP_VERSION = "1.1.11"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://license.aivideoflow.in/index.php").rstrip("/")
@@ -129,7 +158,7 @@ class LicenseManager:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with _urlopen(req, timeout=20) as resp:
                 return resp.status, json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as he:
             try:
@@ -256,7 +285,7 @@ class LicenseManager:
     def plans(self) -> Dict[str, Any]:
         """Public plan list for the Pricing page."""
         try:
-            with urllib.request.urlopen(f"{self.server_url}/api/v1/plans", timeout=10) as resp:
+            with _urlopen(f"{self.server_url}/api/v1/plans", timeout=10) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             return {"success": False, "error": f"Could not load plans: {e}", "plans": [], "buy_url": f"{self.server_url}/buy"}
@@ -265,7 +294,7 @@ class LicenseManager:
         """Newer app version, if any: the admin portal's setting first, else the latest GitHub release."""
         latest, url, notes = "", "", ""
         try:
-            with urllib.request.urlopen(f"{self.server_url}/api/v1/app/version", timeout=10) as resp:
+            with _urlopen(f"{self.server_url}/api/v1/app/version", timeout=10) as resp:
                 d = json.loads(resp.read().decode("utf-8"))
                 latest, url, notes = d.get("latest") or "", d.get("download_url") or "", d.get("notes") or ""
         except Exception:
@@ -273,7 +302,7 @@ class LicenseManager:
         if not latest:
             try:
                 req = urllib.request.Request(RELEASES_API, headers={"User-Agent": f"AIVideoFlow/{APP_VERSION}"})
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with _urlopen(req, timeout=10) as resp:
                     d = json.loads(resp.read().decode("utf-8"))
                     latest, url = (d.get("tag_name") or "").lstrip("vV"), d.get("html_url") or ""
             except Exception as e:

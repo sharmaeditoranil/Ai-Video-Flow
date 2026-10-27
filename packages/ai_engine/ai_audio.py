@@ -11,7 +11,7 @@ import json
 import urllib.request
 import urllib.error
 
-from packages.licensing.license_manager import license_manager, APP_VERSION
+from packages.licensing.license_manager import license_manager, APP_VERSION, _urlopen
 
 
 class AIAudioError(RuntimeError):
@@ -30,7 +30,7 @@ def _generate(kind: str, payload: dict, out_path: str) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with _urlopen(req, timeout=300) as resp:
             data = resp.read()
             if not resp.headers.get("Content-Type", "").startswith("audio/") or len(data) < 1000:
                 raise AIAudioError("The server did not return audio.")

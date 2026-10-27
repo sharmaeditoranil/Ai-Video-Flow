@@ -59,7 +59,7 @@ def _urlopen(url_or_req, timeout=20):
                 pass
         raise
 
-APP_VERSION = "1.1.11"
+APP_VERSION = "1.1.12"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://license.aivideoflow.in/index.php").rstrip("/")
 RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"

@@ -581,6 +581,7 @@ const UPDATE_ASSETS = ['windows' => 'Windows Setup.exe', 'mac-arm64' => 'Mac App
 const DOWNLOAD_FILES = ['windows' => 'AI-Video-Flow-Windows-Setup.exe', 'mac-arm64' => 'AI-Video-Flow-Mac-arm64.dmg',
     'mac-x86_64' => 'AI-Video-Flow-Mac-x86_64.dmg', 'android' => 'AI-Video-Flow-Reels.apk'];
 const DEFAULT_DOWNLOADS_BASE = 'https://aivideoflow.in/downloads';
+const WEBSITE_ORIGINS = ['https://aivideoflow.in', 'https://www.aivideoflow.in'];
 
 /**
  * Installer for a platform, first match wins: the admin portal's own link, a file in downloads/ next to index.php
@@ -875,6 +876,13 @@ function require_admin(string $method): void
 // Desktop app API
 // ---------------------------------------------------------------------------
 if (str_starts_with($PATH, '/api/v1/')) {
+    // The website's download popup posts here from aivideoflow.in
+    if ($PATH === '/api/v1/download/lead' && in_array($_SERVER['HTTP_ORIGIN'] ?? '', WEBSITE_ORIGINS, true)) {
+        header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
+        header('Access-Control-Allow-Methods: POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type');
+        header('Vary: Origin');
+    }
     if ($METHOD === 'OPTIONS') {
         http_response_code(204);
         exit;
@@ -885,6 +893,29 @@ if (str_starts_with($PATH, '/api/v1/')) {
         json_out(['success' => true, 'plans' => $rows, 'payments_enabled' => get_setting($pdo, 'payments_enabled') === '1',
             'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '2'),
             'buy_url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/buy']);
+    }
+
+    // Website download popup: name + WhatsApp number become a user (source website_download) before the download starts.
+    // The app's own registration later finds the same user by phone and fills in the rest.
+    if ($PATH === '/api/v1/download/lead' && $METHOD === 'POST') {
+        rate_limit($pdo, 'dl-lead:' . client_ip(), 20, 3600);
+        $b = body_json();
+        $name = trim(substr((string)($b['name'] ?? ''), 0, 80));
+        $phone = preg_replace('/[^0-9+]/', '', (string)($b['phone'] ?? ''));
+        $platform = (string)($b['platform'] ?? '');
+        if ($name === '' || strlen(preg_replace('/\D/', '', $phone)) < 10) {
+            json_out(['success' => false, 'error' => 'Please enter your name and 10-digit WhatsApp number.'], 400);
+        }
+        if (!isset(DOWNLOAD_FILES[$platform])) {
+            json_out(['success' => false, 'error' => 'Unknown download.'], 400);
+        }
+        $st = $pdo->prepare('SELECT id FROM users WHERE phone = ? LIMIT 1');
+        $st->execute([$phone]);
+        if (!$st->fetchColumn()) {
+            $pdo->prepare('INSERT INTO users (name, email, phone, studio, notes, source, platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$name, '', $phone, '', "Downloaded $platform from the website", 'website_download', $platform, time()]);
+        }
+        json_out(['success' => true, 'url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/download/' . $platform]);
     }
 
     // Update notice: installed desktop & mobile apps compare their version with the one set in the admin portal

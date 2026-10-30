@@ -1145,3 +1145,10 @@ select:focus,
 
 
 
+
+/* Clip pickers: "Select video clips" on its own line, Folder + Remove share the next, so nothing runs off a phone screen */
+.pick-row { flex-wrap: wrap; }
+.pick-row #btn-pick-clips { flex: 1 1 100%; }
+.pick-row #btn-pick-folder, .pick-row #btn-clear-clips { flex: 1 1 0; min-width: 0; }
+.loaded-source-bar { flex-wrap: wrap; }
+.loaded-source-bar > span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }

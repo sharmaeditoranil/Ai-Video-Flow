@@ -23,11 +23,13 @@ import cv2
 import numpy as np
 
 from packages.ai_engine.audio_io import ffmpeg_path, load_audio
+from packages.ai_engine import android_media
 from packages.ai_engine.beat_analyzer import beat_analyzer
 from packages.ai_engine.broll_placer import broll_placer
 from packages.ai_engine.color_transfer_engine import ColorTransferEngine
 
 logger = logging.getLogger("ai_video_flow.reel_cloner")
+_FONT_CACHE: Dict[Tuple[int, bool, bool], Any] = {}  # loading a font file per frame is slow on phones
 
 
 REEL_STYLES = {
@@ -229,6 +231,8 @@ class ReelClonerEngine:
                             has_speech = True
             except Exception as e:
                 logger.warning(f"Reference audio extraction warning: {e}")
+            if not ref_audio_path and android_media.ON_ANDROID:
+                ref_audio_path = ref_video_path
 
         # Auto-classify the Reference Reel style
         if has_speech:
@@ -574,6 +578,12 @@ class ReelClonerEngine:
 
         temp_dir = tempfile.mkdtemp(prefix="avf_reel_")
         raw_silent_mp4 = os.path.join(temp_dir, "visual_master.mp4")
+        # Android has no FFmpeg: the LUT is applied to each frame here and the phone's encoder adds the audio
+        try:
+            ffmpeg_exe = ffmpeg_path()
+        except Exception:
+            ffmpeg_exe = None
+        frame_lut = android_media.load_cube(lut_path) if (not ffmpeg_exe and lut_path and os.path.isfile(lut_path)) else None
 
         try:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -668,15 +678,30 @@ class ReelClonerEngine:
                     if watermark:
                         canvas = self._render_watermark(canvas, watermark, vertical_side=cinema_rotate_90)
 
+                    if frame_lut is not None:
+                        canvas = android_media.apply_lut(canvas, frame_lut)
                     writer.write(canvas)
                 cap.release()
 
             writer.release()
 
-            # Final FFmpeg pass: H.264 encoding + 3D LUT (.cube) color grading + Audio mixing
-            cmd = [ffmpeg_path(), "-y", "-v", "error", "-i", raw_silent_mp4]
             audio_file = plan.get("audio") or ""
             has_audio_in = bool(audio_file and os.path.isfile(audio_file))
+            if not ffmpeg_exe:
+                if not android_media.mux_audio(raw_silent_mp4, audio_file, output_mp4_path):
+                    if has_audio_in:
+                        _log("  Music could not be added on this phone; the reel is saved without sound.", "warning")
+                    shutil.copy2(raw_silent_mp4, output_mp4_path)
+                _log(f"  ✅ Ready-to-Post Reel MP4 saved: {output_mp4_path}", "info")
+                return {
+                    "success": True,
+                    "mp4_path": output_mp4_path,
+                    "duration": plan.get("total_duration", 0.0),
+                    "reel_style": plan.get("reel_style"),
+                }
+
+            # Final FFmpeg pass: H.264 encoding + 3D LUT (.cube) color grading + Audio mixing
+            cmd = [ffmpeg_exe, "-y", "-v", "error", "-i", raw_silent_mp4]
             if has_audio_in:
                 cmd.extend(["-i", audio_file])
 
@@ -769,26 +794,27 @@ class ReelClonerEngine:
             from PIL import Image, ImageDraw, ImageFont
             pil_img = Image.fromarray(cv2.cvtColor(bg_with_text, cv2.COLOR_BGR2RGB))
             draw = ImageDraw.Draw(pil_img)
-            font_top = self._load_font(size=148, bold=True)
-            font_bot = self._load_font(size=190, bold=True)
+            def fitted(text: str, size: int):
+                # Long lines shrink to fit 92% of the frame width instead of running off the screen
+                runs = self._script_runs(self._order_devanagari(text), size, True)
+                width = self._runs_width(draw, runs)
+                if width > w * 0.92:
+                    runs = self._script_runs(self._order_devanagari(text), max(40, int(size * w * 0.92 / width)), True)
+                return runs
 
-            line1 = depth_lines[0]
-            line2 = depth_lines[1] if len(depth_lines) > 1 else ""
+            line1 = fitted(depth_lines[0], 148)
+            line2 = fitted(depth_lines[1], 190) if len(depth_lines) > 1 else []
 
             # Line 1: Bold White/Silver at Y = 80
-            bbox1 = draw.textbbox((0, 0), line1, font=font_top)
-            tw1 = bbox1[2] - bbox1[0]
-            x1 = (w - tw1) // 2
+            x1 = int(w - self._runs_width(draw, line1)) // 2
             y1 = int(h * 0.05)
-            draw.text((x1, y1), line1, font=font_top, fill=(235, 240, 245), stroke_width=4, stroke_fill=(10, 15, 20))
+            self._draw_runs(draw, (x1, y1), line1, fill=(235, 240, 245), stroke_width=4, stroke_fill=(10, 15, 20))
 
             # Line 2: Giant Emerald Green (#10B981) at Y = 230 (right behind the speaker's head!)
             if line2:
-                bbox2 = draw.textbbox((0, 0), line2, font=font_bot)
-                tw2 = bbox2[2] - bbox2[0]
-                x2 = (w - tw2) // 2
+                x2 = int(w - self._runs_width(draw, line2)) // 2
                 y2 = y1 + int(h * 0.085)
-                draw.text((x2, y2), line2, font=font_bot, fill=(28, 185, 115), stroke_width=5, stroke_fill=(8, 25, 18))
+                self._draw_runs(draw, (x2, y2), line2, fill=(28, 185, 115), stroke_width=5, stroke_fill=(8, 25, 18))
 
             bg_with_text = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         except Exception:
@@ -847,17 +873,15 @@ class ReelClonerEngine:
         """
         if not text:
             return frame
+        text, highlight = self._order_devanagari(text), self._order_devanagari(highlight)
         h, w = frame.shape[:2]
         try:
             from PIL import Image, ImageDraw
             pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             draw = ImageDraw.Draw(pil_img)
-            font = self._load_font(size=54, bold=True)
-
             y_pos = int(h * 0.62)
-            bbox = draw.textbbox((0, 0), text, font=font)
-            total_w = bbox[2] - bbox[0]
-            x_start = max(40, (w - total_w) // 2)
+            all_runs = self._script_runs(text, 54, True)
+            x_start = max(40, int(w - self._runs_width(draw, all_runs)) // 2)
 
             if highlight and highlight in text:
                 before, _, after = text.partition(highlight)
@@ -870,11 +894,10 @@ class ReelClonerEngine:
                 for seg, color in parts:
                     if not seg:
                         continue
-                    draw.text((cur_x, y_pos), seg, font=font, fill=color, stroke_width=4, stroke_fill=(0, 0, 0))
-                    seg_box = draw.textbbox((0, 0), seg, font=font)
-                    cur_x += (seg_box[2] - seg_box[0])
+                    cur_x = self._draw_runs(draw, (cur_x, y_pos), self._script_runs(seg, 54, True),
+                                            fill=color, stroke_width=4, stroke_fill=(0, 0, 0))
             else:
-                draw.text((x_start, y_pos), text, font=font, fill=(255, 255, 255), stroke_width=4, stroke_fill=(0, 0, 0))
+                self._draw_runs(draw, (x_start, y_pos), all_runs, fill=(255, 255, 255), stroke_width=4, stroke_fill=(0, 0, 0))
 
             return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         except Exception:
@@ -918,7 +941,7 @@ class ReelClonerEngine:
         h, w = frame.shape[:2]
         try:
             from PIL import Image, ImageDraw
-            font = self._load_font(size=30, bold=False)
+            font = self._load_font(size=30, bold=False, text=text)
             if vertical_side:
                 txt_img = Image.new("RGBA", (400, 70), (0, 0, 0, 0))
                 d = ImageDraw.Draw(txt_img)
@@ -937,9 +960,69 @@ class ReelClonerEngine:
         except Exception:
             return frame
 
+    def _script_runs(self, text: str, size: int, bold: bool) -> List[Tuple[str, Any]]:
+        """Splits mixed Hinglish text into Hindi / Latin pieces, each with a font that has its letters."""
+        pieces: List[List[Any]] = []
+        for ch in text:
+            hindi = "\u0900" <= ch <= "\u097f"
+            if pieces and (ch == " " or pieces[-1][1] == hindi):
+                pieces[-1][0] += ch  # spaces stay with the piece before them
+            else:
+                pieces.append([ch, hindi])
+        return [(t, self._load_font(size=size, bold=bold, text="\u0915" if hindi else "a")) for t, hindi in pieces]
+
     @staticmethod
-    def _load_font(size: int = 52, bold: bool = True):
-        """Loads a system font that supports both Latin and Hindi/Devanagari."""
+    def _runs_width(draw, runs) -> float:
+        return sum(draw.textlength(t, font=f) for t, f in runs)
+
+    @staticmethod
+    def _draw_runs(draw, xy, runs, **kw) -> float:
+        """Draws the pieces left to right; returns the x where the text ends."""
+        x, y = xy
+        for t, f in runs:
+            draw.text((x, y), t, font=f, **kw)
+            x += draw.textlength(t, font=f)
+        return x
+
+    @staticmethod
+    def _order_devanagari(text: str) -> str:
+        """Without the raqm shaping library (the Android build), Pillow draws Hindi letters in typed order, so the
+        'ि' vowel sign lands after its consonant. Moving it in front of the consonant cluster fixes the common case."""
+        if not text or "\u093f" not in text:
+            return text
+        try:
+            from PIL import features
+            if features.check("raqm"):
+                return text
+        except Exception:
+            pass
+        out: List[str] = []
+        for ch in text:
+            if ch == "\u093f" and out:
+                # Walk back over the consonant cluster: consonant (+ nukta) (+ halant + consonant)...
+                i = len(out) - 1
+                if out[i] == "\u093c" and i > 0:
+                    i -= 1
+                while i >= 2 and out[i - 1] == "\u094d":
+                    i -= 2
+                out.insert(i, ch)
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    @staticmethod
+    def _load_font(size: int = 52, bold: bool = True, text: str = ""):
+        """Loads a system font for `text`: one with Latin + Hindi/Devanagari on desktop. Android's Devanagari
+        font has no Latin letters, so it is only picked when the text contains Hindi."""
+        has_hindi = any("\u0900" <= ch <= "\u097f" for ch in text)
+        key = (size, bold, has_hindi)
+        if key in _FONT_CACHE:
+            return _FONT_CACHE[key]
+        _FONT_CACHE[key] = font = ReelClonerEngine._find_font(size, bold, has_hindi)
+        return font
+
+    @staticmethod
+    def _find_font(size: int, bold: bool, has_hindi: bool):
         from PIL import ImageFont
         candidates = [
             "/System/Library/Fonts/Kohinoor.ttc",
@@ -949,14 +1032,29 @@ class ReelClonerEngine:
             "C:/Windows/Fonts/arialbd.ttf",
             "/system/fonts/NotoSansDevanagari-Bold.ttf",
             "/system/fonts/Roboto-Bold.ttf",
+            # Android 12+ ships variable fonts only
+            "/system/fonts/NotoSansDevanagari-VF.ttf",
+            "/system/fonts/Roboto-Regular.ttf",
+            "/system/fonts/RobotoStatic-Regular.ttf",
         ]
         for path in candidates:
+            if path.startswith("/system/fonts/NotoSansDevanagari") and not has_hindi:
+                continue
             if os.path.isfile(path):
                 try:
-                    return ImageFont.truetype(path, size=size)
+                    font = ImageFont.truetype(path, size=size)
+                    if bold and path.endswith("-VF.ttf"):
+                        try:
+                            font.set_variation_by_name("Bold")
+                        except Exception:
+                            pass
+                    return font
                 except Exception:
                     continue
-        return ImageFont.load_default()
+        try:
+            return ImageFont.load_default(size=size)  # Pillow 10.1+: scalable built-in font
+        except TypeError:
+            return ImageFont.load_default()
 
 
 reel_cloner = ReelClonerEngine()

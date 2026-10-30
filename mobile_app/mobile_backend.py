@@ -35,11 +35,15 @@ from packages.ai_engine.reel_cloner import reel_cloner, REEL_STYLES
 from packages.ai_engine.cloud_ai_client import cloud_ai_client
 from packages.licensing.license_manager import LicenseManager, _hardware_id
 from packages.core_premiere.premiere_adapter import premiere_adapter
+from packages.ai_engine import android_media
+
+# Phone videos are read and written through Android's MediaCodec (OpenCV for Android has no FFmpeg)
+android_media.install()
 
 logger = logging.getLogger("ai_video_flow.mobile_app")
 
 MOBILE_PORT = int(os.environ.get("AVF_MOBILE_PORT", "5680"))
-MOBILE_APP_VERSION = "1.1.15"
+MOBILE_APP_VERSION = "1.1.16"
 MOBILE_VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json")
 MOBILE_DATA_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow-mobile")
 MOBILE_UPLOADS_DIR = os.path.join(MOBILE_DATA_DIR, "uploads")

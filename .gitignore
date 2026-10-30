@@ -68,3 +68,4 @@ mobile_app/android/app/src/main/assets/www/
 # Server upload packages (APK and installers are large)
 dist/server-upload-*
 dist/website-upload-*.zip
+dist/*.php

@@ -6,13 +6,18 @@ its license key + machine id; the server checks the license, applies the admin's
 and adds the real Anthropic API key. No API key is ever stored on the customer's computer.
 """
 
+from __future__ import annotations
+
 import os
 import json
 import base64
 import logging
 from typing import Dict, Any, List, Callable, Optional
 
-import anthropic
+try:
+    import anthropic
+except ImportError:  # the Android Reels app ships without the SDK; Smart AI then reports itself unavailable
+    anthropic = None
 
 from packages.licensing.license_manager import license_manager
 
@@ -74,6 +79,8 @@ class CloudAIClient:
         status = license_manager.get_status()
         if not status["has_credits"]:
             raise CloudAIError("Smart AI needs a Smart AI pack with weddings left (Pricing page).")
+        if anthropic is None:
+            raise CloudAIError("Smart AI is not available in this version of the app.")
         key, machine_id = license_manager.ai_credentials()
         return anthropic.Anthropic(
             api_key=key,
@@ -104,7 +111,7 @@ class CloudAIClient:
 
     def get_status(self) -> Dict[str, Any]:
         st = license_manager.get_status()
-        return {"available": st["has_credits"], "provider": "Smart AI (via license server)"}
+        return {"available": st["has_credits"] and anthropic is not None, "provider": "Smart AI (via license server)"}
 
     # ------------------------------------------------------------------
     # AI shot review for the wedding job
@@ -140,6 +147,83 @@ class CloudAIClient:
             "shots": {s["index"]: s for s in data.get("shots", []) if 0 <= s.get("index", -1) < len(thumbnails)},
             "story_note": data.get("story_note", ""),
         }
+
+    # ------------------------------------------------------------------
+    # AI Reference-to-Reel Clone Blueprint (matches ref shots + depth text + Hinglish captions)
+    # ------------------------------------------------------------------
+    def plan_reel_clone(
+        self,
+        ref_keyframes: List[str],
+        user_thumbnails: List[str],
+        instructions: str = "",
+        total_duration: float = 30.0,
+    ) -> Dict[str, Any]:
+        """
+        Compares Reference Reel frames with User's raw clip frames to produce:
+        - detected_style: talking_depth_captions | cinema_90_rotated | speed_ramp_luxury | beat_sync_montage
+        - shot_order: ordered list of user clip indices matching the reference progression
+        - depth_hero_text: 2-line behind-subject impact text (e.g. ['ROUGH CUT', 'READY'])
+        - captions: timed Hinglish/Hindi/English pop-up caption lines with highlighted keywords
+        """
+        content: List[Dict[str, Any]] = []
+        for idx, rpath in enumerate(ref_keyframes[:6]):
+            if not os.path.isfile(rpath):
+                continue
+            with open(rpath, "rb") as f:
+                b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+            content.append({"type": "text", "text": f"Reference Reel Frame {idx}"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
+
+        for idx, upath in enumerate(user_thumbnails[:24]):
+            if not os.path.isfile(upath):
+                continue
+            with open(upath, "rb") as f:
+                b64 = base64.standard_b64encode(f.read()).decode("utf-8")
+            content.append({"type": "text", "text": f"User Raw Clip {idx}"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}})
+
+        content.append({"type": "text", "text": (
+            f"You are cloning the editing style of the Reference Reel onto the User's Raw Clips (target duration {total_duration:.0f}s).\n"
+            "1. detected_style: choose 'talking_depth_captions' if talking head/educational with captions, "
+            "'cinema_90_rotated' if 90-degree rotated horizontal cinema wedding shots, "
+            "'speed_ramp_luxury' if macro bridal/detail shots with fast-to-slow speed ramps, or 'beat_sync_montage'.\n"
+            "2. shot_order: list of User Raw Clip indices (0-based) ordered to mirror the Reference Reel's shot flow (e.g. hand hold -> bangles -> dress -> portrait).\n"
+            "3. depth_hero_text: 2 short uppercase impact words/phrases to place in giant text behind the subject's head (e.g. ['ROUGH CUT', 'READY'] or ['ROYAL', 'WEDDING']).\n"
+            "4. captions: 3 to 5 punchy Hinglish/Hindi pop-up caption objects {start, end, text, highlight} spanning the reel."
+            + (f"\nEditor's instructions: {instructions}" if instructions else "")
+        )})
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "detected_style": {"type": "string"},
+                "shot_order": {"type": "array", "items": {"type": "integer"}},
+                "depth_hero_text": {"type": "array", "items": {"type": "string"}},
+                "captions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "number"},
+                            "end": {"type": "number"},
+                            "text": {"type": "string"},
+                            "highlight": {"type": "string"},
+                        },
+                        "required": ["start", "end", "text", "highlight"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["detected_style", "shot_order", "depth_hero_text", "captions"],
+            "additionalProperties": False,
+        }
+        response = self._create(
+            max_tokens=8000,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+        )
+        text = next((b.text for b in response.content if b.type == "text"), "{}")
+        return json.loads(text)
 
     # ------------------------------------------------------------------
     # AI audio brief: music prompt + voiceover script for the edit
@@ -229,3 +313,5 @@ class CloudAIClient:
 
 
 cloud_ai_client = CloudAIClient()
+cloud_ai = cloud_ai_client
+

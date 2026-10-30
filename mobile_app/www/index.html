@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>AI Video Flow — Reels Studio</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=25">
+  <script src="https://checkout.razorpay.com/v1/checkout.js" async></script>
+</head>
+<body>
+  <div class="mobile-shell">
+    <!-- Top Studio Bar -->
+    <header class="m-header">
+      <div class="m-brand">
+        <img src="logo.png" alt="AI Video Flow" class="m-logo">
+        <div>
+          <div class="m-title">AI Video Flow</div>
+          <div class="m-sub" id="m-ver-sub">v1.1.15 · AI editing assistant</div>
+        </div>
+      </div>
+      <button class="profile-chip" id="top-plan-btn" data-tab="profile" title="My Profile">
+        <span class="avatar" id="top-chip-avatar">G</span>
+        <span class="chip-text">
+          <b id="top-chip-name">Guest</b>
+          <span id="top-chip-sub">Free · 2 per day</span>
+        </span>
+      </button>
+    </header>
+
+    <!-- Main Viewport -->
+    <main class="m-main">
+      <!-- Automatic Over-The-Air (OTA) App Update Card (only visible when a newer version exists) -->
+      <div class="update-banner" id="m-update-banner" hidden>
+        <div class="update-info">
+          <div class="update-badge-row">
+            <span class="update-dot"></span>
+            <b id="m-update-title">Update available</b>
+          </div>
+          <span id="m-update-notes">A new version is ready to install on your phone.</span>
+        </div>
+        <div class="update-actions">
+          <a class="btn btn-gold btn-sm" id="m-update-dl" href="#" target="_blank" rel="noopener">Update</a>
+          <button class="btn-dismiss" id="m-update-close" title="Dismiss">✕</button>
+        </div>
+      </div>
+      <!-- TAB 1: STUDIO -->
+      <section class="m-pane active" id="pane-create">
+        <!-- Subtle 1-Line PC License Notice -->
+        <div class="pc-free-strip" id="pc-free-banner">
+          <span>Using AI Video Flow on PC or Mac? Your license is included free on mobile.</span>
+          <button class="link-btn" data-tab="profile">Activate →</button>
+        </div>
+
+        <div class="card">
+          <!-- Step 1: Raw Footage -->
+          <div class="step">
+            <div class="step-head-row">
+              <div class="step-title" style="margin-bottom:0"><span class="step-n">1</span>Raw footage</div>
+              <button class="link-btn" id="btn-reset-project" title="Clear all loaded files and start a new project">Reset project</button>
+            </div>
+            <div class="input-row" style="margin-top:10px">
+              <input type="file" id="file-clips" accept="video/*,.mp4,.mov,.mkv,.avi,.m4v" multiple hidden>
+              <input type="file" id="file-folder" webkitdirectory directory multiple hidden>
+              <button class="btn btn-primary btn-block" id="btn-pick-clips">+ Select video clips</button>
+              <button class="btn" id="btn-pick-folder" title="Select an entire folder of videos">Folder</button>
+              <button class="btn btn-remove-src" id="btn-clear-clips" title="Remove loaded folder or video clips">✕ Remove</button>
+            </div>
+            <div class="loaded-source-bar" id="loaded-source-bar" hidden>
+              <span id="loaded-source-label"><b>Loaded:</b> 0 clips</span>
+              <button type="button" class="btn btn-remove-src btn-sm" id="btn-remove-source-bar">✕ Remove folder / clips</button>
+            </div>
+            <div class="hint" id="clips-status">Phone: Long-press a video in Gallery to select multiple clips, or tap "+ Select video clips" again to add more.</div>
+            <div class="clip-chips" id="clips-list" hidden></div>
+          </div>
+
+          <!-- Step 2: Style, Reference & Audio -->
+          <div class="step">
+            <div class="step-title"><span class="step-n">2</span>Style &amp; reference</div>
+
+            <label class="lbl" for="sel-m-style" style="margin-top:0">Reel editing style</label>
+            <select id="sel-m-style" class="m-select">
+              <option value="auto_ref">Auto-match reference video (cuts, speed, LUT &amp; B-roll)</option>
+              <option value="talking_depth_captions">Talking head — Behind-person depth text &amp; captions</option>
+              <option value="cinema_90_rotated">90° rotated cinema wedding reel + watermark</option>
+              <option value="speed_ramp_luxury">Luxury macro speed-ramp + moody color grade</option>
+              <option value="beat_sync_montage">Fast beat-synced 9:16 montage</option>
+            </select>
+
+            <label class="lbl">Reference video <span class="opt">optional</span></label>
+            <div class="input-row">
+              <input type="file" id="file-ref" accept="video/*" hidden>
+              <button class="btn btn-block" id="btn-pick-ref">Choose reference reel</button>
+              <button class="btn btn-icon" id="btn-clear-ref" title="Remove reference" hidden>✕</button>
+            </div>
+            <div class="hint" id="ref-status">Clones cut rhythm, pacing, 3D color LUT and audio beats from any reel.</div>
+
+            <label class="lbl">Song for beat sync <span class="opt">optional</span></label>
+            <div class="input-row">
+              <input type="file" id="file-audio" accept="audio/*,video/*" hidden>
+              <button class="btn btn-block" id="btn-pick-audio">Choose audio track</button>
+              <button class="btn btn-icon" id="btn-clear-audio" title="Remove audio" hidden>✕</button>
+            </div>
+          </div>
+
+          <!-- Step 3: Duration & Customization -->
+          <div class="step step-last">
+            <div class="step-title"><span class="step-n">3</span>Output &amp; options</div>
+
+            <label class="lbl" style="margin-top:0">Target duration</label>
+            <div class="segmented" id="dur-pills">
+              <button data-dur="15">15s</button>
+              <button data-dur="30" class="active">30s</button>
+              <button data-dur="45">45s</button>
+              <button data-dur="60">60s</button>
+            </div>
+
+            <details class="adv-details">
+              <summary>Typography, B-roll &amp; AI options</summary>
+              <div class="adv-body">
+                <div class="two-col">
+                  <div>
+                    <label class="lbl" style="margin-top:0">Depth text <span class="opt">optional</span></label>
+                    <input type="text" id="m-depth-text" placeholder="ROUGH CUT | READY" spellcheck="false">
+                  </div>
+                  <div>
+                    <label class="lbl" style="margin-top:0">Watermark <span class="opt">optional</span></label>
+                    <input type="text" id="m-watermark" placeholder="Studio name" spellcheck="false">
+                  </div>
+                </div>
+
+                <label class="lbl">On-screen captions <span class="opt">optional (separate lines with |)</span></label>
+                <input type="text" id="m-captions" placeholder="पूरा Rough Cut Ready करता है | Automatic Beat Sync" spellcheck="false">
+
+                <div class="checks">
+                  <label class="check-row">
+                    <input type="checkbox" id="chk-m-broll" checked>
+                    <span>Auto B-roll cutaways &amp; retouch split wipe</span>
+                  </label>
+                  <label class="check-row">
+                    <input type="checkbox" id="chk-use-ref-audio" checked>
+                    <span>Use reference video audio when no song is selected</span>
+                  </label>
+                  <label class="check-row">
+                    <input type="checkbox" id="chk-m-smart-ai">
+                    <span>Smart AI shot selection &amp; captions <span class="pill-gold">Premium</span></span>
+                  </label>
+                </div>
+
+                <input type="text" id="m-instructions" placeholder="Notes for AI (optional)" style="margin-top:10px;" spellcheck="false">
+              </div>
+            </details>
+          </div>
+
+          <button class="btn btn-primary btn-lg btn-block" id="btn-build-reel">Render 9:16 Reel (.MP4)</button>
+          <div class="m-progress" id="m-progress" hidden><div class="m-bar" id="m-bar"></div></div>
+          <div class="m-console" id="m-console" hidden></div>
+        </div>
+
+        <!-- Compact Academy Strip at bottom of Studio (never blocks editing controls) -->
+        <a class="qa-ad ad-strip" href="https://quickartphotography.in/master-class/" target="_blank" rel="noopener">
+          <img src="ads/qa-logo.webp" alt="Quick Art Photography Academy">
+          <div class="ad-strip-text">
+            <span class="ad-kicker">Quick Art Photography Academy</span>
+            <b>AI Advanced Video Editing Course</b>
+            <span>Learn Reels, Wedding Films &amp; AI Editing with Anil Sharma</span>
+          </div>
+          <span class="ad-cta">Join →</span>
+        </a>
+      </section>
+
+      <!-- TAB 2: MY REELS -->
+      <section class="m-pane" id="pane-reels">
+        <div class="card" id="active-player-card">
+          <h3>Preview (1080×1920)</h3>
+          <div class="player-wrap" id="player-wrap">
+            <video id="reel-player" controls playsinline loop></video>
+            <div class="player-empty" id="player-empty">No reel rendered yet. Build a reel from the Studio tab to preview and save it here.</div>
+          </div>
+          <div class="reel-actions" id="reel-actions" hidden>
+            <a class="btn btn-primary btn-block" id="btn-dl-mp4" href="#" download>Save .MP4 to Device</a>
+            <a class="btn btn-block" id="btn-dl-xml" href="#" download>Export XML Timeline (Premiere / Resolve)</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Recent renders</h3>
+          <div id="recent-reels-list" class="recent-list">
+            <div class="muted">No reels generated in this session yet.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: PRICING (100% MATCHED WITH PC) -->
+      <section class="m-pane" id="pane-pricing">
+        <div class="card">
+          <h3>Plans &amp; pricing</h3>
+          <p class="muted" style="margin-bottom:14px;font-size:12.5px">One subscription unlocks both Desktop (Windows &amp; Mac) and Mobile at the exact same price.</p>
+          <div class="segmented" id="m-price-tabs" style="margin-bottom:14px">
+            <button data-pg="local" class="active">AI Editing</button>
+            <button data-pg="ai">Smart AI Packs</button>
+          </div>
+          <div id="m-plans-local" class="m-plans-list"></div>
+          <div id="m-plans-ai" class="m-plans-list" hidden></div>
+        </div>
+      </section>
+
+      <!-- TAB 4: PROFILE & LICENSE -->
+      <section class="m-pane" id="pane-profile">
+        <div class="card profile-banner">
+          <div class="pf-circle" id="m-pf-avatar">G</div>
+          <div>
+            <h3 id="m-pf-name" style="margin:0">Guest</h3>
+            <div id="m-pf-plan" class="muted" style="font-size:12.5px">Free Edition · 2 edits per day</div>
+            <div id="m-pf-credits" style="font-size:12px;color:var(--gold);margin-top:2px"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <h3 style="margin:0">Your Profile (Free Trial)</h3>
+            <span class="pill-reel" id="m-reg-badge">Required for Free Trial</span>
+          </div>
+          <p class="muted" style="font-size:12.5px;margin-bottom:12px">Register your Name, WhatsApp Number &amp; Email to unlock <b>2 Free Edits Per Day</b> across Mobile, Mac &amp; Windows.</p>
+          <label class="lbl" style="margin-top:0">Your Name *</label>
+          <input type="text" id="m-reg-name" placeholder="e.g. Rahul Sharma" autocomplete="name">
+          <label class="lbl">WhatsApp Number *</label>
+          <input type="tel" id="m-reg-phone" placeholder="+91 98765 43210" autocomplete="tel">
+          <label class="lbl">Email Address *</label>
+          <input type="email" id="m-reg-email" placeholder="you@studio.com" autocomplete="email">
+          <label class="lbl">Studio Name / City <span class="opt">optional</span></label>
+          <input type="text" id="m-reg-studio" placeholder="e.g. Royal Films, Patna">
+          <div class="hint" id="m-reg-msg" hidden style="margin-top:8px"></div>
+          <button class="btn btn-primary btn-block" id="btn-m-save-profile" style="margin-top:12px">Save Profile · Unlock 2 Free Edits/Day</button>
+        </div>
+
+        <div class="card">
+          <h3>License key</h3>
+          <p class="muted" style="font-size:12.5px;margin-bottom:12px">Enter your PC/Mac license key to unlock this mobile app at no extra cost, or sync directly from this computer.</p>
+          <input type="text" id="m-lic-key" class="mono" placeholder="AVF-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off">
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-primary" id="btn-m-activate">Activate key</button>
+            <button class="btn btn-gold" id="btn-m-sync-pc">Sync from PC</button>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-ghost-danger" id="btn-m-remove-lic">Remove key from device</button>
+          </div>
+          <div class="hint" style="margin-top:12px">Mobile ID: <code id="m-device-id">…</code></div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0">App updates</h3>
+            <span class="pill-reel" id="m-cur-ver-pill">v1.1.15</span>
+          </div>
+          <p class="muted" style="font-size:12.5px;margin-bottom:12px" id="m-update-status-text">Your app automatically checks for new updates whenever it starts.</p>
+          <div class="btn-row">
+            <button class="btn btn-block" id="btn-m-check-update">Check for updates</button>
+            <a class="btn btn-gold btn-block" id="btn-m-install-update" href="#" target="_blank" rel="noopener" hidden>Download new .APK</a>
+          </div>
+        </div>
+
+        <!-- Full Academy Masterclass Card in Account Tab -->
+        <a class="qa-ad ad-card-mobile" href="https://quickartphotography.in/master-class/" target="_blank" rel="noopener">
+          <img class="ad-photo" src="ads/anil-sharma.webp" alt="Anil Sharma, Quick Art Photography Academy">
+          <div class="ad-body">
+            <div class="ad-brand">
+              <img src="ads/qa-logo.webp" alt="">
+              <span>Quick Art Photography Academy</span>
+            </div>
+            <h4>AI Advanced Video Editing Course</h4>
+            <p>Wedding films, reels &amp; AI editing in DaVinci Resolve, Premiere Pro &amp; EDIUS — learn from Anil Sharma in Hindi.</p>
+            <div class="ad-meta">14 weeks · Siwan campus · EMI from ₹2,500/mo</div>
+            <span class="btn btn-gold btn-sm ad-join-btn">Join the course →</span>
+          </div>
+        </a>
+      </section>
+    </main>
+
+    <!-- In-App Mobile Purchase Modal (UPI / GPay / PhonePe / Card / NetBanking) -->
+    <div class="modal-backdrop" id="checkout-modal" hidden>
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <div>
+            <h3 id="co-plan-name" style="margin:0">Choose Plan</h3>
+            <div class="muted" id="co-plan-price" style="font-size:12.5px">₹399 · Works on Mobile + PC/Mac</div>
+          </div>
+          <button class="btn-dismiss" id="co-close">✕</button>
+        </div>
+
+        <form id="co-form">
+          <label class="lbl" style="margin-top:0">Full name</label>
+          <input type="text" id="co-name" required placeholder="Your name" autocomplete="name">
+
+          <label class="lbl">Email address <span class="opt">(license key is also emailed here)</span></label>
+          <input type="email" id="co-email" required placeholder="you@example.com" autocomplete="email">
+
+          <label class="lbl">Mobile number <span class="opt">(for UPI / WhatsApp support)</span></label>
+          <input type="tel" id="co-phone" required placeholder="10-digit mobile number" autocomplete="tel">
+
+          <button type="submit" class="btn btn-primary btn-lg btn-block" id="co-submit-btn" style="margin-top:14px">Pay with UPI / Card / NetBanking</button>
+          <button type="button" class="btn btn-block" id="co-web-btn" style="margin-top:8px">Open in browser checkout</button>
+        </form>
+
+        <div id="co-result" class="co-result" hidden></div>
+      </div>
+    </div>
+
+    <!-- Mandatory Startup Registration Gate (App opens ONLY after registering or activating a license key) -->
+    <div class="reg-gate-backdrop" id="reg-modal">
+      <div class="reg-gate-card">
+        <div class="reg-gate-brand">
+          <img src="logo.png" alt="AI Video Flow">
+          <div>
+            <div style="font-weight:700;font-size:15px">AI Video Flow</div>
+            <div class="muted" style="font-size:11.5px">Reels &amp; Shorts AI Studio</div>
+          </div>
+        </div>
+        <span class="trial-end-badge" style="margin-bottom:8px">🎁 Free Trial · 2 Edits Per Day</span>
+        <h3 style="margin:0 0 4px;font-size:18px;font-weight:700">Register to Open App</h3>
+        <p class="muted" style="font-size:12.5px;line-height:1.45;margin:0 0 14px">
+          App shuru karne ke liye apna Name, WhatsApp Number aur Email register karein. Roz <b>2 Free Edits</b> turant unlock ho jayenge!
+        </p>
+        <form id="reg-modal-form">
+          <label class="lbl" style="margin-top:0">Your Full Name *</label>
+          <input type="text" id="rm-name" required placeholder="e.g. Rahul Sharma" autocomplete="name">
+          <label class="lbl">WhatsApp Number *</label>
+          <input type="tel" id="rm-phone" required placeholder="+91 98765 43210" autocomplete="tel">
+          <label class="lbl">Email Address *</label>
+          <input type="email" id="rm-email" required placeholder="you@studio.com" autocomplete="email">
+          <label class="lbl">Studio Name / City <span class="opt">optional</span></label>
+          <input type="text" id="rm-studio" placeholder="e.g. Royal Wedding Films, Patna">
+          <div class="hint" id="rm-error" hidden style="color:#fca5a5;margin-top:8px"></div>
+          <button type="submit" class="btn btn-primary btn-lg btn-block" id="rm-submit-btn" style="margin-top:14px">Register &amp; Open App →</button>
+        </form>
+
+        <details class="reg-gate-key-box">
+          <summary>Already have a License Key? Activate here →</summary>
+          <div style="margin-top:10px">
+            <input type="text" id="rm-lic-key" class="mono" placeholder="AVF-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off">
+            <button type="button" class="btn btn-gold btn-block" id="rm-activate-btn" style="margin-top:8px">Activate Key &amp; Open App</button>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Free Trial Ended / Upgrade Popup Modal -->
+    <div class="modal-backdrop" id="trial-ended-modal" hidden>
+      <div class="modal-sheet trial-end-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <span class="trial-end-badge">⚡ 2 / 2 Free Edits Used Today</span>
+          <button class="btn-dismiss" id="te-close" title="Close">✕</button>
+        </div>
+        <h3 class="trial-end-title">Your Today's Free Trial Has Ended</h3>
+        <p class="trial-end-desc">
+          Aaj ke aapke <b>2 Free Edits</b> poore ho chuke hain. Aapka Free Trial <b>kal raat 12 baje reset hoga</b> — ya abhi Plan Purchase karein aur bina ruke <b>Unlimited Edit</b> karein!
+        </p>
+        <div class="trial-end-perks">
+          <div><i>✓</i><span><b>Unlimited Edits Every Day</b> — No daily limit or waiting</span></div>
+          <div><i>✓</i><span><b>1 Plan = Mobile + PC/Mac Free</b> — Works on both devices</span></div>
+          <div><i>✓</i><span><b>Starts at ₹399/month</b> — Instant activation via UPI / Card</span></div>
+        </div>
+        <button type="button" class="btn btn-gold btn-lg btn-block" id="te-buy-btn">Purchase Plan · Unlock Unlimited Edits →</button>
+        <button type="button" class="btn btn-block" id="te-key-btn" style="margin-top:8px">Already Have a License Key? Activate</button>
+        <button type="button" class="btn-dismiss" id="te-later-btn" style="width:100%;margin-top:8px;font-size:12px;">Wait Until Tomorrow (Reset Kal Hoga)</button>
+      </div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="m-nav">
+      <button class="m-nav-btn active" data-tab="create"><span>✦</span><small>Studio</small></button>
+      <button class="m-nav-btn" data-tab="reels"><span>▶</span><small>Reels</small></button>
+      <button class="m-nav-btn" data-tab="pricing"><span>₹</span><small>Pricing</small></button>
+      <button class="m-nav-btn" data-tab="profile"><span>☺</span><small>Account</small></button>
+    </nav>
+  </div>
+  <script src="app.js?v=25"></script>
+</body>
+</html>

@@ -53,3 +53,14 @@ dist/htaccess.txt
 website/
 aivideoflow_in_website.zip
 
+
+# Server bundle contains config.php secrets, wherever it is built
+license-server-bundle.zip
+
+# Android app: installers and build output (APK is shared from the server's downloads/ folder)
+*.apk
+mobile_app/android/.gradle/
+mobile_app/android/local.properties
+# Staged by mobile_app/build_apk.sh from mobile_app/www and packages/
+mobile_app/android/app/src/main/python/
+mobile_app/android/app/src/main/assets/www/

@@ -59,12 +59,13 @@ def _urlopen(url_or_req, timeout=20):
                 pass
         raise
 
-APP_VERSION = "1.1.12"
+APP_VERSION = "1.1.15"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://license.aivideoflow.in/index.php").rstrip("/")
 RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 _CONFIG_DIR = os.path.expanduser("~/.ai-video-flow")
 _LICENSE_FILE = os.path.join(_CONFIG_DIR, "license.json")
+_PROFILE_FILE = os.path.join(_CONFIG_DIR, "user_profile.json")
 _PUBLIC_KEY = Ed25519PublicKey.from_public_bytes(base64.b64decode(LICENSE_PUBLIC_KEY_B64))
 
 
@@ -178,11 +179,83 @@ class LicenseManager:
         # Token must be current; a clock set far before the issue time is not trusted either
         return c.get("issued_at", 0) - 3600 <= now <= c.get("valid_until", 0)
 
+    # ---------------- user profile registration (mandatory for Free Trial across Mobile, Mac & Windows) ----------------
+    def get_user_profile(self) -> Dict[str, str]:
+        pfile = getattr(self, "_profile_file", _PROFILE_FILE)
+        for candidate in (pfile, _PROFILE_FILE):
+            if os.path.isfile(candidate):
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        d = json.load(f)
+                    if isinstance(d, dict) and d.get("phone") and d.get("email"):
+                        return {
+                            "name": str(d.get("name") or "").strip(),
+                            "phone": str(d.get("phone") or "").strip(),
+                            "email": str(d.get("email") or "").strip(),
+                            "studio": str(d.get("studio") or "").strip(),
+                        }
+                except Exception:
+                    pass
+        return {"name": "", "phone": "", "email": "", "studio": ""}
+
+    def is_profile_registered(self) -> bool:
+        if self._claims_valid():
+            return True
+        prof = self.get_user_profile()
+        digits = "".join(ch for ch in prof.get("phone", "") if ch.isdigit())
+        return bool(prof.get("name") and len(digits) >= 10 and "@" in prof.get("email", ""))
+
+    def register_user_profile(self, name: str, phone: str, email: str, studio: str = "", platform_name: str = "") -> Dict[str, Any]:
+        name = (name or "").strip()
+        email = (email or "").strip().lower()
+        digits = "".join(ch for ch in (phone or "") if ch.isdigit() or ch == "+")
+        raw_digits = "".join(ch for ch in digits if ch.isdigit())
+        studio = (studio or "").strip()
+        if not name or len(raw_digits) < 10 or "@" not in email or "." not in email.split("@")[-1]:
+            return {
+                "success": False,
+                "error": "Please enter your Full Name, 10-digit WhatsApp Number, and valid Email Address.",
+            }
+        prof = {"name": name, "phone": digits, "email": email, "studio": studio}
+        pfile = getattr(self, "_profile_file", _PROFILE_FILE)
+        os.makedirs(os.path.dirname(pfile), exist_ok=True)
+        with open(pfile, "w", encoding="utf-8") as f:
+            json.dump(prof, f)
+        # Also mirror to shared desktop profile so registering once on the same machine syncs both
+        try:
+            os.makedirs(_CONFIG_DIR, exist_ok=True)
+            with open(_PROFILE_FILE, "w", encoding="utf-8") as f:
+                json.dump(prof, f)
+        except Exception:
+            pass
+
+        plat = platform_name or ("Android" if str(self.machine_id).startswith("F0B11E") else platform.system())
+        status, data = self._post("/api/v1/user/register", {
+            "machine_id": self.machine_id,
+            "name": name,
+            "phone": digits,
+            "email": email,
+            "studio": studio,
+            "platform": plat,
+        })
+        if status == 200 and data.get("license_key") and not self._license_key:
+            self._license_key = data.get("license_key")
+        return {
+            "success": True,
+            "synced_server": bool(status == 200 and data.get("success")),
+            "license_key": data.get("license_key", ""),
+            "user_profile": prof,
+            "status": self.get_status(),
+            "message": "Profile saved! You can now use your 2 Free Edits per day.",
+        }
+
     # ---------------- public API ----------------
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
             c = self._claims or {}
             valid = self._claims_valid()
+            prof = self.get_user_profile()
+            registered = self.is_profile_registered()
             plan_type = c.get("plan_type", "free")
             unlimited = plan_type == "unlimited"
             ai_enabled = valid and plan_type in ("per_wedding", "unlimited")
@@ -196,8 +269,12 @@ class LicenseManager:
                 "has_credits": ai_enabled and (unlimited or credits > 0),
                 "license_key": self._license_key,
                 "machine_id": self.machine_id,
-                "client_name": c.get("client_name", ""),
-                "client_email": c.get("client_email", ""),
+                "client_name": c.get("client_name") or prof.get("name", ""),
+                "client_email": c.get("client_email") or prof.get("email", ""),
+                "client_phone": prof.get("phone", ""),
+                "client_studio": prof.get("studio", ""),
+                "registered": registered,
+                "user_profile": prof,
                 "plan_name": c.get("plan_name", "") if valid else "Free Edition",
                 "plan_type": c.get("plan_type", "free") if valid else "free",
                 "credits_remaining": credits if valid else 0,
@@ -261,17 +338,62 @@ class LicenseManager:
     def free_status(self) -> Dict[str, Any]:
         status, data = self._post("/api/v1/free/status", {"machine_id": self.machine_id})
         if status == 200 and data.get("success"):
+            if isinstance(data.get("user"), dict) and data["user"].get("phone") and not self.is_profile_registered():
+                u = data["user"]
+                try:
+                    pfile = getattr(self, "_profile_file", _PROFILE_FILE)
+                    with open(pfile, "w", encoding="utf-8") as f:
+                        json.dump({
+                            "name": u.get("name", ""),
+                            "phone": u.get("phone", ""),
+                            "email": u.get("email", ""),
+                            "studio": u.get("studio", ""),
+                        }, f)
+                except Exception:
+                    pass
+            if data.get("license_key") and not self._license_key:
+                self._license_key = data.get("license_key")
             return data
         return {"success": False, "offline": status == 0,
                 "error": "The free plan needs an internet connection to start a project." if status == 0 else data.get("error", "")}
 
     def free_claim(self, job_name: str) -> Dict[str, Any]:
-        """Uses one of today's free projects. Only a grant signed by the server for this computer counts."""
-        status, data = self._post("/api/v1/free/claim", {"machine_id": self.machine_id, "job_name": job_name[:120]})
+        """Uses one of today's 2 free projects. Requires profile registration (Name, WhatsApp Number, Email)."""
+        if not self.is_profile_registered():
+            return {
+                "success": False,
+                "needs_registration": True,
+                "error": "Free Trial (2 Edits / Day) chalane ke liye pehle My Profile me apna Name, WhatsApp Number aur Email save karein.",
+            }
+        prof = self.get_user_profile()
+        plat = "Android" if str(self.machine_id).startswith("F0B11E") else platform.system()
+        # Sync lead to Admin Dashboard users table as well
+        try:
+            self._post("/api/v1/user/register", {
+                "machine_id": self.machine_id,
+                "name": prof.get("name", ""),
+                "phone": prof.get("phone", ""),
+                "email": prof.get("email", ""),
+                "studio": prof.get("studio", ""),
+                "platform": plat,
+            })
+        except Exception:
+            pass
+
+        status, data = self._post("/api/v1/free/claim", {
+            "machine_id": self.machine_id,
+            "job_name": job_name[:120],
+            "user_profile": {**prof, "platform": plat},
+        })
         if status == 0:
             return {"success": False, "error": "The free plan needs an internet connection to finish a project."}
         if status != 200 or not data.get("success"):
-            return {"success": False, "error": data.get("error", "Could not start a free project."), "limit": True}
+            return {
+                "success": False,
+                "needs_registration": bool(data.get("needs_registration")),
+                "error": data.get("error", "Could not start a free project."),
+                "limit": not data.get("needs_registration"),
+            }
         try:
             payload = _b64url_decode(data.get("grant", ""))
             _PUBLIC_KEY.verify(_b64url_decode(data.get("signature", "")), payload)
@@ -292,11 +414,19 @@ class LicenseManager:
 
     def update_info(self) -> Dict[str, Any]:
         """Newer app version, if any: the admin portal's setting first, else the latest GitHub release."""
-        latest, url, notes = "", "", ""
+        from packages.licensing.updater import platform_key, can_auto_install
+        latest, url, notes, asset = "", "", "", None
         try:
             with _urlopen(f"{self.server_url}/api/v1/app/version", timeout=10) as resp:
                 d = json.loads(resp.read().decode("utf-8"))
                 latest, url, notes = d.get("latest") or "", d.get("download_url") or "", d.get("notes") or ""
+            # Auto-update installer links only count when the server signed them (the connection may be unverified)
+            if d.get("manifest"):
+                payload = _b64url_decode(d["manifest"])
+                _PUBLIC_KEY.verify(_b64url_decode(d.get("manifest_signature", "")), payload)
+                m = json.loads(payload.decode("utf-8"))
+                if m.get("v") == "update" and m.get("version") == latest:
+                    asset = (m.get("assets") or {}).get(platform_key()) or None
         except Exception:
             pass
         if not latest:
@@ -314,7 +444,8 @@ class LicenseManager:
             except ValueError:
                 return (0,)
         return {"available": bool(latest) and ver(latest) > ver(APP_VERSION), "current": APP_VERSION,
-                "latest": latest, "url": url if url.startswith("https://") else RELEASES_PAGE, "notes": notes}
+                "latest": latest, "url": url if url.startswith("https://") else RELEASES_PAGE, "notes": notes,
+                "asset": asset, "auto": bool(asset) and can_auto_install()}
 
     def ai_credentials(self) -> Tuple[str, str]:
         """License key + machine id that the Claude relay on the server authenticates."""

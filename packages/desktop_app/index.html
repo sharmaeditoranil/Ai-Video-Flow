@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.12 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.15 · AI editing assistant</div>
         </div>
       </div>
 
@@ -159,13 +159,49 @@
                   <button class="btn" id="btn-clear-audio" title="Remove song" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
 
-                <label class="lbl" for="in-ref">Reference video for the colour look <span class="opt">optional</span></label>
+                <label class="lbl" for="in-ref" id="lbl-ref">Reference video for the colour look <span class="opt">optional</span></label>
                 <div class="input-row">
                   <input id="in-ref" type="text" placeholder="A reel or film whose colours you like" spellcheck="false">
                   <button class="btn" id="btn-browse-ref">Browse</button>
                   <button class="btn" id="btn-clear-ref" title="Remove reference video" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
-                <div class="hint">A matching 3D LUT (.cube) is created in the output folder.</div>
+                <div class="hint" id="hint-ref">A matching 3D LUT (.cube) is created in the output folder.</div>
+
+                <!-- Viral Reel Clone Pro Controls (shown only when Reels & Shorts workflow is active) -->
+                <div class="reels-only" id="reels-pro-box" hidden style="margin-top:12px;">
+                  <label class="lbl" for="sel-reel-style" style="margin-top:0">Reel editing style</label>
+                  <select id="sel-reel-style" style="width:100%;">
+                    <option value="auto_ref">Auto-match reference video (cuts, speed, LUT &amp; B-roll)</option>
+                    <option value="talking_depth_captions">Talking head — Behind-person depth text &amp; captions</option>
+                    <option value="cinema_90_rotated">90° rotated cinema wedding reel + watermark</option>
+                    <option value="speed_ramp_luxury">Luxury macro speed-ramp + moody color grade</option>
+                    <option value="beat_sync_montage">Fast beat-synced 9:16 montage</option>
+                  </select>
+
+                  <details style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#10141c;border:1px solid var(--line);">
+                    <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);user-select:none;">Typography, B-roll &amp; audio options <span class="opt">optional</span></summary>
+                    <div style="margin-top:10px;">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div>
+                          <label class="lbl" for="in-depth-text" style="margin-top:0">Depth text <span class="opt">optional</span></label>
+                          <input id="in-depth-text" type="text" placeholder="ROUGH CUT | READY" spellcheck="false">
+                        </div>
+                        <div>
+                          <label class="lbl" for="in-watermark" style="margin-top:0">Watermark <span class="opt">optional</span></label>
+                          <input id="in-watermark" type="text" placeholder="Studio name" spellcheck="false">
+                        </div>
+                      </div>
+
+                      <label class="lbl" for="in-reel-captions" style="margin-top:8px">On-screen captions <span class="opt">optional (separate lines with |)</span></label>
+                      <input id="in-reel-captions" type="text" placeholder="पूरा Rough Cut Ready करता है | Automatic Beat Sync" spellcheck="false">
+
+                      <div class="checks" style="margin-top:10px;">
+                        <label><input type="checkbox" id="chk-reel-broll" checked>Auto B-roll cutaways on Track V2 (+ retouch split wipe)</label>
+                        <label><input type="checkbox" id="chk-reel-ref-audio" checked>Use reference video audio when no song is selected</label>
+                      </div>
+                    </div>
+                  </details>
+                </div>
                 </div>
                 <div class="long-only" hidden>
                   <label class="lbl">Silence cutting</label>
@@ -291,7 +327,7 @@
             <span class="avatar avatar-lg" id="pf-avatar">?</span>
             <div class="pf-id">
               <h2 id="pf-name">Guest</h2>
-              <div class="muted" id="pf-email">Activate a license to see your account</div>
+              <div class="muted" id="pf-email">Register your profile below to use Free Trial (2 Edits / Day)</div>
             </div>
             <span class="plan-badge" id="pf-plan">Free Edition</span>
           </div>
@@ -300,6 +336,37 @@
             <div class="card metric"><span class="muted">Smart AI weddings</span><b id="lic-credits">—</b></div>
             <div class="card metric"><span class="muted">Valid until</span><b id="lic-expiry">—</b></div>
             <div class="card metric"><span class="muted">Computer ID</span><b><code id="lic-machine">…</code> <button class="link" id="btn-copy-machine">Copy</button></b></div>
+          </div>
+
+          <div class="card" style="margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+              <h3 style="margin:0;">User Profile · Free Trial Registration (2 Edits / Day)</h3>
+              <span class="badge" id="prof-reg-badge">Required for Free Trial</span>
+            </div>
+            <p class="hint" style="margin:0 0 12px;">Enter your Name, WhatsApp Number and Email to unlock <b>2 Free Edits Per Day</b> on Mac, Windows &amp; Mobile.</p>
+            <div class="hint error" id="prof-error" hidden></div>
+            <div class="hint ok" id="prof-ok" hidden></div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
+              <div>
+                <label class="lbl" for="prof-name" style="margin-top:0">Your Name *</label>
+                <input id="prof-name" type="text" placeholder="e.g. Rahul Sharma" autocomplete="name">
+              </div>
+              <div>
+                <label class="lbl" for="prof-phone" style="margin-top:0">WhatsApp Number *</label>
+                <input id="prof-phone" type="tel" placeholder="+91 98765 43210" autocomplete="tel">
+              </div>
+              <div>
+                <label class="lbl" for="prof-email" style="margin-top:0">Email Address *</label>
+                <input id="prof-email" type="email" placeholder="you@studio.com" autocomplete="email">
+              </div>
+              <div>
+                <label class="lbl" for="prof-studio" style="margin-top:0">Studio Name / City <span class="opt">optional</span></label>
+                <input id="prof-studio" type="text" placeholder="e.g. Royal Wedding Films, Patna">
+              </div>
+            </div>
+            <div class="row-actions" style="margin-top:12px">
+              <button class="btn btn-primary" id="btn-save-profile">Save Profile &amp; Unlock Free Trial (2 Edits/Day)</button>
+            </div>
           </div>
 
           <div class="profile-grid">
@@ -313,12 +380,12 @@
                 <button class="btn" id="btn-refresh-lic">Check again</button>
                 <button class="btn btn-ghost-danger" id="btn-remove-lic">Remove</button>
               </div>
-              <p class="hint">A license works on one computer. To move it to a new computer, ask support to reset the computer lock.</p>
+              <p class="hint">A license works on one computer + one mobile phone for free. To move it to a new computer, ask support to reset the lock.</p>
             </div>
             <div class="card">
               <h3>Plans at a glance</h3>
               <ul class="perks">
-                <li><b>Free</b> · every workflow and editor, <span class="free-limit-text">1 project per day</span></li>
+                <li><b>Free</b> · every workflow and editor, <span class="free-limit-text">2 projects per day</span></li>
                 <li><b>AI Editing</b> · unlimited projects — from <span class="price-local">₹399</span>/month</li>
                 <li><b>Smart AI Editing</b> · AI shot review, AI music &amp; voiceover, AI Assistant, unlimited editing included — from <span class="price-ai">₹999</span></li>
               </ul>
@@ -347,7 +414,7 @@
                 <div class="price">₹0</div>
                 <div class="per">forever · with a daily limit</div>
                 <ul class="perks">
-                  <li class="free-limit-text">1 project per day</li>
+                  <li class="free-limit-text">2 projects per day</li>
                   <li>All workflows &amp; editors</li>
                   <li>Shake trim, beat sync, silence cut</li>
                 </ul>
@@ -366,7 +433,7 @@
             <table>
               <thead><tr><th></th><th>Free</th><th>AI Editing</th><th>Smart AI Editing</th></tr></thead>
               <tbody>
-                <tr><td>Projects per day</td><td>1</td><td>Unlimited</td><td>Unlimited</td></tr>
+                <tr><td>Projects per day</td><td>2</td><td>Unlimited</td><td>Unlimited</td></tr>
                 <tr><td>Wedding, Reels, YouTube, Music, Podcast, Tutorial</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>DaVinci Resolve · Premiere Pro · EDIUS</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>Smart AI shot review</td><td>—</td><td>—</td><td>✓</td></tr>
@@ -402,6 +469,67 @@
         </section>
       </div>
     </main>
+  </div>
+
+  <!-- Mandatory Startup Registration Gate (Mac & Windows: opens first if not registered / licensed) -->
+  <div class="avf-modal-backdrop" id="desktop-reg-modal">
+    <div class="avf-modal-card" style="max-width:460px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
+        <div>
+          <div style="font-weight:700;font-size:15px;">AI Video Flow</div>
+          <div class="muted" style="font-size:12px;">AI Editing Studio · Mac &amp; Windows</div>
+        </div>
+      </div>
+      <span class="avf-trial-badge" style="margin-bottom:10px;">🎁 Free Trial · 2 Edits Per Day</span>
+      <h2 style="font-size:20px;font-weight:700;margin:0 0 6px;">Register to Open AI Video Flow</h2>
+      <p class="muted" style="font-size:13px;line-height:1.5;margin:0 0 14px;">
+        App shuru karne ke liye apna Name, WhatsApp Number aur Email register karein. Roz <b>2 Free Edits</b> turant unlock ho jayenge!
+      </p>
+      <form id="drm-form">
+        <label class="lbl" for="drm-name" style="margin-top:0">Your Full Name *</label>
+        <input id="drm-name" type="text" required placeholder="e.g. Rahul Sharma" autocomplete="name">
+        <label class="lbl" for="drm-phone">WhatsApp Number *</label>
+        <input id="drm-phone" type="tel" required placeholder="+91 98765 43210" autocomplete="tel">
+        <label class="lbl" for="drm-email">Email Address *</label>
+        <input id="drm-email" type="email" required placeholder="you@studio.com" autocomplete="email">
+        <label class="lbl" for="drm-studio">Studio Name / City <span class="opt">optional</span></label>
+        <input id="drm-studio" type="text" placeholder="e.g. Royal Wedding Films, Patna">
+        <div class="hint error" id="drm-error" hidden style="margin-top:8px;"></div>
+        <button type="submit" class="btn btn-primary btn-lg btn-block" id="drm-submit-btn" style="margin-top:14px;">Register &amp; Open App →</button>
+      </form>
+      <details style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
+        <summary style="color:var(--gold);font-weight:600;font-size:12.5px;cursor:pointer;text-align:center;list-style:none;">Already have a License Key? Activate here →</summary>
+        <div style="margin-top:10px;display:grid;gap:8px;">
+          <input id="drm-lic-key" type="text" placeholder="AVF-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off">
+          <button type="button" class="btn btn-gold btn-block" id="drm-activate-btn">Activate Key &amp; Open App</button>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Free Trial Ended / Upgrade Popup Modal (Mac & Windows) -->
+  <div class="avf-modal-backdrop" id="trial-ended-modal" hidden>
+    <div class="avf-modal-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span class="avf-trial-badge">⚡ 2 / 2 Free Edits Used Today</span>
+        <button class="update-close" id="dt-te-close" aria-label="Close">×</button>
+      </div>
+      <h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">Your Today's Free Trial Has Ended</h2>
+      <p class="muted" style="font-size:13.5px;line-height:1.55;margin:0;">
+        Aaj ke aapke <b>2 Free Edits</b> poore ho chuke hain. Aapka Free Trial <b>kal raat 12 baje reset hoga</b> — ya abhi Plan Purchase karein aur bina ruke <b>Unlimited Edit</b> karein!
+      </p>
+      <div class="avf-trial-perks">
+        <div><i>✓</i><span><b>Unlimited Edits Every Day</b> — No daily limit or waiting till tomorrow</span></div>
+        <div><i>✓</i><span><b>DaVinci Resolve · Premiere Pro · EDIUS · Reels</b> — All workflows unlocked</span></div>
+        <div><i>✓</i><span><b>1 Plan = PC/Mac + Mobile App Free</b> — Starts from <span class="price-local">₹399</span>/month</span></div>
+      </div>
+      <div style="display:grid;gap:8px;">
+        <button class="btn btn-gold btn-lg btn-block" id="dt-te-buy">Purchase Plan · Unlock Unlimited Edits →</button>
+        <button class="btn btn-block" id="dt-te-key">Already Have a License Key? Activate</button>
+        <button class="link" id="dt-te-later" style="margin-top:4px;justify-self:center;">Wait Until Tomorrow (Reset Kal Hoga)</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

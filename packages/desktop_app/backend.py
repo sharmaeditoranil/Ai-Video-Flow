@@ -38,6 +38,7 @@ from packages.core_premiere.premiere_adapter import premiere_adapter
 from packages.core_edius.edius_adapter import edius_adapter
 from packages.hyperframes_engine.hyperframes_service import hyperframes_service
 from packages.licensing.license_manager import license_manager
+from packages.licensing.updater import updater
 from packages.ai_engine.cloud_ai_client import cloud_ai_client
 from installer.connect_all_engine import ConnectAllEngine
 
@@ -47,14 +48,14 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.12"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.15"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
 
 # Free plan: projects per day (any paid plan removes the limit). The admin portal can change it;
 # the last plan list from the server is cached so prices and the limit also show offline.
-FREE_DAILY_PROJECTS = 1
+FREE_DAILY_PROJECTS = 2
 PLANS_CACHE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "plans.json")
 
 
@@ -80,7 +81,11 @@ def fetch_plans() -> Dict[str, Any]:
 
 def free_daily_limit() -> int:
     try:
-        return max(0, int(_cached_plans().get("free_daily_projects", FREE_DAILY_PROJECTS)))
+        cached = _cached_plans().get("free_daily_projects")
+        if cached is not None:
+            val = int(cached)
+            return 0 if val == 0 else max(FREE_DAILY_PROJECTS, val)
+        return FREE_DAILY_PROJECTS
     except (TypeError, ValueError):
         return FREE_DAILY_PROJECTS
 
@@ -109,7 +114,14 @@ def free_status(force: bool = False) -> Optional[Dict[str, Any]]:
     if license_manager.get_status().get("local_unlimited"):
         return None
     if force or not _FREE_CACHE["data"] or time.time() - _FREE_CACHE["t"] > 30:
-        _FREE_CACHE.update(t=time.time(), data=license_manager.free_status())
+        st = license_manager.free_status()
+        if isinstance(st, dict) and st.get("success"):
+            srv_lim = int(st.get("limit", FREE_DAILY_PROJECTS))
+            used = int(st.get("used", 0))
+            eff_lim = 0 if srv_lim == 0 else max(FREE_DAILY_PROJECTS, srv_lim)
+            st["limit"] = eff_lim
+            st["left"] = max(0, eff_lim - used)
+        _FREE_CACHE.update(t=time.time(), data=st)
     return _FREE_CACHE["data"]
 
 
@@ -390,6 +402,38 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
         return 0
     if not resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")):
         return 0
+
+    # Place B-Roll cutaways on Video Track 2 (V2) when present (e.g. Reels & Shorts workflow)
+    broll_list = plan.get("broll_clips") or []
+    if broll_list:
+        try:
+            project = resolve_adapter._current_project
+            tl = project.GetCurrentTimeline() if project else None
+            if tl:
+                while tl.GetTrackCount("video") < 2:
+                    tl.AddTrack("video")
+                tl_fps = float(project.GetSetting("timelineFrameRate") or 25.0)
+                tl_start = int(tl.GetStartFrame() or 0)
+                broll_entries = []
+                for bc in broll_list:
+                    b_item = items_by_path.get(os.path.normpath(bc.get("file_path") or ""))
+                    if not b_item:
+                        continue
+                    b_in = int(bc.get("in_frame", 0))
+                    b_out = max(b_in + 1, int(bc.get("out_frame", b_in + 1)) - 1)
+                    broll_entries.append({
+                        "mediaPoolItem": b_item,
+                        "startFrame": b_in,
+                        "endFrame": b_out,
+                        "trackIndex": 2,
+                        "recordFrame": tl_start + int(round(float(bc.get("timeline_start", 0)) * tl_fps)),
+                        "mediaType": 1,
+                    })
+                if broll_entries:
+                    project.GetMediaPool().AppendToTimeline(broll_entries)
+        except Exception as e:
+            logger.warning(f"Resolve B-roll V2 placement note: {e}")
+
     # Music bed from 0:00 and the AI voiceover from 1 s, each on its own audio track
     end = float(plan.get("total_duration") or 0)
     if plan.get("audio") and os.path.isfile(plan["audio"]) and end > 0:
@@ -530,7 +574,12 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
     if target_nle in ("resolve", "both"):
         if resolve_adapter.is_connected():
             _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
-            used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
+            used = sorted({
+                c["file_path"]
+                for p in plans.values()
+                for c in (list(p.get("clips") or []) + list(p.get("broll_clips") or []))
+                if c.get("file_path")
+            })
             items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
             items_by_path = {}
             for it in items:
@@ -856,12 +905,14 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
 
 
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding",
-                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "") -> None:
+                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "",
+                reel_options: Optional[Dict[str, Any]] = None) -> None:
     """`voiceover`: "" = none, "auto" = Smart AI writes the script, anything else = the script to speak."""
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
         from packages.ai_engine.story_planner import story_planner
+        reel_opts = reel_options or {}
 
         is_premium = (tier == "premium")
         if is_premium:
@@ -1018,17 +1069,70 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         # 3. Story plans tailored by workflow mode
         plans = {}
+        rendered_reels = []
         if mode == "reels":
-            if "teaser" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True)
-                p["sequence_name"] = "01_Instagram_Reel_9x16"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
-                plans["teaser"] = p
+            from packages.ai_engine.reel_cloner import reel_cloner
+            ref_dna = reel_cloner.analyze_reference_reel(
+                ref_video,
+                extract_audio=bool(reel_opts.get("use_ref_audio", True)),
+                log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
+            )
+            if ref_dna.get("lut_path"):
+                ref_lut_path = ref_dna["lut_path"]
+            if not audio_path and reel_opts.get("use_ref_audio", True) and ref_dna.get("ref_audio_path"):
+                audio_path = ref_dna["ref_audio_path"]
+                beat_times = ref_dna.get("beat_times") or beat_times
+
+            ai_blueprint = None
+            if is_premium and ref_dna.get("keyframes"):
+                try:
+                    thumb_dir = os.path.join(OUTPUT_DIR, ".thumbs")
+                    os.makedirs(thumb_dir, exist_ok=True)
+                    u_thumbs = [p for c in analyzed[:24] if (p := _thumbnail(c, thumb_dir, len(os.listdir(thumb_dir))))]
+                    if u_thumbs:
+                        _log(job_id, "🤖 Smart AI is matching Reference Reel style, shot order, B-roll & Hinglish captions…", "info")
+                        ai_blueprint = cloud_ai_client.plan_reel_clone(ref_dna["keyframes"], u_thumbs, instructions, 45.0)
+                except Exception as e:
+                    _log(job_id, f"Reference AI style note: {e}", "warning")
+
+            reel_style = reel_opts.get("reel_style") or "auto_ref"
+            enable_broll = bool(reel_opts.get("enable_broll", True))
+            depth_text = (reel_opts.get("depth_text") or "").strip()
+            caption_text = (reel_opts.get("caption_text") or "").strip()
+            watermark_text = (reel_opts.get("watermark_text") or "").strip()
+
+            if "teaser" in formats or "render_mp4" in formats:
+                plans["teaser"] = reel_cloner.build_viral_reel_plan(
+                    analyzed_clips=analyzed,
+                    ref_dna=ref_dna,
+                    target_duration=45.0,
+                    sequence_name="01_Instagram_Reel_9x16",
+                    reel_style=reel_style,
+                    audio_path=audio_path,
+                    use_ref_audio=bool(reel_opts.get("use_ref_audio", True)),
+                    depth_text=depth_text,
+                    caption_text=caption_text,
+                    watermark_text=watermark_text,
+                    enable_broll=enable_broll,
+                    ai_clone_blueprint=ai_blueprint,
+                    log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
+                )
             if "highlight" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=True)
-                p["sequence_name"] = "02_Shorts_Teaser_30s"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
-                plans["highlight"] = p
+                plans["highlight"] = reel_cloner.build_viral_reel_plan(
+                    analyzed_clips=analyzed,
+                    ref_dna=ref_dna,
+                    target_duration=30.0,
+                    sequence_name="02_Shorts_Teaser_30s",
+                    reel_style=reel_style,
+                    audio_path=audio_path,
+                    use_ref_audio=bool(reel_opts.get("use_ref_audio", True)),
+                    depth_text=depth_text,
+                    caption_text=caption_text,
+                    watermark_text=watermark_text,
+                    enable_broll=enable_broll,
+                    ai_clone_blueprint=ai_blueprint,
+                    log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
+                )
         elif mode == "youtube":
             if "teaser" in formats or "highlight" in formats:
                 p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=360.0)
@@ -1076,8 +1180,8 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             if voice_path and key in ("teaser", "highlight"):
                 p["voiceover"], p["voiceover_duration"] = voice_path, voice_seconds
 
-        # YouTube, Music Video and Reels: the music leads - every cut lands on a beat
-        if mode in ("youtube", "music_video", "reels"):
+        # YouTube and Music Video: the music leads - every cut lands on a beat (Reels already beat-snapped in reel_cloner)
+        if mode in ("youtube", "music_video"):
             if beat_times:
                 for p in plans.values():
                     if p.get("tracks"):
@@ -1087,10 +1191,10 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             else:
                 _log(job_id, "Add a song in AI Studio to cut this edit on the beat.", "warning")
 
-        # 3.5. Every editor gets the same arrangement as the DaVinci Resolve timeline, which has no
-        # extra B-roll overlay track - so none is added to the Premiere / EDIUS XML either
-        for p in plans.values():
-            p["broll_clips"] = []
+        # 3.5. Non-reel modes keep a single primary track without extra B-roll overlay; Reels & Shorts preserves V2 B-Roll
+        if mode != "reels":
+            for p in plans.values():
+                p["broll_clips"] = []
 
         for p in plans.values():
             _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips "
@@ -1116,8 +1220,22 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             }, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
+        # 4.5. Render Ready-to-Post .MP4 Reel when requested in Reels & Shorts workflow
+        if mode == "reels" and ("render_mp4" in formats or reel_opts.get("render_mp4")):
+            from packages.ai_engine.reel_cloner import reel_cloner
+            primary_reel = plans.get("teaser") or next(iter(plans.values()), None)
+            if primary_reel:
+                mp4_res = reel_cloner.render_reel_mp4(
+                    primary_reel,
+                    log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
+                )
+                if mp4_res.get("success"):
+                    rendered_reels.append(mp4_res["mp4_path"])
+
         result = _export_plans(job_id, plans, target_nle, audio_path, project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
+        if rendered_reels:
+            result["rendered_reels"] = rendered_reels
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
     except Exception as e:
@@ -1414,6 +1532,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self._json(license_manager.update_info())
             return
 
+        if self.path == "/api/update/status":
+            self._json(updater.status())
+            return
+
         if self.path == "/api/cloud-ai/status":
             self._json(cloud_ai_client.get_status())
             return
@@ -1515,6 +1637,13 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 res.pop("videos")
             self._json(res)
 
+        elif self.path == "/api/run-wedding" and not license_manager.get_status().get("local_unlimited") and not license_manager.is_profile_registered():
+            self._json({
+                "success": False,
+                "needs_registration": True,
+                "error": "Free Trial (2 Edits / Day) chalane ke liye pehle My Profile me apna Name, WhatsApp Number aur Email register karein.",
+            })
+
         elif self.path == "/api/run-wedding" and (free_status(force=True) or {"success": True}).get("success") is False:
             self._json({"success": False, "error": free_status()["error"] or "Could not check the free plan. Try again."})
 
@@ -1537,11 +1666,20 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 self._json({"success": True, "job_id": job_id})
                 return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
-                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500])
+                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500],
+                               data.get("reel_options") or {})
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/license/status":
             self._json(license_status())
+
+        elif self.path == "/api/license/register-profile":
+            self._json(license_manager.register_user_profile(
+                name=(data.get("name") or "").strip(),
+                phone=(data.get("phone") or "").strip(),
+                email=(data.get("email") or "").strip(),
+                studio=(data.get("studio") or "").strip(),
+            ))
 
         elif self.path == "/api/license/activate":
             key = (data.get("license_key") or "").strip()
@@ -1553,6 +1691,17 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/license/refresh":
             self._json(license_manager.refresh())
+
+        elif self.path == "/api/update/download":
+            self._json(updater.start_download(license_manager.update_info()))
+
+        elif self.path == "/api/update/install":
+            with JOBS_LOCK:
+                busy = any(j["status"] == "running" for j in JOBS.values())
+            if busy:
+                self._json({"success": False, "error": "A project is still running. Update once it finishes."}, 409)
+            else:
+                self._json(updater.install())
 
         elif self.path == "/api/assistant/send":
             text = (data.get("text") or "").strip()

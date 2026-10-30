@@ -177,12 +177,26 @@ code, .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; fon
 
 input[type="text"], textarea, select {
   width: 100%;
-  background: #0d1016;
+  background-color: #0d1016;
   border: 1px solid var(--line-2);
   border-radius: 8px;
   padding: 10px 12px;
   outline: none;
   transition: border-color 0.15s;
+}
+
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b93a7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
 }
 
 input[type="text"]:focus, textarea:focus, select:focus { border-color: var(--accent); }
@@ -503,3 +517,67 @@ textarea { resize: vertical; }
 .compare td { padding: 9px 8px; border-bottom: 1px solid #1a1f2b; text-align: center; }
 .compare tr:last-child td { border-bottom: 0; }
 .quota { margin-top: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+
+/* ---------- Free Trial Ended / Upgrade Popup Modal (Desktop) ---------- */
+[hidden] {
+  display: none !important;
+}
+.avf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(6, 8, 13, 0.78);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.avf-modal-backdrop[hidden] {
+  display: none !important;
+}
+.avf-modal-card {
+  width: 100%;
+  max-width: 480px;
+  background: radial-gradient(ellipse at top, rgba(232, 185, 95, 0.11), transparent 65%), var(--card);
+  border: 1px solid rgba(232, 185, 95, 0.45);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+}
+.avf-trial-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 999px;
+  color: var(--gold);
+  background: rgba(232, 185, 95, 0.12);
+  border: 1px solid rgba(232, 185, 95, 0.38);
+}
+.avf-trial-perks {
+  background: #0d1016;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0 18px;
+  display: grid;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text);
+}
+.avf-trial-perks div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.avf-trial-perks i {
+  color: var(--green);
+  font-style: normal;
+  font-weight: 700;
+}
+

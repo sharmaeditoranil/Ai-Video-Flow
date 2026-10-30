@@ -46,3 +46,4 @@ rm -rf "$DMG_STAGE"
 
 echo ""
 echo "Done: $OUT ($(du -h "$OUT" | cut -f1))"
+echo "SHA-256 (paste in admin portal → Settings → update): $(shasum -a 256 "$OUT" | cut -d' ' -f1)"

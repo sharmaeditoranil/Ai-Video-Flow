@@ -67,6 +67,24 @@ Pehle se install kiye gaye app purane domain se baat karte hain, unke liye puran
 - **Orders**: Razorpay se aaye saare payments, unki license keys ke saath.
 - **Usage**: kisne kitne AI weddings aur Claude requests use kiye.
 
+## 6. Naya version release (download link + auto update)
+
+1. Build chalaiye (`packaging/build_mac_app.sh` Mac par, `packaging/build_windows_app.bat` Windows par). Files `dist/` me banti hain.
+2. cPanel → File Manager → `license.aivideoflow.in` folder (jahan `index.php` hai) → `downloads` naam ka folder banaiye (pehli baar).
+3. Usme ye files upload kariye — **naam bilkul yahi rehna chahiye**, purani file replace ho jayegi:
+   - `AI-Video-Flow-Windows-Setup.exe`
+   - `AI-Video-Flow-Mac-arm64.dmg` (Apple Silicon M1/M2/M3/M4)
+   - `AI-Video-Flow-Mac-x86_64.dmg` (Intel Mac)
+   - `AI-Video-Flow-Reels.apk` (Android)
+   File Manager badi file (500 MB+) par atak jaye to FTP (FileZilla) se upload kariye.
+4. Admin → Settings → **Latest Desktop version** me naya number daaliye (jaise `1.1.15`) → Publish.
+   Sabhi chalte apps installer khud download karke "Restart & Update" button dikhayenge.
+   SHA-256 server khud nikalta hai; link wale fields khaali chhod dijiye.
+
+**Customers ko bhejne wala link (kabhi nahi badalta, hamesha latest version):**
+`https://license.aivideoflow.in/download` — Windows/Android par seedha download, Mac par chip chunne ka page.
+Seedha link chahiye to: `/download/windows`, `/download/mac-arm64`, `/download/mac-x86_64`, `/download/android`.
+
 ## Zaroori (purane server ke baad)
 
 Purana portal bina password ke database aur API keys de raha tha. Isliye:

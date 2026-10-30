@@ -1,0 +1,39 @@
+name: Build Android Reels APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mobile_app/**'
+      - 'packages/ai_engine/reel_cloner.py'
+      - '.github/workflows/build_android_apk.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: Build AI-Video-Flow-Reels.apk
+        run: bash mobile_app/build_apk.sh apk
+
+      - name: Upload Installable Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-Video-Flow-Reels-APK
+          path: mobile_app/AI-Video-Flow-Reels.apk

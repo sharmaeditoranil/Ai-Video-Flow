@@ -1,0 +1,18 @@
+{
+  "name": "AI Video Flow — Reels & Shorts Mobile",
+  "short_name": "AI Reels Flow",
+  "description": "Clone any Viral Reel style, 3D LUT Color, 90° Cinema Rotation, Speed-Ramps, B-Roll & Hinglish Captions in 1-Click.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070709",
+  "theme_color": "#070709",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

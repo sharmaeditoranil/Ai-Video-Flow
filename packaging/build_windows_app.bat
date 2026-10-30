@@ -29,6 +29,8 @@ if not exist "%ISCC%" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 if exist "%ISCC%" (
     "%ISCC%" /Q packaging\windows_installer.iss || goto :fail
     echo       dist\AI-Video-Flow-Windows-Setup.exe created
+    echo       SHA-256 (paste in admin portal - Settings - update):
+    certutil -hashfile dist\AI-Video-Flow-Windows-Setup.exe SHA256 | findstr /v ":"
 ) else (
     echo       Inno Setup 6 not found - creating portable ZIP instead.
     echo       Install it from https://jrsoftware.org/isdl.php for a Setup.exe

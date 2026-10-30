@@ -70,3 +70,6 @@ dist/server-upload-*
 dist/website-upload-*.zip
 dist/*.php
 dist/hostinger-installers-*
+
+# Upload folders for the servers
+Upload v*/

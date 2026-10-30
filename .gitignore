@@ -64,3 +64,6 @@ mobile_app/android/local.properties
 # Staged by mobile_app/build_apk.sh from mobile_app/www and packages/
 mobile_app/android/app/src/main/python/
 mobile_app/android/app/src/main/assets/www/
+
+# Server upload packages (APK and installers are large)
+dist/server-upload-*.zip

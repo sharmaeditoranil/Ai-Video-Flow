@@ -577,28 +577,35 @@ function free_grant(string $mid, int $used, int $limit): array
 /** Desktop installer for each platform that the app may download and run by itself */
 const UPDATE_ASSETS = ['windows' => 'Windows Setup.exe', 'mac-arm64' => 'Mac Apple Silicon .dmg', 'mac-x86_64' => 'Mac Intel .dmg'];
 
-/** Installers uploaded to the downloads/ folder next to index.php, under these fixed names */
+/** Installer file names, the same on this server's downloads/ folder and on the website's downloads folder */
 const DOWNLOAD_FILES = ['windows' => 'AI-Video-Flow-Windows-Setup.exe', 'mac-arm64' => 'AI-Video-Flow-Mac-arm64.dmg',
     'mac-x86_64' => 'AI-Video-Flow-Mac-x86_64.dmg', 'android' => 'AI-Video-Flow-Reels.apk'];
+const DEFAULT_DOWNLOADS_BASE = 'https://aivideoflow.in/downloads';
 
-/** Installer for a platform: the admin portal's link if set, else the file in downloads/ (SHA-256 cached until it changes). */
+/**
+ * Installer for a platform, first match wins: the admin portal's own link, a file in downloads/ next to index.php
+ * (SHA-256 cached until it changes), else the same file name in the website's downloads folder (Hostinger).
+ */
 function update_asset(PDO $pdo, string $key): array
 {
-    $url = get_setting($pdo, "app_asset_url_$key");
+    $url = get_setting($pdo, $key === 'android' ? 'mobile_apk_url' : "app_asset_url_$key");
+    $sha = get_setting($pdo, "app_asset_sha256_$key");
     if ($url !== '') {
-        return ['url' => $url, 'sha256' => get_setting($pdo, "app_asset_sha256_$key")];
+        return ['url' => $url, 'sha256' => $sha];
     }
-    $file = __DIR__ . '/downloads/' . DOWNLOAD_FILES[$key];
-    if (!is_file($file)) {
-        return [];
+    $name = DOWNLOAD_FILES[$key];
+    $file = __DIR__ . '/downloads/' . $name;
+    if (is_file($file)) {
+        $stamp = filemtime($file) . ':' . filesize($file);
+        [$cachedStamp, $sha] = array_pad(explode('|', get_setting($pdo, "download_sha_$key")), 2, '');
+        if ($cachedStamp !== $stamp) {
+            $sha = hash_file('sha256', $file);
+            set_setting($pdo, "download_sha_$key", "$stamp|$sha");
+        }
+        return ['url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $GLOBALS['SCRIPT_DIR'] . '/downloads/' . rawurlencode($name), 'sha256' => $sha];
     }
-    $stamp = filemtime($file) . ':' . filesize($file);
-    [$cachedStamp, $sha] = array_pad(explode('|', get_setting($pdo, "download_sha_$key")), 2, '');
-    if ($cachedStamp !== $stamp) {
-        $sha = hash_file('sha256', $file);
-        set_setting($pdo, "download_sha_$key", "$stamp|$sha");
-    }
-    return ['url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $GLOBALS['SCRIPT_DIR'] . '/downloads/' . rawurlencode(DOWNLOAD_FILES[$key]), 'sha256' => $sha];
+    $base = rtrim(get_setting($pdo, 'downloads_base_url', DEFAULT_DOWNLOADS_BASE), '/');
+    return $base === '' ? [] : ['url' => "$base/" . rawurlencode($name), 'sha256' => $sha];
 }
 
 /** Auto-update manifest, signed so the app only runs an installer this server chose (even over a bad connection). */
@@ -886,9 +893,7 @@ if (str_starts_with($PATH, '/api/v1/')) {
         $desktopUrl = get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL);
         $desktopNotes = get_setting($pdo, 'app_update_notes');
         $mobileVer = get_setting($pdo, 'mobile_latest_version') ?: $desktopVer;
-        $apk = __DIR__ . '/downloads/' . DOWNLOAD_FILES['android'];
-        $mobileUrl = get_setting($pdo, 'mobile_apk_url')
-            ?: (is_file($apk) ? 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $SCRIPT_DIR . '/downloads/' . DOWNLOAD_FILES['android'] : $desktopUrl);
+        $mobileUrl = update_asset($pdo, 'android')['url'] ?? $desktopUrl;
         $mobileNotes = get_setting($pdo, 'mobile_update_notes') ?: $desktopNotes;
         json_out([
             'success' => true,
@@ -1397,6 +1402,7 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 'app_latest_version' => get_setting($pdo, 'app_latest_version'),
                 'app_download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
                 'app_update_notes' => get_setting($pdo, 'app_update_notes'),
+                'downloads_base_url' => get_setting($pdo, 'downloads_base_url', DEFAULT_DOWNLOADS_BASE),
                 'app_assets' => array_map(fn($k) => ['key' => $k, 'label' => UPDATE_ASSETS[$k],
                     'url' => get_setting($pdo, "app_asset_url_$k"), 'sha256' => get_setting($pdo, "app_asset_sha256_$k")], array_keys(UPDATE_ASSETS)),
                 'mobile_latest_version' => get_setting($pdo, 'mobile_latest_version'),
@@ -1479,6 +1485,11 @@ if (str_starts_with($PATH, '/api/admin/')) {
             if ($mDl !== '' && !preg_match('#^https://#', $mDl)) {
                 json_out(['success' => false, 'error' => 'Mobile APK link must start with https://'], 400);
             }
+            $dlBase = trim((string)($b['downloads_base_url'] ?? ''));
+            if ($dlBase !== '' && !preg_match('#^https://#', $dlBase)) {
+                json_out(['success' => false, 'error' => 'Installer folder link must start with https://'], 400);
+            }
+            set_setting($pdo, 'downloads_base_url', rtrim($dlBase, '/'));
             foreach (UPDATE_ASSETS as $key => $label) {
                 $aUrl = trim((string)($b["app_asset_url_$key"] ?? ''));
                 $aSha = strtolower(trim((string)($b["app_asset_sha256_$key"] ?? '')));
@@ -1560,11 +1571,9 @@ if (str_starts_with($PATH, '/api/admin/')) {
 if ($PATH === '/download' || str_starts_with($PATH, '/download/')) {
     $fallback = get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL);
     $links = [];
-    foreach (UPDATE_ASSETS as $key => $_) {
+    foreach (DOWNLOAD_FILES as $key => $_) {
         $links[$key] = update_asset($pdo, $key)['url'] ?? '';
     }
-    $apk = __DIR__ . '/downloads/' . DOWNLOAD_FILES['android'];
-    $links['android'] = get_setting($pdo, 'mobile_apk_url') ?: (is_file($apk) ? $SCRIPT_DIR . '/downloads/' . DOWNLOAD_FILES['android'] : '');
     $which = substr($PATH, strlen('/download/'));
     if ($PATH === '/download') {
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -2265,7 +2274,8 @@ const views = {
             <div class="field"><label>Desktop download link</label><input name="app_download_url" value="${esc(s.app_download_url)}" placeholder="https://…"></div>
             <div class="field"><label>Desktop what's new (optional)</label><input name="app_update_notes" value="${esc(s.app_update_notes)}" maxlength="300" placeholder="Short note shown in desktop app"></div>
             <p class="hint">Permanent links to share (always the latest version): <span class="mono">${esc(s.download_url)}</span> — or add <span class="mono">/windows</span>, <span class="mono">/mac-arm64</span>, <span class="mono">/mac-x86_64</span>, <span class="mono">/android</span>.</p>
-            <p class="hint">Auto update: upload the installers to the <span class="mono">downloads/</span> folder on this server (same names as the build makes) and they are used automatically. Fill these only to use a file hosted somewhere else.</p>
+            <div class="field"><label>Installer folder on the website</label><input name="downloads_base_url" value="${esc(s.downloads_base_url)}" placeholder="https://aivideoflow.in/downloads"></div>
+            <p class="hint">Upload the installers to this folder (Hostinger: <span class="mono">public_html/downloads/</span>) with the names the build makes: AI-Video-Flow-Windows-Setup.exe, AI-Video-Flow-Mac-arm64.dmg, AI-Video-Flow-Mac-x86_64.dmg, AI-Video-Flow-Reels.apk. The links and auto update use them automatically. The fields below are only for a file kept somewhere else; the SHA-256 (printed by the build) adds a tamper check.</p>
             ${s.app_assets.map((a) => `<div class="field"><label>${esc(a.label)} link</label><input name="app_asset_url_${a.key}" value="${esc(a.url)}" placeholder="https://…"></div>
             <div class="field"><label>${esc(a.label)} SHA-256</label><input name="app_asset_sha256_${a.key}" value="${esc(a.sha256)}" maxlength="64" class="mono" placeholder="64 hex characters"></div>`).join('')}
             <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">

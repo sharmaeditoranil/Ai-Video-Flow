@@ -69,21 +69,26 @@ Pehle se install kiye gaye app purane domain se baat karte hain, unke liye puran
 
 ## 6. Naya version release (download link + auto update)
 
-1. Build chalaiye (`packaging/build_mac_app.sh` Mac par, `packaging/build_windows_app.bat` Windows par). Files `dist/` me banti hain.
-2. cPanel → File Manager → `license.aivideoflow.in` folder (jahan `index.php` hai) → `downloads` naam ka folder banaiye (pehli baar).
-3. Usme ye files upload kariye — **naam bilkul yahi rehna chahiye**, purani file replace ho jayegi:
+Installer files **Hostinger** par (aivideoflow.in) rehti hain; link license server ka rehta hai.
+
+1. Build: GitHub par `v1.1.x` tag push kariye (Actions Windows + Mac banata hai), Android ke liye `bash mobile_app/build_apk.sh apk`.
+2. Hostinger → File Manager → `aivideoflow.in` → `public_html` → `downloads` folder (pehli baar banaiye).
+3. Usme ye files upload kariye — **naam bilkul yahi**, purani file replace ho jayegi:
    - `AI-Video-Flow-Windows-Setup.exe`
    - `AI-Video-Flow-Mac-arm64.dmg` (Apple Silicon M1/M2/M3/M4)
    - `AI-Video-Flow-Mac-x86_64.dmg` (Intel Mac)
    - `AI-Video-Flow-Reels.apk` (Android)
-   File Manager badi file (500 MB+) par atak jaye to FTP (FileZilla) se upload kariye.
-4. Admin → Settings → **Latest Desktop version** me naya number daaliye (jaise `1.1.15`) → Publish.
-   Sabhi chalte apps installer khud download karke "Restart & Update" button dikhayenge.
-   SHA-256 server khud nikalta hai; link wale fields khaali chhod dijiye.
+   Badi file (500 MB+) File Manager me atke to FTP (FileZilla) se upload kariye.
+4. Check: `https://aivideoflow.in/downloads/AI-Video-Flow-Reels.apk` browser me khol kar dekhiye ki download hota hai.
+5. Admin → Settings → **Latest Desktop version** / **Latest Mobile APK version** me naya number (jaise `1.1.16`) → Publish.
+   Sabhi apps installer khud download karke "Restart & Update" dikhayenge.
+
+Folder badalna ho to Admin → Settings → **Installer folder on the website**.
+License server ke apne `downloads/` folder me file ho to wahi pehle use hoti hai — Hostinger use karna hai to wo folder khaali rakhiye.
 
 **Customers ko bhejne wala link (kabhi nahi badalta, hamesha latest version):**
 `https://license.aivideoflow.in/download` — Windows/Android par seedha download, Mac par chip chunne ka page.
-Seedha link chahiye to: `/download/windows`, `/download/mac-arm64`, `/download/mac-x86_64`, `/download/android`.
+Seedha link: `/download/windows`, `/download/mac-arm64`, `/download/mac-x86_64`, `/download/android`.
 
 ## Zaroori (purane server ke baad)
 

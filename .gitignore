@@ -69,3 +69,4 @@ mobile_app/android/app/src/main/assets/www/
 dist/server-upload-*
 dist/website-upload-*.zip
 dist/*.php
+dist/hostinger-installers-*

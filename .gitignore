@@ -66,4 +66,4 @@ mobile_app/android/app/src/main/python/
 mobile_app/android/app/src/main/assets/www/
 
 # Server upload packages (APK and installers are large)
-dist/server-upload-*.zip
+dist/server-upload-*

@@ -73,3 +73,6 @@ dist/hostinger-installers-*
 
 # Upload folders for the servers
 Upload v*/
+
+# Android bug reports
+bugreport-*.zip

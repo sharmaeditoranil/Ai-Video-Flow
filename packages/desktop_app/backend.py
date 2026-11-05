@@ -48,7 +48,7 @@ VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", "
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.15"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.16"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -247,8 +247,10 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
     if not os.path.isdir(folder):
         return {"success": False, "error": f"Folder not found: {folder}"}
 
+    from packages.ai_engine.image_motion import STILL_EXTS
     videos: List[str] = []
     audios: List[str] = []
+    stills: List[str] = []  # designs (PSD, PNG, JPG…) for a motion-graphics edit when there is no video
     total_bytes = 0
     try:
         walker = os.walk(folder) if recursive else [(folder, [], os.listdir(folder))]
@@ -263,6 +265,8 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
                     videos.append(full)
                 elif ext in AUDIO_EXTS:
                     audios.append(full)
+                elif ext in STILL_EXTS:
+                    stills.append(full)
                 else:
                     continue
                 try:
@@ -283,7 +287,9 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
         "audio_count": len(audios),
         "total_gb": round(total_bytes / (1024 ** 3), 2),
         "videos": videos,
-        "audios": audios
+        "audios": audios,
+        "image_count": len(stills),
+        "images": stills,
     }
 
 
@@ -925,6 +931,16 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         else:
             _log(job_id, "Local mode: everything runs on this computer.", "info")
 
+        # Reference pasted as a link (Instagram, Facebook, YouTube…): fetch it first
+        from packages.ai_engine import link_downloader
+        if link_downloader.is_link(ref_video):
+            try:
+                ref_video = link_downloader.download_reference(
+                    ref_video, os.path.join(OUTPUT_DIR, "reference_links"), lambda m, lvl="info": _log(job_id, m, lvl))
+            except link_downloader.LinkError as e:
+                _log(job_id, f"Reference link: {e} Continuing without the reference.", "warning")
+                ref_video = ""
+
         _log(job_id, f"Scanning footage folder: {folder} (Workflow: {mode.upper()})", "info")
         if instructions:
             _log(job_id, f"✍️ Custom AI Correction / Prompt: \"{instructions}\"", "info")
@@ -932,8 +948,16 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if not scan["success"]:
             raise RuntimeError(scan["error"])
         videos = scan["videos"]
+        if not videos and scan.get("images"):
+            # Only designs (PSD / PNG / JPG): animate each one into a short motion-graphics clip first
+            from packages.ai_engine.image_motion import make_motion_clips
+            size = (1080, 1920) if mode == "reels" else (1920, 1080)
+            _log(job_id, f"🎨 {len(scan['images'])} designs found, no video: making motion-graphics clips "
+                         f"({size[0]}x{size[1]})…", "info")
+            videos = make_motion_clips(scan["images"], os.path.join(OUTPUT_DIR, "motion_clips", os.path.basename(folder.rstrip('/\\'))),
+                                       size=size, log_fn=lambda m, lvl="normal": _log(job_id, m, lvl))
         if not videos:
-            raise RuntimeError("No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).")
+            raise RuntimeError("No video files or designs found in this folder (mp4, mov, mxf… or psd, png, jpg).")
         _log(job_id, f"Found {len(videos)} video clips ({scan['total_gb']} GB).")
 
         # 1. Analyse every clip

@@ -364,13 +364,33 @@ class ReelClonerEngine:
             )
             ordered_clips = sorted_by_score
 
-        # Build V1 Primary Clips matching Reference Cut Rhythm + Beat Grid
+        # Build V1 Primary Clips matching Reference Cut Rhythm + Beat Grid.
+        # Every shot is used once; only the best 1-2 may come back (another part of the clip, in slow motion).
+        # Short footage is stretched with slow motion instead of repeating scenes; if even that is not enough
+        # the reel ends early rather than looping the same shots.
+        total_src = sum(float(c.get("duration") or 0.0) for c in ordered_clips)
+        scarcity = total_src / max(1.0, target_duration)  # below 1: not enough footage at normal speed
+        if scarcity < 0.5:
+            target_duration = max(6.0, round(total_src / 0.5, 2))
+        base_speed = 1.0 if scarcity >= 1.2 else max(0.5, min(1.0, scarcity))
+        scores = sorted((float(c.get("quality_score") or 0) for c in ordered_clips), reverse=True)
+        hero_cut = max(70.0, scores[min(len(scores) - 1, max(0, len(scores) // 5))]) if scores else 100.0
+        heroes = [c for c in ordered_clips if float(c.get("quality_score") or 0) >= hero_cut][:2]
+        hero_ids = {id(c) for c in heroes}
+        used: Dict[int, List[Tuple[float, float]]] = {}  # clip -> source ranges already shown
+        queue = list(ordered_clips) + list(heroes)  # first pass: every shot once; then the heroes once more
+
+        max_cut = 5.0 if is_talking_style else 4.0  # few shots: cuts get longer, up to this, instead of repeating
+
         v1_clips: List[Dict[str, Any]] = []
         curr_t = 0.0
         cut_idx = 0
-        while curr_t < target_duration - 0.3 and ordered_clips:
-            clip = ordered_clips[cut_idx % len(ordered_clips)]
+        for q_idx, clip in enumerate(queue):
+            if curr_t >= target_duration - 0.3:
+                break
             want_dur = float(ref_cuts[cut_idx % len(ref_cuts)])
+            fill = (target_duration - curr_t) / max(1, len(queue) - q_idx)
+            want_dur = max(want_dur, min(fill, max_cut))
 
             # Snap to nearest beat if beat_times exist and not a talking reel
             if beat_times and not is_talking_style:
@@ -379,17 +399,40 @@ class ReelClonerEngine:
                 if near:
                     best_beat = min(near, key=lambda b: abs(b - target_end))
                     want_dur = round(best_beat - curr_t, 2)
-
             want_dur = max(0.6, min(want_dur, target_duration - curr_t))
+
             native_fps = float(clip.get("native_fps") or 25.0)
             clip_dur = float(clip.get("duration") or want_dur)
             in_sec = float(clip.get("in_seconds") or 0.0)
             action_peak = float(clip.get("action_peak_seconds") or (in_sec + want_dur * 0.5))
+            repeat = id(clip) in used
 
-            # Center around the steadiest / highest-action golden window
-            start_s = max(0.0, min(clip_dur - want_dur, action_peak - want_dur * 0.45)) if clip_dur > want_dur else 0.0
+            # Speed: slow motion for hero moments and repeats, a little faster for filler when footage is plentiful
+            speed = base_speed
+            if repeat:
+                speed = min(speed, 0.55)
+            elif id(clip) in hero_ids or cut_idx % 3 == 1:
+                speed = min(speed, 0.65)
+            elif scarcity >= 1.5 and cut_idx % 4 == 2:
+                speed = 1.25
+            span = want_dur * speed  # seconds of source footage this cut shows
+            if span > clip_dur:
+                want_dur, span = round(clip_dur / speed, 2), clip_dur
+            if want_dur < 0.6:
+                continue
+
+            # First use: centred on the clip's action peak. Repeat: a part of the clip not shown yet
+            start_s = max(0.0, min(clip_dur - span, action_peak - span * 0.45))
+            if repeat:
+                taken = used[id(clip)]
+                free = [(a, b) for a, b in ([(0.0, min(r[0] for r in taken)), (max(r[1] for r in taken), clip_dur)]) if b - a >= span]
+                if free:
+                    a, b = max(free, key=lambda r: r[1] - r[0])
+                    start_s = a + (b - a - span) / 2
+            used.setdefault(id(clip), []).append((start_s, start_s + span))
+            # NLE timelines get the same cut at normal speed (speed changes are applied in the rendered MP4)
             end_s = min(clip_dur, start_s + want_dur)
-            actual_dur = round(max(0.5, end_s - start_s), 2)
+            actual_dur = round(want_dur, 2)
 
             # Punch-in zoom on alternate talking cuts or beat hits
             zoom_factor = 1.12 if (is_talking_style and cut_idx % 2 == 1) else (1.06 if speed_ramp else 1.0)
@@ -408,14 +451,22 @@ class ReelClonerEngine:
                 "shot_type": clip.get("shot_type", "mid"),
                 "ai_moment": clip.get("ai_moment", ""),
                 "zoom": zoom_factor,
+                "speed": round(speed, 2),
+                # Cinematic touches in the rendered reel: slow push-in on slow shots, a flash on the hook and on beat drops
+                "push": speed < 0.9,
+                "flash": cut_idx == 0 or (bool(beat_times) and cut_idx % 4 == 0),
                 "speed_ramp": speed_ramp,
                 "cinema_rotate_90": cinema_rotate_90,
-                "role": "Hero Hook" if cut_idx == 0 else f"Ref Clone Cut #{cut_idx + 1}",
+                "role": "Hero Hook" if cut_idx == 0 else ("Hero Moment (slow motion)" if repeat else f"Ref Clone Cut #{cut_idx + 1}"),
             })
             curr_t = round(curr_t + actual_dur, 2)
             cut_idx += 1
-            if cut_idx >= max(len(ordered_clips) * 3, 60):
-                break
+
+        if v1_clips:
+            slow = sum(1 for c in v1_clips if c["speed"] < 0.9)
+            again = len(v1_clips) - len({c["file_path"] for c in v1_clips})
+            _log(f"  🎞️ {len(v1_clips)} cuts from {len(ordered_clips)} shots · {round(curr_t)}s · {slow} in slow motion · "
+                 f"{again} hero shot(s) shown twice · no other repeats", "info")
 
         # Build V2 B-Roll Cutaways (especially for Talking Reels or when B-Roll is enabled)
         broll_clips: List[Dict[str, Any]] = []
@@ -429,12 +480,16 @@ class ReelClonerEngine:
                 cutaway_frequency_sec=freq,
                 cutaway_duration_sec=b_dur,
             )
-            # Fallback if all clips were used on V1: create V2 cutaway overlays from secondary clips
+            v1_files = {c["file_path"] for c in v1_clips}
+            if len(analyzed_clips) <= len(v1_clips):
+                # Few shots: a cutaway would only show a scene the viewer has just seen
+                broll_clips = [b for b in broll_clips if b.get("file_path") not in v1_files]
+            # Fallback: cutaways from shots that are not on V1, each one once
             if not broll_clips and curr_t >= 2.0:
-                secondary = analyzed_clips[1:]
+                secondary = [c for c in analyzed_clips if c.get("file_path") not in v1_files]
                 cut_t = min(1.2, round(curr_t * 0.3, 2))
                 b_idx = 0
-                while cut_t + 1.0 <= curr_t:
+                while cut_t + 1.0 <= curr_t and b_idx < len(secondary):
                     sc = secondary[b_idx % len(secondary)]
                     dur_b = min(b_dur, round(curr_t - cut_t, 2), float(sc.get("total_duration") or 2.0))
                     nfps = float(sc.get("fps") or 25.0)
@@ -617,6 +672,9 @@ class ReelClonerEngine:
                 in_sec = float(clip.get("in_seconds") or 0.0)
                 n_out_frames = max(1, int(round(dur * out_fps)))
                 zoom = float(clip.get("zoom") or 1.0)
+                src_span = dur * float(clip.get("speed") or 1.0)  # < dur: slow motion, > dur: faster
+                push = bool(clip.get("push"))
+                flash = bool(clip.get("flash"))
 
                 for f_i in range(n_out_frames):
                     progress_in_clip = f_i / float(max(1, n_out_frames - 1))
@@ -625,9 +683,9 @@ class ReelClonerEngine:
                     # Speed-Ramp mapping: Fast entry (first 30% covers 50% source time) -> Slow-Mo peak (last 70% covers 50%)
                     if speed_ramp:
                         warped_p = 0.5 * (progress_in_clip / 0.3) if progress_in_clip < 0.3 else 0.5 + 0.5 * ((progress_in_clip - 0.3) / 0.7) ** 1.35
-                        src_t = in_sec + warped_p * dur
+                        src_t = in_sec + warped_p * src_span
                     else:
-                        src_t = in_sec + progress_in_clip * dur
+                        src_t = in_sec + progress_in_clip * src_span
 
                     src_frame_idx = min(max(0, int(round(src_t * src_fps))), max(0, src_total - 1))
                     cap.set(cv2.CAP_PROP_POS_FRAMES, src_frame_idx)
@@ -639,8 +697,13 @@ class ReelClonerEngine:
                     canvas = self._format_vertical_frame(
                         frame, target_w, target_h,
                         cinema_rotate_90=cinema_rotate_90,
-                        zoom=zoom * (1.0 + 0.04 * progress_in_clip if speed_ramp else 1.0),
+                        zoom=zoom * (1.0 + 0.04 * progress_in_clip if speed_ramp else 1.0)
+                                  * (1.0 + 0.07 * progress_in_clip if push else 1.0),  # slow cinematic push-in
                     )
+                    if flash and f_i < 4:
+                        # Soft white flash on the hook and beat drops
+                        k = 0.55 * (1.0 - f_i / 4.0)
+                        canvas = cv2.addWeighted(canvas, 1.0 - k, np.full_like(canvas, 255), k, 0)
 
                     # Check if a B-Roll cutaway is active at `global_t`
                     active_broll = next(

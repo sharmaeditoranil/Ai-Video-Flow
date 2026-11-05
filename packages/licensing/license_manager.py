@@ -59,7 +59,7 @@ def _urlopen(url_or_req, timeout=20):
                 pass
         raise
 
-APP_VERSION = "1.1.15"
+APP_VERSION = "1.1.16"
 SERVER_URL = os.environ.get("AVF_SERVER_URL", "https://license.aivideoflow.in/index.php").rstrip("/")
 RELEASES_PAGE = "https://github.com/sharmaeditoranil/Ai-Video-Flow/releases/latest"
 RELEASES_API = "https://api.github.com/repos/sharmaeditoranil/Ai-Video-Flow/releases/latest"
@@ -205,6 +205,12 @@ class LicenseManager:
         digits = "".join(ch for ch in prof.get("phone", "") if ch.isdigit())
         return bool(prof.get("name") and len(digits) >= 10 and "@" in prof.get("email", ""))
 
+    def _save_profile(self, prof: Dict[str, str]) -> None:
+        pfile = getattr(self, "_profile_file", _PROFILE_FILE)
+        os.makedirs(os.path.dirname(pfile), exist_ok=True)
+        with open(pfile, "w", encoding="utf-8") as f:
+            json.dump(prof, f)
+
     def register_user_profile(self, name: str, phone: str, email: str, studio: str = "", platform_name: str = "") -> Dict[str, Any]:
         name = (name or "").strip()
         email = (email or "").strip().lower()
@@ -217,10 +223,7 @@ class LicenseManager:
                 "error": "Please enter your Full Name, 10-digit WhatsApp Number, and valid Email Address.",
             }
         prof = {"name": name, "phone": digits, "email": email, "studio": studio}
-        pfile = getattr(self, "_profile_file", _PROFILE_FILE)
-        os.makedirs(os.path.dirname(pfile), exist_ok=True)
-        with open(pfile, "w", encoding="utf-8") as f:
-            json.dump(prof, f)
+        self._save_profile(prof)
         # Also mirror to shared desktop profile so registering once on the same machine syncs both
         try:
             os.makedirs(_CONFIG_DIR, exist_ok=True)
@@ -253,7 +256,8 @@ class LicenseManager:
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
             c = self._claims or {}
-            valid = self._claims_valid()
+            # A 'free' plan token (older servers issued them for registrations) unlocks nothing
+            valid = self._claims_valid() and c.get("plan_type") != "free"
             prof = self.get_user_profile()
             registered = self.is_profile_registered()
             plan_type = c.get("plan_type", "free")

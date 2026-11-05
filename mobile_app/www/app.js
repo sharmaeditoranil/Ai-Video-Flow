@@ -64,7 +64,40 @@
       $("btn-clear-ref").hidden = false;
     }
   });
+  // Reference from a link: the phone downloads it right away, so a bad link shows up before the build
+  $("btn-ref-link").addEventListener("click", async () => {
+    const url = $("in-ref-link").value.trim();
+    if (!url) { $("in-ref-link").focus(); return; }
+    const btn = $("btn-ref-link");
+    btn.disabled = true;
+    btn.textContent = "Fetching…";
+    $("ref-status").className = "hint";
+    $("ref-status").textContent = "Downloading the reference video from the link…";
+    try {
+      const r = await fetch("/api/mobile/ref-link", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+      }).then((res) => res.json());
+      if (r.success) {
+        uploadedRef = r.path;
+        $("ref-status").className = "hint ok";
+        $("ref-status").textContent = `Reference loaded from link: ${r.name}`;
+        $("btn-clear-ref").hidden = false;
+      } else {
+        $("ref-status").className = "hint";
+        $("ref-status").style.color = "#fca5a5";
+        $("ref-status").textContent = r.error || "Could not get a video from this link.";
+      }
+    } catch (e) {
+      $("ref-status").textContent = "No internet connection. Check your network and try again.";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Use link";
+    }
+  });
+
   $("btn-clear-ref").addEventListener("click", () => {
+    $("in-ref-link").value = "";
+    $("ref-status").style.color = "";
     uploadedRef = "";
     $("file-ref").value = "";
     $("btn-clear-ref").hidden = true;
@@ -749,6 +782,7 @@
           $("m-update-dl").href = u.download_url;
           $("m-update-banner").hidden = false;
         }
+        startAutoUpdate(u);
         if ($("m-update-status-text")) {
           $("m-update-status-text").innerHTML = `<span style="color:var(--gold);font-weight:600">New version v${u.latest} is available!</span> ${u.notes || ""}`;
         }
@@ -764,6 +798,44 @@
         }
       }
     } catch (e) {}
+  }
+
+  // Auto update: the new version downloads in the background, then one tap opens Android's installer
+  let updatePoll = null;
+  async function startAutoUpdate(u) {
+    const btn = $("m-update-dl");
+    btn.onclick = async (e) => {
+      e.preventDefault();
+      const st = await fetch("/api/mobile/update/status").then((r) => r.json()).catch(() => ({}));
+      if (st.state !== "ready") return;
+      btn.textContent = "Opening installer…";
+      const r = await fetch("/api/mobile/update/install", { method: "POST" }).then((x) => x.json()).catch(() => ({}));
+      if (!r.success) {
+        btn.textContent = "Download";
+        btn.onclick = null;  // fall back to the website link
+        alert(r.error || "Could not start the update.");
+      } else {
+        btn.textContent = "Install update";
+      }
+    };
+    const r = await fetch("/api/mobile/update/download", { method: "POST" }).then((x) => x.json()).catch(() => ({}));
+    if (!r.success) return;
+    if (updatePoll) clearInterval(updatePoll);
+    const tick = async () => {
+      const st = await fetch("/api/mobile/update/status").then((x) => x.json()).catch(() => ({}));
+      if (st.state === "downloading") {
+        btn.textContent = `Downloading ${st.progress || 0}%`;
+      } else if (st.state === "ready") {
+        btn.textContent = "Install update";
+        clearInterval(updatePoll);
+      } else if (st.state === "error") {
+        btn.textContent = "Download";
+        btn.onclick = null;
+        clearInterval(updatePoll);
+      }
+    };
+    updatePoll = setInterval(tick, 1500);
+    tick();
   }
 
   if ($("m-update-close")) {

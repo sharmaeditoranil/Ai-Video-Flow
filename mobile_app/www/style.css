@@ -337,6 +337,7 @@ code, .mono {
 input[type="text"],
 input[type="email"],
 input[type="tel"],
+input[type="url"],
 textarea,
 select,
 .m-select {
@@ -370,6 +371,7 @@ select,
 input[type="text"]:focus,
 input[type="email"]:focus,
 input[type="tel"]:focus,
+input[type="url"]:focus,
 textarea:focus,
 select:focus,
 .m-select:focus {
@@ -1152,3 +1154,8 @@ select:focus,
 .pick-row #btn-pick-folder, .pick-row #btn-clear-clips { flex: 1 1 0; min-width: 0; }
 .loaded-source-bar { flex-wrap: wrap; }
 .loaded-source-bar > span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+
+/* Reference from a link */
+.ref-link-row { margin-top: 8px; }
+.ref-link-row input { flex: 1 1 auto; min-width: 0; }
+.ref-link-row .btn { flex: 0 0 auto; }

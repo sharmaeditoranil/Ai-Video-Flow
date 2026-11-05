@@ -229,12 +229,19 @@ function migrate(PDO $pdo): void
         $pdo->exec("INSERT INTO settings (key, value) VALUES ('pricing_version', '2') ON CONFLICT(key) DO UPDATE SET value = '2'");
     }
 
+    // Free trial records used to be issued as 'local' (= the paid AI Editing plan, unlimited projects)
+    if (get_setting($pdo, 'trial_plan_fix') !== '1') {
+        $pdo->exec("UPDATE licenses SET plan_type = 'free' WHERE plan_type = 'local'
+            AND (notes LIKE 'Auto-created on registration%' OR notes = 'Registered profile')");
+        $pdo->exec("INSERT INTO settings (key, value) VALUES ('trial_plan_fix', '1') ON CONFLICT(key) DO UPDATE SET value = '1'");
+    }
+
     // Ensure all existing registered users without a license row get a Free Trial license
     $noLicUsers = $pdo->query('SELECT u.id, u.name, u.email, u.machine_id, u.platform, u.source FROM users u WHERE NOT EXISTS (SELECT 1 FROM licenses l WHERE l.user_id = u.id)')->fetchAll();
     foreach ($noLicUsers as $nu) {
         $isMob = str_starts_with((string)$nu['machine_id'], 'F0B11E') || in_array(strtolower((string)$nu['platform']), ['android', 'ios', 'mobile'], true) || ($nu['source'] ?? '') === 'trial_mobile';
         $label = $isMob ? 'Mobile Free Trial (2 Edits/Day)' : 'Free Trial (2 Edits/Day)';
-        $tKey = issue_license($pdo, (int)$nu['id'], $label, 0, false, 365, 'Registered profile', 'local');
+        $tKey = issue_license($pdo, (int)$nu['id'], $label, 0, false, 365, 'Registered profile', 'free');
         if (!empty($nu['machine_id'])) {
             $slotCol = $isMob ? 'bound_mobile_id' : 'bound_machine_id';
             $pdo->prepare("UPDATE licenses SET $slotCol = ?, platform = ?, last_seen_at = ? WHERE license_key = ?")
@@ -426,10 +433,10 @@ function new_license_key(): string
     return 'AVF-' . implode('-', $parts);
 }
 
-/** kind: 'ai' (Smart AI credits / unlimited) or 'local' (unlimited editing, no Smart AI) */
+/** kind: 'ai' (Smart AI credits / unlimited), 'local' (unlimited editing, no Smart AI) or 'free' (registration record, no paid features) */
 function issue_license(PDO $pdo, int $userId, string $planName, int $credits, bool $unlimited, int $validityDays, string $notes, string $kind = 'ai'): string
 {
-    $planType = $kind === 'local' ? 'local' : ($unlimited ? 'unlimited' : 'per_wedding');
+    $planType = in_array($kind, ['local', 'free'], true) ? $kind : ($unlimited ? 'unlimited' : 'per_wedding');
     $user = $pdo->prepare('SELECT name, email FROM users WHERE id = ?');
     $user->execute([$userId]);
     $u = $user->fetch() ?: ['name' => '', 'email' => ''];
@@ -494,7 +501,7 @@ function upsert_trial_user(PDO $pdo, string $name, string $email, string $phone,
     $licRow = $chkLic->fetch();
     if (!$licRow) {
         $planLabel = $isMobile ? 'Mobile Free Trial (2 Edits/Day)' : 'Free Trial (2 Edits/Day)';
-        $trialKey = issue_license($pdo, $uid, $planLabel, 0, false, 365, "Auto-created on registration ($platform)", 'local');
+        $trialKey = issue_license($pdo, $uid, $planLabel, 0, false, 365, "Auto-created on registration ($platform)", 'free');
         if ($machineId !== '') {
             $slotCol = $isMobile ? 'bound_mobile_id' : 'bound_machine_id';
             $pdo->prepare("UPDATE licenses SET $slotCol = ?, platform = ?, last_seen_at = ? WHERE license_key = ?")
@@ -627,6 +634,9 @@ function update_manifest(PDO $pdo, string $version): array
     return ['manifest' => b64url($payload), 'manifest_signature' => b64url($sig)];
 }
 
+/** Phone ids from the mobile app 1.1.17+ (stable across restarts and reinstalls) start with this */
+const STABLE_MOBILE_ID_PREFIX = 'F0B11EA2D0';
+
 /** Validates key + machine/mobile for desktop and mobile calls. Each license allows 1 PC/Mac + 1 Mobile App for free. */
 function check_license(PDO $pdo, string $key, string $machineId, bool $bind, string $platform = ''): array
 {
@@ -636,6 +646,10 @@ function check_license(PDO $pdo, string $key, string $machineId, bool $bind, str
     $lic = load_license($pdo, $key);
     if (!$lic) {
         json_out(['success' => false, 'error' => 'License key not found.'], 404);
+    }
+    if ($lic['plan_type'] === 'free') {
+        json_out(['success' => false, 'free_plan' => true,
+            'error' => 'This is a free trial record, not a paid license. The free plan works without a key - just register in the app.'], 403);
     }
     if ($lic['status'] !== 'active') {
         json_out(['success' => false, 'error' => 'This license is ' . $lic['status'] . '. Contact support.'], 403);
@@ -668,6 +682,10 @@ function check_license(PDO $pdo, string $key, string $machineId, bool $bind, str
             ->execute([$machineId, time(), $lic['id']]);
         $lic[$slotCol] = $machineId;
         $lic['active_device_id'] = $machineId;
+    } elseif ($isMobile && str_starts_with($machineId, STABLE_MOBILE_ID_PREFIX) && !str_starts_with((string)$lic[$slotCol], STABLE_MOBILE_ID_PREFIX)) {
+        // Mobile app before 1.1.17 made a new phone id on every launch; its first stable id takes over that slot
+        $pdo->prepare("UPDATE licenses SET $slotCol = ? WHERE id = ?")->execute([$machineId, $lic['id']]);
+        $lic[$slotCol] = $machineId;
     } elseif (!hash_equals($lic[$slotCol], $machineId)) {
         json_out(['success' => false, 'error' => "This license is already activated on another $label. Ask the admin to reset the device lock."], 403);
     }
@@ -950,13 +968,11 @@ if (str_starts_with($PATH, '/api/v1/')) {
             json_out(['success' => false, 'error' => 'Please enter your full name, valid 10-digit WhatsApp number, and email address.'], 400);
         }
         $uid = upsert_trial_user($pdo, $name, $email, $phone, $studio, $mid, $platform);
-        $stLic = $pdo->prepare('SELECT license_key FROM licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1');
-        $stLic->execute([$uid]);
-        $licKey = (string)($stLic->fetchColumn() ?: '');
+        // No license key in the reply: matching is by e-mail / phone, which proves nothing about the caller
         json_out([
             'success' => true,
             'user_id' => $uid,
-            'license_key' => $licKey,
+            'license_key' => '',
             'user' => ['name' => $name, 'email' => $email, 'phone' => $phone, 'studio' => $studio],
             'message' => 'Profile registered! You now get 2 Free Edits per day.',
         ]);
@@ -1036,6 +1052,32 @@ if (str_starts_with($PATH, '/api/v1/')) {
         $pdo->prepare('UPDATE licenses SET last_seen_at = ?, app_version = ?, platform = ? WHERE id = ?')
             ->execute([time(), substr((string)($b['app_version'] ?? ''), 0, 20), substr((string)($b['platform'] ?? ''), 0, 20), $lic['id']]);
         json_out(['success' => true] + signed_token($lic, $lic['active_device_id'] ?? $lic['bound_machine_id']));
+    }
+
+    // After a reinstall the app has no license file: hand back the license this exact device is already bound to
+    if ($PATH === '/api/v1/license/restore' && $METHOD === 'POST') {
+        rate_limit($pdo, 'restore:' . client_ip(), 30, 3600);
+        $b = body_json();
+        $mid = strtoupper((string)($b['machine_id'] ?? ''));
+        if (!preg_match('/^[A-F0-9]{32,64}$/', $mid)) {
+            json_out(['success' => false, 'error' => 'Invalid machine id.'], 400);
+        }
+        $st = $pdo->prepare("SELECT * FROM licenses WHERE (bound_mobile_id = ? OR bound_machine_id = ?) AND status = 'active'
+            AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?) ORDER BY CASE WHEN plan_type = 'free' THEN 1 ELSE 0 END, id DESC LIMIT 1");
+        $st->execute([$mid, $mid, time()]);
+        $lic = $st->fetch();
+        if (!$lic) {
+            json_out(['success' => false, 'error' => 'No license is linked to this device.'], 404);
+        }
+        if ($lic['plan_type'] === 'free') {
+            // Free user: give back the registration so the app does not ask for it again
+            $u = $pdo->prepare('SELECT name, email, phone, studio FROM users WHERE id = ?');
+            $u->execute([$lic['user_id']]);
+            json_out(['success' => true, 'license_key' => '', 'profile' => $u->fetch() ?: null]);
+        }
+        $pdo->prepare('UPDATE licenses SET last_seen_at = ?, platform = ? WHERE id = ?')
+            ->execute([time(), substr((string)($b['platform'] ?? ''), 0, 20), $lic['id']]);
+        json_out(['success' => true, 'license_key' => $lic['license_key']] + signed_token($lic, $mid));
     }
 
     if ($PATH === '/api/v1/license/refresh' && $METHOD === 'POST') {
@@ -2147,7 +2189,7 @@ const views = {
         <td>${keyCell(l.license_key)}</td>
         <td>${esc(l.user_name || l.client_name)}<div class="muted">${esc(l.user_email || l.client_email)}</div></td>
         <td>${esc(l.plan_name || l.tier_display)}</td>
-        <td><strong>${l.plan_type === 'local' ? 'Pro' : (l.plan_type === 'unlimited' ? '∞' : l.credits)}</strong></td>
+        <td><strong>${l.plan_type === 'free' ? 'Free' : (l.plan_type === 'local' ? 'Pro' : (l.plan_type === 'unlimited' ? '∞' : l.credits))}</strong></td>
         <td>${l.bound_machine_id ? `<span class="mono" title="${esc(l.bound_machine_id)}">${esc(l.bound_machine_id.slice(0, 8))}…</span><div class="muted">${esc(l.platform || '')} ${esc(l.app_version || '')}</div>` : '<span class="muted">Not activated</span>'}</td>
         <td>${date(l.expires_at)}</td>
         <td><span class="pill ${l.status === 'active' && !expired ? 'ok' : 'bad'}">${expired ? 'expired' : esc(l.status)}</span></td>

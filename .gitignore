@@ -76,3 +76,5 @@ Upload v*/
 
 # Android bug reports
 bugreport-*.zip
+dist/website-*.zip
+Upload website*/

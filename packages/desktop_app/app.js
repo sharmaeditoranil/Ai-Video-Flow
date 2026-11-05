@@ -70,6 +70,15 @@
     e.preventDefault();
     openUrl(a.getAttribute("href"));
   }));
+  // Paid license: the same key unlocks the phone app (1 computer + 1 phone per license)
+  $("btn-copy-key").addEventListener("click", async () => {
+    const key = $("lic-key").value.trim();
+    try { await navigator.clipboard.writeText(key); $("btn-copy-key").textContent = "Copied ✓"; }
+    catch (e) { prompt("Copy your license key:", key); }
+    setTimeout(() => { $("btn-copy-key").textContent = "Copy key"; }, 2000);
+  });
+  $("btn-get-phone-app").addEventListener("click", () => openUrl("https://license.aivideoflow.in/download/android"));
+
   async function openUrl(url) {
     try { if ((await api("/api/open-url", { url })).success) return; } catch (e) { /* fall through */ }
     window.open(url, "_blank");
@@ -201,6 +210,7 @@
     $("lic-expiry").textContent = l.is_premium ? fmtDate(l.expires_at) : "—";
     $("lic-machine").textContent = l.machine_id || "…";
     if (l.license_key && !$("lic-key").value) $("lic-key").value = l.license_key;
+    $("phone-license").hidden = !(l.is_premium && l.license_key);
     const prof = l.user_profile || {};
     if ($("prof-name") && !$("prof-name").value && (prof.name || l.client_name)) $("prof-name").value = prof.name || l.client_name || "";
     if ($("prof-phone") && !$("prof-phone").value && (prof.phone || l.client_phone)) $("prof-phone").value = prof.phone || l.client_phone || "";
@@ -489,8 +499,8 @@
     document.querySelectorAll(".reels-only").forEach((el) => el.hidden = !isReels);
     if ($("lbl-ref")) {
       $("lbl-ref").innerHTML = isReels
-        ? 'Reference Reel to Clone (Edit Style · Cuts · Speed · Color · B-Roll · Text) <span class="opt">recommended</span>'
-        : 'Reference video for the colour look <span class="opt">optional</span>';
+        ? 'Reference Reel to Clone (Edit Style · Cuts · Speed · Color · B-Roll · Text) <span class="opt">recommended · file or link</span>'
+        : 'Reference video for the colour look <span class="opt">optional · file or link</span>';
     }
     if ($("hint-ref")) {
       $("hint-ref").textContent = isReels
@@ -548,11 +558,13 @@
     info.textContent = "Scanning…";
     const r = await api("/api/scan-folder", { path });
     if (!r.success) { info.className = "hint error"; info.textContent = r.error; return false; }
-    if (!r.video_count) { info.className = "hint error"; info.textContent = "No video files found in this folder (mp4, mov, mxf, mts, avi, mkv…)."; return false; }
+    if (!r.video_count && !r.image_count) { info.className = "hint error"; info.textContent = "No video files or designs found in this folder (mp4, mov, mxf… or psd, png, jpg)."; return false; }
     $("in-folder").value = r.folder;
     store.set("avf.folder", r.folder);
     info.className = "hint ok";
-    info.textContent = `✓ ${r.video_count} video clips · ${r.total_gb} GB${r.audio_count ? ` · ${r.audio_count} audio files` : ""}`;
+    info.textContent = r.video_count
+      ? `✓ ${r.video_count} video clips · ${r.total_gb} GB${r.audio_count ? ` · ${r.audio_count} audio files` : ""}`
+      : `✓ ${r.image_count} designs (PSD / PNG / JPG) · each one becomes an animated motion-graphics clip`;
     loadedFolder = r.folder;
     return true;
   }
@@ -926,7 +938,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.15 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.16 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

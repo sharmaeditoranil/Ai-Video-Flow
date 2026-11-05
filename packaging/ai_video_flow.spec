@@ -12,7 +12,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
-VERSION = "1.1.15"
+VERSION = "1.1.16"
 
 datas = [
     (os.path.join(ROOT, "packages", "desktop_app", "index.html"), "packages/desktop_app"),
@@ -28,7 +28,7 @@ datas = [
 binaries = []
 hiddenimports = collect_submodules("packages") + collect_submodules("installer")
 
-for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg"]:
+for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg", "yt_dlp"]:
     try:
         d, b, h = collect_all(pkg)
         datas += d

@@ -581,3 +581,11 @@ textarea { resize: vertical; }
   font-weight: 700;
 }
 
+
+/* ---------- Paid license: use it on the phone app ---------- */
+.phone-license { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 14px; border-color: rgba(232, 185, 95, 0.35); background: rgba(232, 185, 95, 0.06); }
+.phone-license[hidden] { display: none; }
+.phone-license > div:first-child { flex: 1 1 320px; min-width: 0; }
+.phone-license .muted { margin-top: 4px; font-size: 13px; }
+.phone-license-actions { display: flex; gap: 8px; }

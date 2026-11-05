@@ -33,7 +33,7 @@ if ROOT_DIR not in sys.path:
 from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
 from packages.ai_engine.reel_cloner import reel_cloner, REEL_STYLES
 from packages.ai_engine.cloud_ai_client import cloud_ai_client
-from packages.licensing.license_manager import LicenseManager, _hardware_id
+from packages.licensing.license_manager import LicenseManager, _hardware_id, _urlopen
 from packages.core_premiere.premiere_adapter import premiere_adapter
 from packages.ai_engine import android_media
 
@@ -43,7 +43,7 @@ android_media.install()
 logger = logging.getLogger("ai_video_flow.mobile_app")
 
 MOBILE_PORT = int(os.environ.get("AVF_MOBILE_PORT", "5680"))
-MOBILE_APP_VERSION = "1.1.16"
+MOBILE_APP_VERSION = "1.1.17"
 MOBILE_VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json")
 MOBILE_DATA_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow-mobile")
 MOBILE_UPLOADS_DIR = os.path.join(MOBILE_DATA_DIR, "uploads")
@@ -52,14 +52,41 @@ os.makedirs(MOBILE_UPLOADS_DIR, exist_ok=True)
 os.makedirs(MOBILE_OUTPUT_DIR, exist_ok=True)
 
 
+# Stable phone ids start with this; the server lets them replace an older id that changed on every launch
+STABLE_MOBILE_ID_PREFIX = "F0B11EA2D0"
+
+
+def _android_id() -> str:
+    """Android's per-app device id: the same across app restarts and reinstalls (changes only on factory reset)."""
+    try:
+        from java import jclass
+        app = jclass("com.chaquo.python.Python").getPlatform().getApplication()
+        secure = jclass("android.provider.Settings$Secure")
+        return str(secure.getString(app.getContentResolver(), "android_id") or "")
+    except Exception:
+        return ""
+
+
 def get_mobile_device_id() -> str:
     """
-    Generates a deterministic 32-char uppercase hex ID prefixed with 'F0B11E'
-    so the license server recognizes this as the customer's Mobile Phone slot
-    (allowing 1 PC/Mac + 1 Mobile App for free on the same license key!).
+    32-char uppercase hex id starting with 'F0B11E' so the license server puts this phone in the license's
+    mobile slot (1 PC/Mac + 1 phone per license). On Android it comes from ANDROID_ID; a phone without one
+    keeps a random id saved in the app's data.
     """
-    digest = hashlib.sha256(f"avf-mobile-v1|{_hardware_id()}".encode("utf-8")).hexdigest().upper()
-    return "F0B11E" + digest[:26]
+    seed = _android_id()
+    if not seed:
+        id_file = os.path.join(MOBILE_DATA_DIR, "device_id")
+        try:
+            seed = open(id_file, encoding="utf-8").read().strip()
+        except OSError:
+            seed = ""
+        if not seed:
+            seed = uuid.uuid4().hex
+            os.makedirs(MOBILE_DATA_DIR, exist_ok=True)
+            with open(id_file, "w", encoding="utf-8") as f:
+                f.write(seed)
+    digest = hashlib.sha256(f"avf-mobile-v2|{seed}".encode("utf-8")).hexdigest().upper()
+    return STABLE_MOBILE_ID_PREFIX + digest[:32 - len(STABLE_MOBILE_ID_PREFIX)]
 
 
 class MobileLicenseClient(LicenseManager):
@@ -120,6 +147,8 @@ class MobileLicenseClient(LicenseManager):
                 return
             except Exception:
                 pass
+        # Fresh install (or reinstall): ask the server whether this phone already holds a license
+        threading.Thread(target=self.restore_from_server, daemon=True).start()
         # If the user already activated on their PC/Mac on this system, pre-fill their key
         pc_lic = os.path.expanduser("~/.ai-video-flow/license.json")
         if os.path.isfile(pc_lic):
@@ -140,6 +169,26 @@ class MobileLicenseClient(LicenseManager):
             json.dump({"license_key": license_key, "token": token, "signature": signature}, f)
         self._license_key, self._claims, self._last_error = license_key, claims, ""
         return True
+
+    def restore_from_server(self) -> bool:
+        """After a reinstall the license file is gone; the server still knows which license this phone holds."""
+        status, data = self._post("/api/v1/license/restore", {"machine_id": self.machine_id, "platform": "Android"})
+        if status != 200 or not data.get("success"):
+            return False
+        prof = data.get("profile") or {}
+        if prof.get("name") and not self.is_profile_registered():
+            # Free user: the registration comes back, so the app does not ask for it again
+            self._save_profile({k: str(prof.get(k) or "") for k in ("name", "phone", "email", "studio")})
+            logger.info("Registration restored from the server for this phone.")
+        if not data.get("license_key"):
+            return bool(prof)
+        with self._lock:
+            if self._license_key:
+                return False
+            ok = self._store(data["license_key"], data.get("token", ""), data.get("signature", ""))
+        if ok:
+            logger.info("License restored from the server for this phone.")
+        return ok
 
     def activate_license(self, license_key: str, email: Optional[str] = None) -> Dict[str, Any]:
         key = (license_key or "").strip().upper()
@@ -212,8 +261,10 @@ class MobileLicenseClient(LicenseManager):
 
         # 2. Check remote license server (/api/v1/app/version)
         try:
-            st, rdata = self._get("/api/v1/app/version", timeout=6)
-            if st == 200 and rdata.get("success"):
+            # (There was no _get(): this check used to fail silently, so phones never heard about updates)
+            with _urlopen(f"{self.server_url}/api/v1/app/version", timeout=8) as resp:
+                rdata = json.loads(resp.read().decode("utf-8"))
+            if rdata.get("success"):
                 srv_ver = (rdata.get("mobile_latest") or rdata.get("latest") or "").strip()
                 if _ver_tuple(srv_ver) > _ver_tuple(latest):
                     latest = srv_ver
@@ -234,6 +285,71 @@ class MobileLicenseClient(LicenseManager):
 
 
 mobile_license = MobileLicenseClient()
+
+
+# In-app update: the new .apk is downloaded in the background, then Android's installer asks the user to confirm
+UPDATE_STATE: Dict[str, Any] = {"state": "idle", "version": "", "progress": 0, "error": "", "path": ""}
+UPDATE_LOCK = threading.Lock()
+
+
+def _download_update(version: str, url: str) -> None:
+    import urllib.request
+    from packages.licensing.updater import _strict_ssl
+    folder = os.path.join(MOBILE_DATA_DIR, "updates")
+    target = os.path.join(folder, f"AI-Video-Flow-Reels-{version}.apk")
+    try:
+        if not os.path.isfile(target):
+            shutil.rmtree(folder, ignore_errors=True)
+            os.makedirs(folder, exist_ok=True)
+            req = urllib.request.Request(url, headers={"User-Agent": f"AIVideoFlowReels/{MOBILE_APP_VERSION}"})
+            with urllib.request.urlopen(req, timeout=60, context=_strict_ssl()) as resp, open(target + ".part", "wb") as out:
+                total, done = int(resp.headers.get("Content-Length") or 0), 0
+                for chunk in iter(lambda: resp.read(1 << 18), b""):
+                    out.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        UPDATE_STATE["progress"] = min(99, int(done * 100 / total))
+            with open(target + ".part", "rb") as f:
+                if f.read(2) != b"PK":
+                    raise ValueError("The download is not an Android app file.")
+            os.replace(target + ".part", target)
+        UPDATE_STATE.update(state="ready", progress=100, path=target)
+    except Exception as e:
+        logger.warning(f"Update download failed: {e}")
+        UPDATE_STATE.update(state="error", error="Could not download the update. Check your internet and try again.")
+
+
+def start_update_download() -> Dict[str, Any]:
+    info = mobile_license.check_app_update()
+    if not info.get("update_available"):
+        return {"success": False, "error": "You already have the latest version."}
+    url = info.get("download_url") or ""
+    if not url.startswith("https://"):
+        return {"success": False, "error": "The update link is not secure."}
+    with UPDATE_LOCK:
+        if UPDATE_STATE["version"] == info["latest"] and UPDATE_STATE["state"] in ("downloading", "ready"):
+            return {"success": True, **UPDATE_STATE}
+        UPDATE_STATE.update(state="downloading", version=info["latest"], progress=0, error="", path="")
+    threading.Thread(target=_download_update, args=(info["latest"], url), daemon=True).start()
+    return {"success": True, **UPDATE_STATE}
+
+
+def install_update() -> Dict[str, Any]:
+    if UPDATE_STATE["state"] != "ready" or not os.path.isfile(UPDATE_STATE["path"]):
+        # Allowing "install unknown apps" restarts the app: the finished download is still on disk
+        import glob
+        done = sorted(glob.glob(os.path.join(MOBILE_DATA_DIR, "updates", "AI-Video-Flow-Reels-*.apk")))
+        if not done:
+            return {"success": False, "error": "The update is still downloading."}
+        UPDATE_STATE.update(state="ready", progress=100, path=done[-1])
+    try:
+        from java import jclass
+        app = jclass("com.chaquo.python.Python").getPlatform().getApplication()
+        jclass("com.aivideoflow.reels.AppUpdater").install(app, UPDATE_STATE["path"])
+        return {"success": True}
+    except Exception as e:
+        logger.warning(f"Update install failed: {e}")
+        return {"success": False, "error": "Android could not start the installer. Download the update from the website instead."}
 
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -464,6 +580,10 @@ class MobileAppHandler(SimpleHTTPRequestHandler):
             self._json(mobile_license.check_app_update())
             return
 
+        if path == "/api/mobile/update/status":
+            self._json({"success": True, **UPDATE_STATE})
+            return
+
         if path == "/api/mobile/plans":
             self._json(mobile_license.plans())
             return
@@ -535,6 +655,23 @@ class MobileAppHandler(SimpleHTTPRequestHandler):
             jid = _new_job()
             threading.Thread(target=mobile_reel_job, args=(jid, data), daemon=True).start()
             self._json({"success": True, "job_id": jid})
+            return
+
+        if self.path == "/api/mobile/update/download":
+            self._json(start_update_download())
+            return
+
+        if self.path == "/api/mobile/update/install":
+            self._json(install_update())
+            return
+
+        if self.path == "/api/mobile/ref-link":
+            from packages.ai_engine import link_downloader
+            try:
+                path = link_downloader.download_reference(data.get("url") or "", os.path.join(MOBILE_UPLOADS_DIR, "ref"))
+                self._json({"success": True, "path": path, "name": os.path.basename(path)})
+            except link_downloader.LinkError as e:
+                self._json({"success": False, "error": str(e)})
             return
 
         if self.path == "/api/mobile/profile/register":

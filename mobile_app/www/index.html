@@ -22,7 +22,7 @@
         <img src="logo.png" alt="AI Video Flow" class="m-logo">
         <div>
           <div class="m-title">AI Video Flow</div>
-          <div class="m-sub" id="m-ver-sub">v1.1.16 · AI editing assistant</div>
+          <div class="m-sub" id="m-ver-sub">v1.1.17 · AI editing assistant</div>
         </div>
       </div>
       <button class="profile-chip" id="top-plan-btn" data-tab="profile" title="My Profile">
@@ -98,6 +98,10 @@
               <input type="file" id="file-ref" accept="video/*" hidden>
               <button class="btn btn-block" id="btn-pick-ref">Choose reference reel</button>
               <button class="btn btn-icon" id="btn-clear-ref" title="Remove reference" hidden>✕</button>
+            </div>
+            <div class="input-row ref-link-row">
+              <input type="url" id="in-ref-link" placeholder="…or paste a link (Instagram, Facebook, YouTube)" inputmode="url" autocomplete="off" spellcheck="false">
+              <button class="btn" id="btn-ref-link">Use link</button>
             </div>
             <div class="hint" id="ref-status">Clones cut rhythm, pacing, 3D color LUT and audio beats from any reel.</div>
 
@@ -257,7 +261,7 @@
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <h3 style="margin:0">App updates</h3>
-            <span class="pill-reel" id="m-cur-ver-pill">v1.1.16</span>
+            <span class="pill-reel" id="m-cur-ver-pill">v1.1.17</span>
           </div>
           <p class="muted" style="font-size:12.5px;margin-bottom:12px" id="m-update-status-text">Your app automatically checks for new updates whenever it starts.</p>
           <div class="btn-row">

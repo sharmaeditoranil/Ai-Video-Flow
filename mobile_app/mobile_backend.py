@@ -43,7 +43,7 @@ android_media.install()
 logger = logging.getLogger("ai_video_flow.mobile_app")
 
 MOBILE_PORT = int(os.environ.get("AVF_MOBILE_PORT", "5680"))
-MOBILE_APP_VERSION = "1.1.17"
+MOBILE_APP_VERSION = "1.1.18"
 MOBILE_VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version.json")
 MOBILE_DATA_DIR = os.path.join(os.path.expanduser("~"), ".ai-video-flow-mobile")
 MOBILE_UPLOADS_DIR = os.path.join(MOBILE_DATA_DIR, "uploads")

@@ -43,8 +43,14 @@ def parse_prompt_directives(instructions: str) -> Dict[str, Any]:
             directives["target_duration"] = val
 
     # 1.5. Detect reference video URL (YouTube, Vimeo, Instagram, etc.) or local file path in the prompt
+    yt_match = re.search(r'(https?://(?:www\.)?(?:youtube\.com/watch\?v=[\w\-]+|youtu\.be/[\w\-]+|youtube\.com/shorts/[\w\-]+))', instructions)
     url_match = re.search(r'(https?://[^\s\"\'<>]+)', instructions)
-    if url_match:
+    if yt_match:
+        cand_url = yt_match.group(1).strip()
+        directives["ref_video"] = cand_url
+        directives["ref_video_path"] = cand_url
+        directives["ref_video_url"] = cand_url
+    elif url_match:
         cand_url = url_match.group(1).strip()
         directives["ref_video"] = cand_url
         directives["ref_video_path"] = cand_url
@@ -102,7 +108,10 @@ def parse_prompt_directives(instructions: str) -> Dict[str, Any]:
     directives["priorities"] = priorities
 
     # 5. Aspect ratio
-    if any(w in txt for w in ["vertical", "9:16", "reel", "shorts", "tiktok"]):
+    if any(w in txt for w in ["1:1", "square", "ration 1:1", "ratio 1:1", "feed ad", "feed post"]):
+        directives["aspect_ratio"] = "1:1 (1080x1080)"
+        directives["is_square"] = True
+    elif any(w in txt for w in ["vertical", "9:16", "reel", "shorts", "tiktok"]):
         directives["aspect_ratio"] = "9:16 (1080x1920)"
         directives["is_vertical"] = True
     elif any(w in txt for w in ["letterbox", "2.35", "2.39", "cinemascope", "anamorphic", "bars"]):

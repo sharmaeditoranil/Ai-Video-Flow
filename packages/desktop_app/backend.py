@@ -45,7 +45,9 @@ logger = logging.getLogger("ai_video_flow.desktop_backend")
 
 VIDEO_EXTS = {".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".m4v", ".braw", ".r3d", ".webm", ".mpg", ".mpeg", ".3gp"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".aif", ".aiff", ".ogg"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+PSD_EXTS = {".psd", ".psb"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".svg"} | PSD_EXTS
+STILL_EXTS = IMAGE_EXTS
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
 APP_VERSION = "1.1.18"  # launcher only reuses an already-running server with the same version
 
@@ -237,6 +239,8 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
 
     videos: List[str] = []
     audios: List[str] = []
+    images: List[str] = []
+    psds: List[str] = []
     total_bytes = 0
     try:
         walker = os.walk(folder) if recursive else [(folder, [], os.listdir(folder))]
@@ -249,6 +253,11 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
                 full = os.path.join(dirpath, fn)
                 if ext in VIDEO_EXTS:
                     videos.append(full)
+                elif ext in PSD_EXTS:
+                    psds.append(full)
+                    images.append(full)
+                elif ext in IMAGE_EXTS:
+                    images.append(full)
                 elif ext in AUDIO_EXTS:
                     audios.append(full)
                 else:
@@ -269,9 +278,14 @@ def scan_folder(folder: str, recursive: bool = True) -> Dict[str, Any]:
         "folder": folder,
         "video_count": len(videos),
         "audio_count": len(audios),
+        "image_count": len(images),
+        "psd_count": len(psds),
+        "media_count": len(videos) + len(images),
         "total_gb": round(total_bytes / (1024 ** 3), 2),
         "videos": videos,
-        "audios": audios
+        "audios": audios,
+        "images": images,
+        "psds": psds
     }
 
 
@@ -670,9 +684,11 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
         if not scan["success"]:
             raise RuntimeError(scan["error"])
         videos = sorted(scan["videos"])
-        if not videos:
-            raise RuntimeError("No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).")
-        _log(job_id, f"{label} mode · {len(videos)} recording(s) · silence cutting: {'Tight' if cut_level == 'tight' else 'Normal'}", "info")
+        images = sorted(scan.get("images", []))
+        raw_clips = videos + images
+        if not raw_clips:
+            raise RuntimeError("No video, PSD, or image files found in this folder (mp4, mov, psd, png, jpg...).")
+        _log(job_id, f"{label} mode · {len(videos)} recording(s), {len(images)} graphic/image asset(s) · silence cutting: {'Tight' if cut_level == 'tight' else 'Normal'}", "info")
 
         # 2-3 cameras (sub-folders or camera models): the camera that recorded longest decides the cuts,
         # the others are lined up to it by their audio
@@ -1021,24 +1037,35 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if not scan["success"]:
             raise RuntimeError(scan["error"])
         videos = scan["videos"]
-        if not videos:
-            raise RuntimeError("No video files found in this folder (mp4, mov, mxf, mts, avi, mkv...).")
-        _log(job_id, f"Found {len(videos)} video clips ({scan['total_gb']} GB).")
+        images = scan.get("images", [])
+        psds = scan.get("psds", [])
+        raw_clips = videos + images
+        if not raw_clips:
+            raise RuntimeError("No video, PSD, or image files found in this folder (mp4, mov, psd, png, jpg...).")
+
+        is_motion_graphics = len(videos) == 0 and len(images) > 0
+        if is_motion_graphics:
+            _log(job_id, f"🎨 Motion Graphics Mode: {len(images)} graphic asset(s) ({len(psds)} PSD) found. Beat-syncing to audio...", "info")
+        else:
+            _log(job_id, f"Found {len(videos)} video clip(s) and {len(images)} graphic/PSD asset(s) ({scan['total_gb']} GB).")
 
         # 1. Analyse every clip
         analyzed = []
-        for i, vp in enumerate(videos, 1):
+        for i, vp in enumerate(raw_clips, 1):
             try:
                 res = in_clip_trimmer.analyze_clip(vp)
                 analyzed.append(res)
-                full_kept = res.get('full_duration', res.get('duration', 0))
-                total_dur = res.get('duration', 0)
-                _log(job_id, f"[{i}/{len(videos)}] {os.path.basename(vp)} ({total_dur:.1f}s) → "
-                             f"Full Film: {full_kept:.1f}s kept (action starts at {res.get('action_start_seconds', 0):.1f}s) | "
-                             f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})")
+                if res.get("is_still") or res.get("is_psd"):
+                    _log(job_id, f"[{i}/{len(raw_clips)}] 🎨 {os.path.basename(vp)} → Graphic Layer ({'PSD' if res.get('is_psd') else 'Image'}) · Ready for Motion Graphics")
+                else:
+                    full_kept = res.get('full_duration', res.get('duration', 0))
+                    total_dur = res.get('duration', 0)
+                    _log(job_id, f"[{i}/{len(raw_clips)}] {os.path.basename(vp)} ({total_dur:.1f}s) → "
+                                 f"Full Film: {full_kept:.1f}s kept (action starts at {res.get('action_start_seconds', 0):.1f}s) | "
+                                 f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})")
             except Exception as e:
-                _log(job_id, f"[{i}/{len(videos)}] Skipped {os.path.basename(vp)}: {e}", "warning")
-            _progress(job_id, int(i / len(videos) * 65))
+                _log(job_id, f"[{i}/{len(raw_clips)}] Skipped {os.path.basename(vp)}: {e}", "warning")
+            _progress(job_id, int(i / len(raw_clips) * 65))
 
         if not analyzed:
             raise RuntimeError("None of the clips could be analysed.")
@@ -1046,15 +1073,15 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         # Wedding only: put every camera's footage in real shoot-time order (other modes follow the music)
         from packages.ai_engine import multicam_sync
         multicam = False
-        if mode == "wedding":
+        if mode == "wedding" and videos:
             sync_report = multicam_sync.sync(analyzed, folder)
             multicam = len(sync_report["cameras"]) > 1
             if multicam:
                 _log(job_id, "Matching the cameras by their sound (songs, speeches, crowd)…", "info")
                 multicam_sync.audio_place_wedding(analyzed, sync_report)
-            analyzed.sort(key=lambda c: c["abs_start"])
+            analyzed.sort(key=lambda c: c.get("abs_start", 0))
         audio_synced_plan = None
-        if mode in ("youtube", "music_video"):
+        if (mode in ("youtube", "music_video") or is_motion_graphics) and videos:
             song = audio_path if (mode == "music_video" and audio_path and os.path.isfile(audio_path)) else None
             _log(job_id, "Syncing clips by their sound" + (" to the song…" if song else "…"), "info")
             arep = multicam_sync.audio_sync_clips(analyzed, folder, song)
@@ -1934,8 +1961,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             res = scan_folder(data.get("path", ""))
             if res.get("success"):
                 # Keep the response light for huge shoots; send first 300 names only
-                res["preview"] = [os.path.relpath(v, res["folder"]) for v in res["videos"][:300]]
-                res.pop("videos")
+                all_media = res["videos"] + res.get("images", [])
+                res["preview"] = [os.path.relpath(v, res["folder"]) for v in all_media[:300]]
+                res.pop("videos", None)
+                res.pop("images", None)
+                res.pop("psds", None)
             self._json(res)
 
         elif self.path == "/api/run-wedding" and (free_status(force=True) or {"success": True}).get("success") is False:

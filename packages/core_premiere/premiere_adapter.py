@@ -490,6 +490,9 @@ class PremiereAdapter:
                 if (name.indexOf(".mp3") !== -1 || name.indexOf(".wav") !== -1 || name.indexOf("music") !== -1 || name.indexOf("song") !== -1) {
                     item.moveBin(bins.music);
                     moved++;
+                } else if (name.indexOf(".psd") !== -1 || name.indexOf(".psb") !== -1 || name.indexOf(".png") !== -1 || name.indexOf("graphic") !== -1 || name.indexOf("title") !== -1) {
+                    item.moveBin(bins.titles);
+                    moved++;
                 } else if (name.indexOf("broll") !== -1 || name.indexOf("cutaway") !== -1) {
                     item.moveBin(bins.broll);
                     moved++;

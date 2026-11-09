@@ -33,6 +33,10 @@ class InClipTrimmer:
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
+        ext = os.path.splitext(video_path)[1].lower()
+        if ext in {".psd", ".psb", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".svg"}:
+            return self._analyze_still_clip(video_path)
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             logger.warning(f"OpenCV could not open {video_path}. Using smart metadata trimmer fallback.")
@@ -516,6 +520,59 @@ class InClipTrimmer:
             "full_duration": round(full_out_sec - full_in_sec, 2),
             "quality_score": 75.0,
             "shot_type": "mid"
+        }
+
+    def _analyze_still_clip(self, file_path: str) -> Dict[str, Any]:
+        """
+        Processes still images and PSD files for motion graphics and timeline animation.
+        Assigns standard 5.0s still frame duration, extracts dimensions, and sets high quality score.
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+        is_psd = ext in {".psd", ".psb"}
+        width, height = 1920, 1080
+        fps = 25.0
+        duration = 5.0
+        total_frames = int(duration * fps)
+
+        try:
+            from PIL import Image
+            with Image.open(file_path) as img:
+                width, height = img.size
+        except Exception:
+            pass
+
+        return {
+            "file_path": file_path,
+            "duration": duration,
+            "native_fps": fps,
+            "total_frames": total_frames,
+            "width": width,
+            "height": height,
+            "is_still": True,
+            "is_psd": is_psd,
+            "in_frame": 0,
+            "out_frame": total_frames,
+            "in_seconds": 0.0,
+            "out_seconds": duration,
+            "action_start_seconds": 0.0,
+            "action_start_frame": 0,
+            "action_end_seconds": duration,
+            "action_end_frame": total_frames,
+            "action_peak_seconds": round(duration * 0.5, 2),
+            "action_peak_frame": total_frames // 2,
+            "trimmed_duration": duration,
+            "trimmed_head_seconds": 0.0,
+            "trimmed_tail_seconds": 0.0,
+            "full_in_frame": 0,
+            "full_out_frame": total_frames,
+            "full_in_seconds": 0.0,
+            "full_out_seconds": duration,
+            "full_duration": duration,
+            "quality_score": 95.0,
+            "shot_type": "graphic" if (is_psd or ext == ".png") else "still",
+            "reason": "PSD layer asset for motion graphics" if is_psd else "Still image asset",
+            "flash_times": [],
+            "luma_curve": [50.0] * int(duration * 5),
         }
 
 

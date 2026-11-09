@@ -193,7 +193,7 @@ class ResolveAdapter:
         """Creates standard wedding / video editing bins in DaVinci Resolve Media Pool."""
         if not self.is_connected() or not self._current_project:
             return {"success": False, "error": "DaVinci Resolve is not connected or no active project open."}
-        bins = ["01_A_ROLL", "02_B_ROLL", "03_MUSIC", "04_SFX", "05_TIMELINES"]
+        bins = ["01_A_ROLL", "02_B_ROLL", "03_MUSIC", "04_SFX", "05_TIMELINES", "06_GRAPHICS_PSD"]
         created = []
         for b in bins:
             if self.create_bin(b):

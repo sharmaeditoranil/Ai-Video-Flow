@@ -431,11 +431,15 @@
     info.textContent = "Scanning…";
     const r = await api("/api/scan-folder", { path });
     if (!r.success) { info.className = "hint error"; info.textContent = r.error; return false; }
-    if (!r.video_count) { info.className = "hint error"; info.textContent = "No video files found in this folder (mp4, mov, mxf, mts, avi, mkv…)."; return false; }
+    const totalMedia = (r.video_count || 0) + (r.image_count || 0);
+    if (!totalMedia) { info.className = "hint error"; info.textContent = "No video, PSD, or image files found in this folder."; return false; }
     $("in-folder").value = r.folder;
     store.set("avf.folder", r.folder);
     info.className = "hint ok";
-    info.textContent = `✓ ${r.video_count} video clips · ${r.total_gb} GB${r.audio_count ? ` · ${r.audio_count} audio files` : ""}`;
+    let desc = `✓ ${totalMedia} media files (${r.video_count || 0} videos`;
+    if (r.image_count) desc += `, ${r.image_count} graphics/images${r.psd_count ? ` inc. ${r.psd_count} PSD` : ""}`;
+    desc += `) · ${r.total_gb} GB${r.audio_count ? ` · ${r.audio_count} audios` : ""}`;
+    info.textContent = desc;
     loadedFolder = r.folder;
     return true;
   }

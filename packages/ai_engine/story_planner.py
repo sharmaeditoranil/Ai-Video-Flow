@@ -330,34 +330,43 @@ class StoryPlanner:
                 )
             )
 
-            if is_slow:
-                speed_factor = 0.5  # 50% Slow Motion
-                speed_label = "50% Slow-Mo (Optical Flow)"
-            elif is_fast:
-                speed_factor = 1.3  # 130% Snappy Speed Ramp
-                speed_label = "130% Snappy Beat Ramp"
-            else:
+            is_still = bool(clip.get("is_still"))
+            if is_still:
                 speed_factor = 1.0
-                speed_label = "Normal Speed"
-
-            # Golden Action Trim: slices away idle pre-roll and dead post-roll
-            clip_dur = float(clip.get("duration", 0.0))
-            action_start = float(clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
-            action_end = float(clip.get("action_end_seconds", clip.get("out_seconds", clip_dur)))
-            action_peak = float(clip.get("action_peak_seconds", action_start + (action_end - action_start) * 0.45))
-            if action_peak <= 0:
-                action_peak = action_start + (cut_dur * speed_factor * 0.5)
-
-            source_needed = round(cut_dur * speed_factor, 2)
-            if (action_end - action_start) >= source_needed:
-                target_in = max(action_start, action_peak - (source_needed * 0.35))
-                target_out = target_in + source_needed
-                if target_out > action_end:
-                    target_out = min(clip_dur, action_end)
-                    target_in = max(action_start, target_out - source_needed)
+                speed_label = "Motion Graphics / Ken Burns Pan-Zoom"
+                target_in = 0.0
+                target_out = cut_dur
+                action_peak = round(cut_dur * 0.5, 2)
+                role = "Motion Graphics / PSD Layer" if clip.get("is_psd") else "Graphic Overlay / Slide"
             else:
-                target_in = max(0.0, action_start)
-                target_out = min(clip_dur, target_in + source_needed)
+                if is_slow:
+                    speed_factor = 0.5  # 50% Slow Motion
+                    speed_label = "50% Slow-Mo (Optical Flow)"
+                elif is_fast:
+                    speed_factor = 1.3  # 130% Snappy Speed Ramp
+                    speed_label = "130% Snappy Beat Ramp"
+                else:
+                    speed_factor = 1.0
+                    speed_label = "Normal Speed"
+
+                # Golden Action Trim: slices away idle pre-roll and dead post-roll
+                clip_dur = float(clip.get("duration", 0.0))
+                action_start = float(clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
+                action_end = float(clip.get("action_end_seconds", clip.get("out_seconds", clip_dur)))
+                action_peak = float(clip.get("action_peak_seconds", action_start + (action_end - action_start) * 0.45))
+                if action_peak <= 0:
+                    action_peak = action_start + (cut_dur * speed_factor * 0.5)
+
+                source_needed = round(cut_dur * speed_factor, 2)
+                if (action_end - action_start) >= source_needed:
+                    target_in = max(action_start, action_peak - (source_needed * 0.35))
+                    target_out = target_in + source_needed
+                    if target_out > action_end:
+                        target_out = min(clip_dur, action_end)
+                        target_in = max(action_start, target_out - source_needed)
+                else:
+                    target_in = max(0.0, action_start)
+                    target_out = min(clip_dur, target_in + source_needed)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(clip.get("file_path", "")),
@@ -571,33 +580,45 @@ class StoryPlanner:
                 ])
             )
 
-            if is_slow:
-                speed_factor = 0.5
-                speed_label = "50% Slow-Mo (Optical Flow)"
-            elif is_fast:
-                speed_factor = 1.3
-                speed_label = "130% Snappy Beat Ramp"
-            else:
+            is_still = bool(clip.get("is_still"))
+            if is_still:
                 speed_factor = 1.0
-                speed_label = "Normal Speed"
-
-            clip_dur = float(clip.get("duration", 0.0))
-            action_start = float(clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
-            action_end = float(clip.get("action_end_seconds", clip.get("out_seconds", clip_dur)))
-            action_peak = float(clip.get("action_peak_seconds", action_start + (action_end - action_start) * 0.45))
-            if action_peak <= 0:
-                action_peak = action_start + (actual_dur * speed_factor * 0.5)
-
-            source_needed = round(actual_dur * speed_factor, 2)
-            if (action_end - action_start) >= source_needed:
-                target_in = max(action_start, action_peak - (source_needed * 0.35))
-                target_out = target_in + source_needed
-                if target_out > action_end:
-                    target_out = min(clip_dur, action_end)
-                    target_in = max(action_start, target_out - source_needed)
+                speed_label = "Motion Graphics / Ken Burns Pan-Zoom"
+                target_in = 0.0
+                target_out = actual_dur
+                action_peak = round(actual_dur * 0.5, 2)
+                if clip.get("is_psd"):
+                    role = "Motion Graphics / PSD Layer"
+                else:
+                    role = "Motion Graphics / Still Slide"
             else:
-                target_in = max(0.0, action_start)
-                target_out = min(clip_dur, target_in + source_needed)
+                if is_slow:
+                    speed_factor = 0.5
+                    speed_label = "50% Slow-Mo (Optical Flow)"
+                elif is_fast:
+                    speed_factor = 1.3
+                    speed_label = "130% Snappy Beat Ramp"
+                else:
+                    speed_factor = 1.0
+                    speed_label = "Normal Speed"
+
+                clip_dur = float(clip.get("duration", 0.0))
+                action_start = float(clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
+                action_end = float(clip.get("action_end_seconds", clip.get("out_seconds", clip_dur)))
+                action_peak = float(clip.get("action_peak_seconds", action_start + (action_end - action_start) * 0.45))
+                if action_peak <= 0:
+                    action_peak = action_start + (actual_dur * speed_factor * 0.5)
+
+                source_needed = round(actual_dur * speed_factor, 2)
+                if (action_end - action_start) >= source_needed:
+                    target_in = max(action_start, action_peak - (source_needed * 0.35))
+                    target_out = target_in + source_needed
+                    if target_out > action_end:
+                        target_out = min(clip_dur, action_end)
+                        target_in = max(action_start, target_out - source_needed)
+                else:
+                    target_in = max(0.0, action_start)
+                    target_out = min(clip_dur, target_in + source_needed)
 
             timeline_entries.append({
                 "clip_name": os.path.basename(fpath),
@@ -729,17 +750,28 @@ class StoryPlanner:
         timeline_entries = []
 
         for clip in analyzed_clips:
-            # Prefer conservative full film cut points (preserving action, skipping idle pre-roll)
-            in_sec = clip.get("full_in_seconds", clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
-            out_sec = clip.get("full_out_seconds", clip.get("action_end_seconds", clip.get("out_seconds", clip.get("duration", 0.0))))
-            dur = max(1.0, round(out_sec - in_sec, 2))
-            if tighten and dur > 4.0:
-                dur = round(dur * 0.82, 2)
-                out_sec = in_sec + dur
+            is_still = bool(clip.get("is_still"))
+            if is_still:
+                dur = 4.0
+                in_sec = 0.0
+                out_sec = dur
+                fps = clip.get("native_fps", 25.0)
+                in_frame = 0
+                out_frame = int(dur * fps)
+                role = "Motion Graphics / PSD Layer" if clip.get("is_psd") else "Graphic Still"
+            else:
+                # Prefer conservative full film cut points (preserving action, skipping idle pre-roll)
+                in_sec = clip.get("full_in_seconds", clip.get("action_start_seconds", clip.get("in_seconds", 0.0)))
+                out_sec = clip.get("full_out_seconds", clip.get("action_end_seconds", clip.get("out_seconds", clip.get("duration", 0.0))))
+                dur = max(1.0, round(out_sec - in_sec, 2))
+                if tighten and dur > 4.0:
+                    dur = round(dur * 0.82, 2)
+                    out_sec = in_sec + dur
 
-            fps = clip.get("native_fps", 25.0)
-            in_frame = int(clip.get("full_in_frame", clip.get("action_start_frame", in_sec * fps)))
-            out_frame = int(clip.get("full_out_frame", clip.get("action_end_frame", out_sec * fps)))
+                fps = clip.get("native_fps", 25.0)
+                in_frame = int(clip.get("full_in_frame", clip.get("action_start_frame", in_sec * fps)))
+                out_frame = int(clip.get("full_out_frame", clip.get("action_end_frame", out_sec * fps)))
+                role = "Chronological Full Film Event"
 
             timeline_entries.append({
                 "clip_name": os.path.basename(clip.get("file_path", "")),

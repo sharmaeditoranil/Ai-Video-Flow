@@ -37,6 +37,20 @@ def media_info(path: str) -> Dict[str, Any]:
         return _INFO[path]
     info: Dict[str, Any] = {"duration": 0.0, "video": False, "width": 1920, "height": 1080, "fps": 25.0,
                             "audio": False, "samplerate": 48000, "channels": 2}
+    ext = os.path.splitext(path)[1].lower()
+    if ext in {".psd", ".psb", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".svg"}:
+        try:
+            from PIL import Image
+            with Image.open(path) as img:
+                w, h = img.size
+                info.update(video=True, audio=False, width=w, height=h, fps=25.0, duration=3600.0)
+                _INFO[path] = info
+                return info
+        except Exception:
+            info.update(video=True, audio=False, width=1920, height=1080, fps=25.0, duration=3600.0)
+            _INFO[path] = info
+            return info
+
     try:
         from packages.ai_engine.audio_io import ffmpeg_path
         err = subprocess.run([ffmpeg_path(), "-hide_banner", "-i", path], capture_output=True, text=True,

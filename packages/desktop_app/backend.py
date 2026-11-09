@@ -50,7 +50,7 @@ PSD_EXTS = {".psd", ".psb"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".svg"} | PSD_EXTS
 STILL_EXTS = IMAGE_EXTS
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.18"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.19"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -1914,6 +1914,51 @@ def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: s
     return _use_credit(job_id, job_name), review.get("story_note", "")
 
 
+def _motion_ad_aspect(text: str) -> str:
+    t = (text or "").lower()
+    if any(w in t for w in ("1:1", "square", "feed post", "feed ad")):
+        return "1:1"
+    if any(w in t for w in ("16:9", "landscape", "horizontal", "youtube video", "widescreen")):
+        return "16:9"
+    return "9:16"
+
+
+def motion_ad_job(job_id: str, folder: str, audio_path: str, instructions: str) -> None:
+    """Smart AI motion-graphics ad: voiceover words + photos + brief -> Claude scene design -> rendered MP4."""
+    from packages.ai_engine import motion_ad
+    try:
+        license_manager.refresh()
+        if not license_manager.get_status().get("has_credits"):
+            raise RuntimeError("Smart AI motion graphics need a Smart AI pack with weddings left (Pricing page).")
+        aspect = _motion_ad_aspect(instructions)
+        _log(job_id, f"✨ Smart AI Motion Graphics · {aspect} · photos from {folder}", "info")
+        res = motion_ad.create(folder, audio_path, instructions, aspect, os.path.join(OUTPUT_DIR, "motion_ads"),
+                               lambda m, lvl="info": _log(job_id, m, lvl), lambda p: _progress(job_id, int(p * 100)))
+        _use_credit(job_id, os.path.basename(folder.rstrip("/\\")))
+        _log(job_id, "✏️ Not perfect? Write the change below (e.g. “scene 2 ka headline bada karo”) and press Apply edit.", "info")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", progress=100, result={"motion_ad": res, "rendered_reels": [res["video"]]})
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        _log(job_id, f"ERROR: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
+
+
+def motion_ad_edit_job(job_id: str, project_dir: str, request: str) -> None:
+    from packages.ai_engine import motion_ad
+    try:
+        res = motion_ad.edit(project_dir, request, lambda m, lvl="info": _log(job_id, m, lvl),
+                             lambda p: _progress(job_id, int(p * 100)))
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", progress=100, result={"motion_ad": res, "rendered_reels": [res["video"]]})
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        _log(job_id, f"ERROR: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
+
+
 def _use_credit(job_id: str, job_name: str) -> bool:
     credit = license_manager.consume_wedding_credit(job_name=f"Wedding: {job_name}")
     if credit.get("success"):
@@ -2250,6 +2295,11 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal", ref_video, instructions)
                 self._json({"success": True, "job_id": job_id})
                 return
+            if mode == "custom" and tier == "premium":
+                # Smart AI on: a fully designed motion-graphics ad (like the hand-made ones), editable by prompt
+                job_id = start_job(motion_ad_job, data.get("folder", ""), (data.get("audio") or "").strip(), instructions)
+                self._json({"success": True, "job_id": job_id})
+                return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
                                instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500],
                                data.get("reel_options") or {})
@@ -2327,6 +2377,15 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 self._json({"success": True})
             else:
                 self._json({"success": False, "error": "Only web links can be opened."}, 400)
+
+        elif self.path == "/api/motion-ad/edit":
+            project_dir = data.get("project_dir") or ""
+            if not os.path.isfile(os.path.join(project_dir, "project.json")):
+                self._json({"success": False, "error": "This ad project was not found."}, 404)
+            elif not (data.get("request") or "").strip():
+                self._json({"success": False, "error": "Write what to change."}, 400)
+            else:
+                self._json({"success": True, "job_id": start_job(motion_ad_edit_job, project_dir, data["request"].strip()[:1500])})
 
         elif self.path == "/api/open-folder":
             path = data.get("path") or OUTPUT_DIR

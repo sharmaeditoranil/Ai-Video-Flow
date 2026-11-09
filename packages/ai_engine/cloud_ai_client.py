@@ -104,6 +104,97 @@ def _error_message(e: anthropic.APIStatusError) -> str:
     return e.message
 
 
+_STR = {"type": "string"}
+_NUM = {"type": "number"}
+MOTION_AD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": _STR,
+        "theme": {"type": "string", "enum": ["gold_dark", "navy_gold", "purple_neon"]},
+        "brand_name": _STR,
+        "brand_sub": _STR,
+        "badge": _STR,
+        "subtitles": {"type": "boolean"},
+        "scenes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start": _NUM,
+                    "end": _NUM,
+                    "image": {"type": "integer"},
+                    "image_side": {"type": "string", "enum": ["left", "center", "right"]},
+                    "flash": {"type": "boolean"},
+                    "elements": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "at": _NUM,
+                                "anim": {"type": "string", "enum": ["pop", "rise", "fade", "slide"]},
+                                "type": {"type": "string", "enum": ["label", "headline", "gold", "chip", "card", "icon_card", "image",
+                                                                     "grid", "timeline", "logos", "clock", "button", "progress", "lower_third"]},
+                                "text": _STR,
+                                "text2": _STR,
+                                "highlight": _STR,
+                                "size": {"type": "string", "enum": ["s", "m", "l", "xl"]},
+                                "icon": {"type": "string", "enum": ["none", "camera", "film", "clock", "check", "hourglass", "target", "spark",
+                                                                     "dot", "ticket", "play", "star", "users", "calendar", "rupee", "mic", "bolt", "heart"]},
+                                "gold": {"type": "boolean"},
+                                "image": {"type": "integer"},
+                                "items": {"type": "array", "items": _STR},
+                                "x": _NUM,
+                                "y": _NUM,
+                            },
+                            "required": ["at", "anim", "type", "text", "text2", "highlight", "size", "icon", "gold", "image", "items", "x", "y"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["start", "end", "image", "image_side", "flash", "elements"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["title", "theme", "brand_name", "brand_sub", "badge", "subtitles", "scenes"],
+    "additionalProperties": False,
+}
+
+MOTION_AD_GUIDE = """You are a senior motion-graphics designer making a social ad with an animation engine. You design
+SCENES as JSON; the engine draws them. Everything must be timed to the voiceover: every scene starts on a spoken
+word and every element appears ("at") on the word it illustrates, using the timestamps below.
+
+CANVAS: {aspect} ({w}x{h}). x / y are the CENTRE of an element as fractions of the frame (0..1).
+Reserved areas: the brand header is the top 0.07; subtitles (when on) sit at y 0.88-0.95 - keep elements out of both.
+When a scene shows a photo of a person ("image" >= 0, drawn as a cut-out from the bottom), it covers the lower
+~55% of a 9:16 frame (lower ~65% for 1:1 / 16:9, or the chosen side): put that scene's text ABOVE it (y 0.12-0.40
+on 9:16), or on the other side for image_side left/right. Without a photo the whole frame is free.
+Leave >= 0.09 of height between stacked elements; never overlap. Each scene 2-5 elements, max ~6 seconds.
+
+ELEMENT TYPES (text in UPPERCASE Hinglish/English as spoken, short: 1-4 words, except card / headline):
+- label: small spaced caption over a block ("AGAR AAP KARTE HAIN"). size s|m.
+- headline: big white words, wraps to 2 lines; put the key words in "highlight" (they turn gold).
+- gold: huge glowing gold word(s) for the punch line ("AI", "SAMAY!"). Use for 1-2 words.
+- chip: pill with an icon; gold=true is a filled gold pill, false is an outlined one.
+- card: list row (text = item, text2 = number like "01" or "" for a check mark, icon optional). Stack 2-4 cards
+  0.08 apart for lists the speaker counts out, each "at" its word.
+- icon_card: square card with a big icon, text = line 1, text2 = line 2. Place two side by side (x 0.3 / 0.7).
+- image: one of the photos as a framed card (image = its number, size s|m|l).
+- grid: wall of photo tiles where some light up (picking the best photos / footage).
+- timeline: an editing timeline with clips filling in and a progress bar; text = its caption.
+- logos: software / brand tiles appearing one by one; items = names, e.g. ["Premiere Pro","DaVinci Resolve","EDIUS"].
+- clock: ticking clock (time, hours, wait). button: a CTA button that gets clicked (text = "JOIN NOW").
+- progress: bar filling to 100% with a caption. lower_third: name (text) + role (text2) badge.
+anim: pop (scale overshoot, for punch words), rise (slide up, default), slide (from the left), fade.
+Scene options: image = photo number shown big (-1 = none; vary the photos, don't repeat one back to back unless
+it is a cut on purpose), flash = a gold flash at the scene start for big moments.
+
+STYLE: premium dark + gold like a top Indian edu-tech / wedding-film ad. Hook in the first 2 seconds, one idea per
+scene, the CTA (button / chip with the offer, price, date) near the end and an end card in the last scene.
+brand_name / brand_sub / badge: the business, a tagline and a short badge (e.g. "LIVE · ₹21") from the prompt or
+the voiceover ("" when unknown). Fill every field; use "", -1, [] or false when it does not apply.
+"""
+
 class CloudAIClient:
     def _client(self) -> anthropic.Anthropic:
         status = license_manager.get_status()
@@ -327,6 +418,46 @@ class CloudAIClient:
             return json.loads(text)
         except json.JSONDecodeError:
             raise CloudAIError("The AI returned an unreadable creative plan.")
+
+    # ------------------------------------------------------------------
+    # Motion-graphics ad: scene spec for packages/ai_engine/motion_ad.py
+    # ------------------------------------------------------------------
+    def design_motion_ad(self, words: List[Dict[str, Any]], thumbnails: List[str], prompt: str, aspect: str,
+                         duration: float, current_spec: Optional[Dict[str, Any]] = None, edit_request: str = "") -> Dict[str, Any]:
+        """Designs (or, with current_spec + edit_request, edits) the scenes of a voiceover-timed motion ad."""
+        w, h = {"9:16": (1080, 1920), "1:1": (1080, 1080), "16:9": (1920, 1080)}.get(aspect, (1080, 1920))
+        content: List[Dict[str, Any]] = []
+        for i, path in enumerate(thumbnails):
+            with open(path, "rb") as f:
+                data = base64.standard_b64encode(f.read()).decode("utf-8")
+            content.append({"type": "text", "text": f"Photo {i}"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}})
+        timed = "\n".join(f"{x['start']:.2f}-{x['end']:.2f} {x['text']}" for x in words)
+        text = (MOTION_AD_GUIDE.format(aspect=aspect, w=w, h=h)
+                + f"\nVOICEOVER ({duration:.1f}s, word timestamps in seconds):\n{timed}\n"
+                + f"\nPHOTOS: numbered 0-{len(thumbnails) - 1} above.\n"
+                + f"\nEDITOR'S BRIEF: {prompt or 'A high-converting ad that explains what the voiceover says.'}\n")
+        if current_spec is not None:
+            text += ("\nCURRENT DESIGN (JSON):\n" + json.dumps(current_spec, ensure_ascii=False)
+                     + f"\n\nEDIT REQUEST: {edit_request}\n"
+                     + "Return the complete design with ONLY this change applied; keep every other scene and element as it is.")
+        else:
+            text += "\nDesign the complete ad from the first word to the last."
+        content.append({"type": "text", "text": text})
+        response = self._create(
+            max_tokens=32000,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": MOTION_AD_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to design this ad.")
+        if response.stop_reason == "max_tokens":
+            raise CloudAIError("The ad design was too long. Try a shorter voiceover or a simpler brief.")
+        out = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            return json.loads(out)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable ad design.")
 
     # ------------------------------------------------------------------
     # AI assistant (tool use against the local editing tools)

@@ -869,3 +869,11 @@ textarea { resize: vertical; }
 .phone-license > div:first-child { flex: 1 1 320px; min-width: 0; }
 .phone-license .muted { margin-top: 4px; font-size: 13px; }
 .phone-license-actions { display: flex; gap: 8px; }
+
+/* ---------- Smart AI motion-graphics ad editor ---------- */
+.ad-edit { margin-top: 12px; padding: 14px; border-radius: 12px; border: 1px solid rgba(232, 185, 95, 0.4);
+  background: rgba(232, 185, 95, 0.06); display: grid; gap: 10px; }
+.ad-edit[hidden] { display: none; }
+.ad-edit-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ad-edit textarea { width: 100%; resize: vertical; min-height: 60px; }
+#ad-history { word-break: break-all; }

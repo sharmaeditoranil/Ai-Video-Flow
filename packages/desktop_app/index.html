@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.18 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.19 · AI editing assistant</div>
         </div>
       </div>
 
@@ -361,6 +361,20 @@
                   </div>
                 </div>
                 <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>
+
+                <!-- Smart AI motion-graphics ad: play it and change it by writing what to change -->
+                <div class="ad-edit" id="ad-edit" hidden>
+                  <div class="ad-edit-head">
+                    <b>✨ Motion-graphics ad <span id="ad-version">v1</span></b>
+                    <div class="row-actions">
+                      <button class="btn btn-sm" id="btn-ad-play">▶ Play</button>
+                      <button class="btn btn-sm" id="btn-ad-folder">Folder</button>
+                    </div>
+                  </div>
+                  <textarea id="ad-request" rows="2" placeholder="Kya badalna hai? e.g. “Scene 2 ka headline bada aur gold karo” · “End me JOIN NOW button aur price ₹21 dikhao” · “Theme navy kar do”"></textarea>
+                  <button class="btn btn-gold btn-block" id="btn-ad-apply">Apply edit</button>
+                  <div class="hint" id="ad-history"></div>
+                </div>
               </div>
             </div>
           </div>

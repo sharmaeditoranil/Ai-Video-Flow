@@ -690,6 +690,7 @@
       const job_id = started.job_id;
       const job = await pollJob(job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
       if (job.status === "error") log(consoleBox, "Stopped: " + (job.error || "unknown error"), "error");
+      showAdEditor(job.result && job.result.motion_ad);
       fetchStatus();
       fetchLicense();
       loadLastPlan();
@@ -702,6 +703,42 @@
   });
 
   $("btn-open-output").addEventListener("click", () => api("/api/open-folder", {}));
+
+  // Smart AI motion-graphics ad: each "Apply edit" sends the change to Smart AI and renders the next version
+  let adProject = null;
+  function showAdEditor(ad) {
+    if (!ad) { return; }
+    adProject = ad;
+    $("ad-version").textContent = `v${ad.version}`;
+    $("ad-edit").hidden = false;
+    $("ad-history").textContent = `Saved: ${ad.video}`;
+  }
+  $("btn-ad-play").addEventListener("click", () => adProject && api("/api/open-folder", { path: adProject.video }));
+  $("btn-ad-folder").addEventListener("click", () => adProject && api("/api/open-folder", { path: adProject.project_dir }));
+  $("btn-ad-apply").addEventListener("click", async () => {
+    const request = $("ad-request").value.trim();
+    if (!adProject || !request) { $("ad-request").focus(); return; }
+    const btn = $("btn-ad-apply");
+    const bar = $("progress").querySelector(".bar");
+    btn.disabled = true;
+    btn.textContent = "Smart AI is editing…";
+    $("progress").classList.add("active");
+    bar.style.width = "0%";
+    try {
+      const started = await api("/api/motion-ad/edit", { project_dir: adProject.project_dir, request });
+      if (!started.success) { log(consoleBox, started.error, "warning"); return; }
+      const job = await pollJob(started.job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
+      if (job.status === "error") { log(consoleBox, "Edit stopped: " + (job.error || "unknown error"), "error"); return; }
+      showAdEditor(job.result.motion_ad);
+      $("ad-request").value = "";
+      api("/api/open-folder", { path: job.result.motion_ad.video });
+    } catch (e) {
+      log(consoleBox, e.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Apply edit";
+    }
+  });
 
   $("btn-send-again").addEventListener("click", async () => {
     const btn = $("btn-send-again");
@@ -1064,7 +1101,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.18 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.19 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");

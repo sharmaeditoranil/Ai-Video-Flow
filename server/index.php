@@ -1150,6 +1150,44 @@ if (str_starts_with($PATH, '/api/v1/')) {
         exit;
     }
 
+    // Voiceover -> words with timestamps (ElevenLabs Scribe), for motion-graphics ads timed to every spoken word.
+    // Body: the audio file itself (the app sends a small mono MP3).
+    if ($PATH === '/api/v1/audio/transcribe' && $METHOD === 'POST') {
+        @set_time_limit(300);
+        $lic = smart_ai_license($pdo);
+        rate_limit($pdo, 'transcribe:' . $lic['license_key'], 40, 86400);
+        $apiKey = get_setting($pdo, 'elevenlabs_api_key');
+        if ($apiKey === '') {
+            json_out(['success' => false, 'error' => 'AI audio is not set up on the server yet. Contact the admin.'], 503);
+        }
+        $audio = file_get_contents('php://input') ?: '';
+        if (strlen($audio) < 1000 || strlen($audio) > 25 * 1024 * 1024) {
+            json_out(['success' => false, 'error' => 'Send a voiceover between a few seconds and about 30 minutes long.'], 400);
+        }
+        $boundary = 'avf' . bin2hex(random_bytes(12));
+        $field = fn($name, $value) => "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n";
+        $body = $field('model_id', 'scribe_v1') . $field('timestamps_granularity', 'word') . $field('tag_audio_events', 'false')
+            . "--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voiceover.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\n"
+            . $audio . "\r\n--$boundary--\r\n";
+        [$status, $resp] = http_request('POST', ELEVEN_API . '/speech-to-text',
+            ["Content-Type: multipart/form-data; boundary=$boundary", 'xi-api-key: ' . $apiKey], $body, 290);
+        $pdo->prepare('INSERT INTO ai_usage (license_key, model, input_tokens, output_tokens, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+            ->execute([$lic['license_key'], 'eleven-transcribe', strlen($audio), 0, $status, time()]);
+        $data = json_decode($resp, true) ?: [];
+        if ($status !== 200) {
+            $err = $data['detail'] ?? null;
+            $msg = is_array($err) ? ($err['message'] ?? '') : (string)$err;
+            json_out(['success' => false, 'error' => 'Transcription failed' . ($msg !== '' ? ": $msg" : " (HTTP $status)")], 502);
+        }
+        $words = [];
+        foreach ($data['words'] ?? [] as $w) {
+            if (($w['type'] ?? 'word') === 'word') {
+                $words[] = ['text' => (string)$w['text'], 'start' => round((float)$w['start'], 2), 'end' => round((float)$w['end'], 2)];
+            }
+        }
+        json_out(['success' => true, 'language' => $data['language_code'] ?? '', 'text' => $data['text'] ?? '', 'words' => $words]);
+    }
+
     // Claude relay: the Anthropic SDK in the desktop app uses base_url = <server>/index.php/api/v1/ai
     if ($PATH === '/api/v1/ai/v1/messages' && $METHOD === 'POST') {
         @set_time_limit(300);

@@ -28,7 +28,7 @@ datas = [
 binaries = []
 hiddenimports = collect_submodules("packages") + collect_submodules("installer")
 
-for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg"]:
+for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg", "yt_dlp"]:
     try:
         d, b, h = collect_all(pkg)
         datas += d

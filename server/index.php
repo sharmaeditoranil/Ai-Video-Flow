@@ -171,10 +171,17 @@ function migrate(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS free_usage (machine_id TEXT, day TEXT, count INTEGER, PRIMARY KEY (machine_id, day));
     ");
 
+    $ucols = array_column($pdo->query('PRAGMA table_info(users)')->fetchAll(), 'name');
+    foreach (['machine_id' => 'TEXT', 'platform' => 'TEXT'] as $col => $type) {
+        if (!in_array($col, $ucols, true)) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN $col $type");
+        }
+    }
+
     $cols = array_column($pdo->query('PRAGMA table_info(licenses)')->fetchAll(), 'name');
     foreach ([
         'user_id' => 'INTEGER', 'activated_at' => 'INTEGER', 'last_seen_at' => 'INTEGER',
-        'app_version' => 'TEXT', 'platform' => 'TEXT', 'plan_name' => 'TEXT',
+        'app_version' => 'TEXT', 'platform' => 'TEXT', 'plan_name' => 'TEXT', 'bound_mobile_id' => 'TEXT',
     ] as $col => $type) {
         if (!in_array($col, $cols, true)) {
             $pdo->exec("ALTER TABLE licenses ADD COLUMN $col $type");
@@ -219,8 +226,27 @@ function migrate(PDO $pdo): void
                 $seed->execute($p);
             }
         }
-        $pdo->exec("INSERT INTO settings (key, value) VALUES ('pricing_version', '2') ON CONFLICT(key) DO UPDATE SET value = '2'")
-;
+        $pdo->exec("INSERT INTO settings (key, value) VALUES ('pricing_version', '2') ON CONFLICT(key) DO UPDATE SET value = '2'");
+    }
+
+    // Free trial records used to be issued as 'local' (= the paid AI Editing plan, unlimited projects)
+    if (get_setting($pdo, 'trial_plan_fix') !== '1') {
+        $pdo->exec("UPDATE licenses SET plan_type = 'free' WHERE plan_type = 'local'
+            AND (notes LIKE 'Auto-created on registration%' OR notes = 'Registered profile')");
+        $pdo->exec("INSERT INTO settings (key, value) VALUES ('trial_plan_fix', '1') ON CONFLICT(key) DO UPDATE SET value = '1'");
+    }
+
+    // Ensure all existing registered users without a license row get a Free Trial license
+    $noLicUsers = $pdo->query('SELECT u.id, u.name, u.email, u.machine_id, u.platform, u.source FROM users u WHERE NOT EXISTS (SELECT 1 FROM licenses l WHERE l.user_id = u.id)')->fetchAll();
+    foreach ($noLicUsers as $nu) {
+        $isMob = str_starts_with((string)$nu['machine_id'], 'F0B11E') || in_array(strtolower((string)$nu['platform']), ['android', 'ios', 'mobile'], true) || ($nu['source'] ?? '') === 'trial_mobile';
+        $label = $isMob ? 'Mobile Free Trial (2 Edits/Day)' : 'Free Trial (2 Edits/Day)';
+        $tKey = issue_license($pdo, (int)$nu['id'], $label, 0, false, 365, 'Registered profile', 'free');
+        if (!empty($nu['machine_id'])) {
+            $slotCol = $isMob ? 'bound_mobile_id' : 'bound_machine_id';
+            $pdo->prepare("UPDATE licenses SET $slotCol = ?, platform = ?, last_seen_at = ? WHERE license_key = ?")
+                ->execute([$nu['machine_id'], $nu['platform'] ?? '', time(), $tKey]);
+        }
     }
 }
 
@@ -407,10 +433,10 @@ function new_license_key(): string
     return 'AVF-' . implode('-', $parts);
 }
 
-/** kind: 'ai' (Smart AI credits / unlimited) or 'local' (unlimited editing, no Smart AI) */
+/** kind: 'ai' (Smart AI credits / unlimited), 'local' (unlimited editing, no Smart AI) or 'free' (registration record, no paid features) */
 function issue_license(PDO $pdo, int $userId, string $planName, int $credits, bool $unlimited, int $validityDays, string $notes, string $kind = 'ai'): string
 {
-    $planType = $kind === 'local' ? 'local' : ($unlimited ? 'unlimited' : 'per_wedding');
+    $planType = in_array($kind, ['local', 'free'], true) ? $kind : ($unlimited ? 'unlimited' : 'per_wedding');
     $user = $pdo->prepare('SELECT name, email FROM users WHERE id = ?');
     $user->execute([$userId]);
     $u = $user->fetch() ?: ['name' => '', 'email' => ''];
@@ -429,6 +455,65 @@ function issue_license(PDO $pdo, int $userId, string $planName, int $credits, bo
 function issue_from_plan(PDO $pdo, int $userId, array $p, string $notes): string
 {
     return issue_license($pdo, $userId, $p['name'], (int)$p['credits'], (bool)$p['unlimited'], (int)$p['validity_days'], $notes, $p['kind'] ?: 'ai');
+}
+
+function upsert_trial_user(PDO $pdo, string $name, string $email, string $phone, string $studio, string $machineId, string $platform): int
+{
+    $name = trim($name);
+    $email = strtolower(trim($email));
+    $phone = preg_replace('/[^0-9+]/', '', trim($phone));
+    $studio = trim($studio);
+    $machineId = strtoupper(trim($machineId));
+    $platform = trim($platform);
+    $isMobile = str_starts_with($machineId, 'F0B11E') || in_array(strtolower($platform), ['android', 'ios', 'mobile'], true);
+    $source = $isMobile ? 'trial_mobile' : 'trial_pc';
+
+    $existingId = 0;
+    if ($email !== '') {
+        $st = $pdo->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+        $st->execute([$email]);
+        $existingId = (int)$st->fetchColumn();
+    }
+    if (!$existingId && $phone !== '') {
+        $st = $pdo->prepare('SELECT id FROM users WHERE phone = ? LIMIT 1');
+        $st->execute([$phone]);
+        $existingId = (int)$st->fetchColumn();
+    }
+    if (!$existingId && $machineId !== '') {
+        $st = $pdo->prepare('SELECT id FROM users WHERE machine_id = ? LIMIT 1');
+        $st->execute([$machineId]);
+        $existingId = (int)$st->fetchColumn();
+    }
+
+    if ($existingId) {
+        $pdo->prepare('UPDATE users SET name = COALESCE(NULLIF(?, \'\'), name), email = COALESCE(NULLIF(?, \'\'), email), phone = COALESCE(NULLIF(?, \'\'), phone), studio = COALESCE(NULLIF(?, \'\'), studio), machine_id = COALESCE(NULLIF(?, \'\'), machine_id), platform = COALESCE(NULLIF(?, \'\'), platform) WHERE id = ?')
+            ->execute([$name, $email, $phone, $studio, $machineId, $platform, $existingId]);
+        $uid = $existingId;
+    } else {
+        $pdo->prepare('INSERT INTO users (name, email, phone, studio, notes, source, machine_id, platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$name ?: 'Trial User', $email, $phone, $studio, "Device: $machineId ($platform)", $source, $machineId, $platform, time()]);
+        $uid = (int)$pdo->lastInsertId();
+    }
+
+    // Auto-create/attach Free Trial license so Admin immediately sees the license under Admin -> Licenses
+    $chkLic = $pdo->prepare('SELECT id, license_key, bound_machine_id FROM licenses WHERE user_id = ? ORDER BY id DESC LIMIT 1');
+    $chkLic->execute([$uid]);
+    $licRow = $chkLic->fetch();
+    if (!$licRow) {
+        $planLabel = $isMobile ? 'Mobile Free Trial (2 Edits/Day)' : 'Free Trial (2 Edits/Day)';
+        $trialKey = issue_license($pdo, $uid, $planLabel, 0, false, 365, "Auto-created on registration ($platform)", 'free');
+        if ($machineId !== '') {
+            $slotCol = $isMobile ? 'bound_mobile_id' : 'bound_machine_id';
+            $pdo->prepare("UPDATE licenses SET $slotCol = ?, platform = ?, last_seen_at = ? WHERE license_key = ?")
+                ->execute([$machineId, $platform, time(), $trialKey]);
+        }
+    } elseif ($machineId !== '' && empty($licRow['bound_machine_id'])) {
+        $slotCol = $isMobile ? 'bound_mobile_id' : 'bound_machine_id';
+        $pdo->prepare("UPDATE licenses SET $slotCol = ?, platform = ?, last_seen_at = ? WHERE id = ?")
+            ->execute([$machineId, $platform, time(), $licRow['id']]);
+    }
+
+    return $uid;
 }
 
 function load_license(PDO $pdo, string $key): ?array
@@ -496,8 +581,64 @@ function free_grant(string $mid, int $used, int $limit): array
     return ['grant' => b64url($payload), 'signature' => b64url($sig)];
 }
 
-/** Validates key + machine for desktop calls. Binds the machine on first activation. */
-function check_license(PDO $pdo, string $key, string $machineId, bool $bind): array
+/** Desktop installer for each platform that the app may download and run by itself */
+const UPDATE_ASSETS = ['windows' => 'Windows Setup.exe', 'mac-arm64' => 'Mac Apple Silicon .dmg', 'mac-x86_64' => 'Mac Intel .dmg'];
+
+/** Installer file names, the same on this server's downloads/ folder and on the website's downloads folder */
+const DOWNLOAD_FILES = ['windows' => 'AI-Video-Flow-Windows-Setup.exe', 'mac-arm64' => 'AI-Video-Flow-Mac-arm64.dmg',
+    'mac-x86_64' => 'AI-Video-Flow-Mac-x86_64.dmg', 'android' => 'AI-Video-Flow-Reels.apk'];
+const DEFAULT_DOWNLOADS_BASE = 'https://aivideoflow.in/downloads';
+const WEBSITE_ORIGINS = ['https://aivideoflow.in', 'https://www.aivideoflow.in'];
+
+/**
+ * Installer for a platform, first match wins: the admin portal's own link, a file in downloads/ next to index.php
+ * (SHA-256 cached until it changes), else the same file name in the website's downloads folder (Hostinger).
+ */
+function update_asset(PDO $pdo, string $key): array
+{
+    $url = get_setting($pdo, $key === 'android' ? 'mobile_apk_url' : "app_asset_url_$key");
+    $sha = get_setting($pdo, "app_asset_sha256_$key");
+    if ($url !== '') {
+        return ['url' => $url, 'sha256' => $sha];
+    }
+    $name = DOWNLOAD_FILES[$key];
+    $file = __DIR__ . '/downloads/' . $name;
+    if (is_file($file)) {
+        $stamp = filemtime($file) . ':' . filesize($file);
+        [$cachedStamp, $sha] = array_pad(explode('|', get_setting($pdo, "download_sha_$key")), 2, '');
+        if ($cachedStamp !== $stamp) {
+            $sha = hash_file('sha256', $file);
+            set_setting($pdo, "download_sha_$key", "$stamp|$sha");
+        }
+        return ['url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $GLOBALS['SCRIPT_DIR'] . '/downloads/' . rawurlencode($name), 'sha256' => $sha];
+    }
+    $base = rtrim(get_setting($pdo, 'downloads_base_url', DEFAULT_DOWNLOADS_BASE), '/');
+    return $base === '' ? [] : ['url' => "$base/" . rawurlencode($name), 'sha256' => $sha];
+}
+
+/** Auto-update manifest, signed so the app only runs an installer this server chose (even over a bad connection). */
+function update_manifest(PDO $pdo, string $version): array
+{
+    global $CONFIG;
+    $assets = [];
+    foreach (UPDATE_ASSETS as $key => $_) {
+        if ($a = update_asset($pdo, $key)) {
+            $assets[$key] = $a;
+        }
+    }
+    if ($version === '' || !$assets) {
+        return [];
+    }
+    $payload = json_encode(['v' => 'update', 'version' => $version, 'assets' => $assets, 'issued_at' => time()], JSON_UNESCAPED_SLASHES);
+    $sig = sodium_crypto_sign_detached($payload, base64_decode($CONFIG['signing_secret_key']));
+    return ['manifest' => b64url($payload), 'manifest_signature' => b64url($sig)];
+}
+
+/** Phone ids from the mobile app 1.1.17+ (stable across restarts and reinstalls) start with this */
+const STABLE_MOBILE_ID_PREFIX = 'F0B11EA2D0';
+
+/** Validates key + machine/mobile for desktop and mobile calls. Each license allows 1 PC/Mac + 1 Mobile App for free. */
+function check_license(PDO $pdo, string $key, string $machineId, bool $bind, string $platform = ''): array
 {
     if (!preg_match('/^[A-F0-9]{32,64}$/', $machineId)) {
         json_out(['success' => false, 'error' => 'Invalid machine id.'], 400);
@@ -506,21 +647,49 @@ function check_license(PDO $pdo, string $key, string $machineId, bool $bind): ar
     if (!$lic) {
         json_out(['success' => false, 'error' => 'License key not found.'], 404);
     }
+    if ($lic['plan_type'] === 'free') {
+        json_out(['success' => false, 'free_plan' => true,
+            'error' => 'This is a free trial record, not a paid license. The free plan works without a key - just register in the app.'], 403);
+    }
     if ($lic['status'] !== 'active') {
         json_out(['success' => false, 'error' => 'This license is ' . $lic['status'] . '. Contact support.'], 403);
     }
     if ((int)$lic['expires_at'] && (int)$lic['expires_at'] < time()) {
         json_out(['success' => false, 'error' => 'This license has expired. Please renew.'], 403);
     }
-    if (empty($lic['bound_machine_id'])) {
-        if (!$bind) {
-            json_out(['success' => false, 'error' => 'License is not activated on this computer.'], 403);
-        }
-        $pdo->prepare('UPDATE licenses SET bound_machine_id = ?, activated_at = ? WHERE id = ?')->execute([$machineId, time(), $lic['id']]);
-        $lic['bound_machine_id'] = $machineId;
-    } elseif (!hash_equals($lic['bound_machine_id'], $machineId)) {
-        json_out(['success' => false, 'error' => 'This license is already activated on another computer. Ask the admin to reset the computer lock.'], 403);
+
+    // Mobile device detection: mobile machine IDs begin with F0B11E or pass platform Android/iOS/Mobile
+    $isMobile = str_starts_with($machineId, 'F0B11E')
+        || in_array(strtolower(trim($platform)), ['android', 'ios', 'mobile'], true);
+    $slotCol = $isMobile ? 'bound_mobile_id' : 'bound_machine_id';
+    $label = $isMobile ? 'phone' : 'computer';
+
+    // Also allow if the ID already matches either bound slot
+    if (!empty($lic['bound_machine_id']) && hash_equals($lic['bound_machine_id'], $machineId)) {
+        $lic['active_device_id'] = $machineId;
+        return $lic;
     }
+    if (!empty($lic['bound_mobile_id']) && hash_equals($lic['bound_mobile_id'], $machineId)) {
+        $lic['active_device_id'] = $machineId;
+        return $lic;
+    }
+
+    if (empty($lic[$slotCol])) {
+        if (!$bind) {
+            json_out(['success' => false, 'error' => "License is not activated on this $label."], 403);
+        }
+        $pdo->prepare("UPDATE licenses SET $slotCol = ?, activated_at = COALESCE(activated_at, ?) WHERE id = ?")
+            ->execute([$machineId, time(), $lic['id']]);
+        $lic[$slotCol] = $machineId;
+        $lic['active_device_id'] = $machineId;
+    } elseif ($isMobile && str_starts_with($machineId, STABLE_MOBILE_ID_PREFIX) && !str_starts_with((string)$lic[$slotCol], STABLE_MOBILE_ID_PREFIX)) {
+        // Mobile app before 1.1.17 made a new phone id on every launch; its first stable id takes over that slot
+        $pdo->prepare("UPDATE licenses SET $slotCol = ? WHERE id = ?")->execute([$machineId, $lic['id']]);
+        $lic[$slotCol] = $machineId;
+    } elseif (!hash_equals($lic[$slotCol], $machineId)) {
+        json_out(['success' => false, 'error' => "This license is already activated on another $label. Ask the admin to reset the device lock."], 403);
+    }
+    $lic['active_device_id'] = $machineId;
     return $lic;
 }
 
@@ -725,6 +894,13 @@ function require_admin(string $method): void
 // Desktop app API
 // ---------------------------------------------------------------------------
 if (str_starts_with($PATH, '/api/v1/')) {
+    // The website's download popup posts here from aivideoflow.in
+    if ($PATH === '/api/v1/download/lead' && in_array($_SERVER['HTTP_ORIGIN'] ?? '', WEBSITE_ORIGINS, true)) {
+        header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
+        header('Access-Control-Allow-Methods: POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type');
+        header('Vary: Origin');
+    }
     if ($METHOD === 'OPTIONS') {
         http_response_code(204);
         exit;
@@ -733,32 +909,124 @@ if (str_starts_with($PATH, '/api/v1/')) {
     if ($PATH === '/api/v1/plans' && $METHOD === 'GET') {
         $rows = $pdo->query('SELECT id, name, kind, credits, unlimited, price_inr, mrp_inr, validity_days, badge FROM plans WHERE active = 1 AND price_inr > 0 ORDER BY sort, id')->fetchAll();
         json_out(['success' => true, 'plans' => $rows, 'payments_enabled' => get_setting($pdo, 'payments_enabled') === '1',
-            'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '1'),
+            'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '2'),
             'buy_url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/buy']);
     }
 
-    // Update notice: installed apps compare their version with the one set in the admin portal
+    // Website download popup: name + WhatsApp number become a user (source website_download) before the download starts.
+    // The app's own registration later finds the same user by phone and fills in the rest.
+    if ($PATH === '/api/v1/download/lead' && $METHOD === 'POST') {
+        rate_limit($pdo, 'dl-lead:' . client_ip(), 20, 3600);
+        $b = body_json();
+        $name = trim(substr((string)($b['name'] ?? ''), 0, 80));
+        $phone = preg_replace('/[^0-9+]/', '', (string)($b['phone'] ?? ''));
+        $platform = (string)($b['platform'] ?? '');
+        if ($name === '' || strlen(preg_replace('/\D/', '', $phone)) < 10) {
+            json_out(['success' => false, 'error' => 'Please enter your name and 10-digit WhatsApp number.'], 400);
+        }
+        if (!isset(DOWNLOAD_FILES[$platform])) {
+            json_out(['success' => false, 'error' => 'Unknown download.'], 400);
+        }
+        $st = $pdo->prepare('SELECT id FROM users WHERE phone = ? LIMIT 1');
+        $st->execute([$phone]);
+        if (!$st->fetchColumn()) {
+            $pdo->prepare('INSERT INTO users (name, email, phone, studio, notes, source, platform, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+                ->execute([$name, '', $phone, '', "Downloaded $platform from the website", 'website_download', $platform, time()]);
+        }
+        json_out(['success' => true, 'url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/download/' . $platform]);
+    }
+
+    // Update notice: installed desktop & mobile apps compare their version with the one set in the admin portal
     if ($PATH === '/api/v1/app/version' && $METHOD === 'GET') {
-        json_out(['success' => true, 'latest' => get_setting($pdo, 'app_latest_version'),
-            'download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
-            'notes' => get_setting($pdo, 'app_update_notes')]);
+        $desktopVer = get_setting($pdo, 'app_latest_version');
+        $desktopUrl = get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL);
+        $desktopNotes = get_setting($pdo, 'app_update_notes');
+        $mobileVer = get_setting($pdo, 'mobile_latest_version') ?: $desktopVer;
+        $mobileUrl = update_asset($pdo, 'android')['url'] ?? $desktopUrl;
+        $mobileNotes = get_setting($pdo, 'mobile_update_notes') ?: $desktopNotes;
+        json_out([
+            'success' => true,
+            'latest' => $desktopVer,
+            'download_url' => $desktopUrl,
+            'notes' => $desktopNotes,
+            'mobile_latest' => $mobileVer,
+            'mobile_apk_url' => $mobileUrl,
+            'mobile_notes' => $mobileNotes,
+        ] + update_manifest($pdo, $desktopVer));
+    }
+
+    if ($PATH === '/api/v1/user/register' && $METHOD === 'POST') {
+        rate_limit($pdo, 'register:' . client_ip(), 30, 3600);
+        $b = body_json();
+        $mid = free_machine_id($b);
+        $name = trim((string)($b['name'] ?? ''));
+        $email = strtolower(trim((string)($b['email'] ?? '')));
+        $phone = preg_replace('/[^0-9+]/', '', (string)($b['phone'] ?? ''));
+        $studio = trim((string)($b['studio'] ?? ''));
+        $platform = trim((string)($b['platform'] ?? ''));
+        if ($name === '' || strlen($phone) < 10 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            json_out(['success' => false, 'error' => 'Please enter your full name, valid 10-digit WhatsApp number, and email address.'], 400);
+        }
+        $uid = upsert_trial_user($pdo, $name, $email, $phone, $studio, $mid, $platform);
+        // No license key in the reply: matching is by e-mail / phone, which proves nothing about the caller
+        json_out([
+            'success' => true,
+            'user_id' => $uid,
+            'license_key' => '',
+            'user' => ['name' => $name, 'email' => $email, 'phone' => $phone, 'studio' => $studio],
+            'message' => 'Profile registered! You now get 2 Free Edits per day.',
+        ]);
     }
 
     if ($PATH === '/api/v1/free/status' && $METHOD === 'POST') {
         rate_limit($pdo, 'freestatus:' . client_ip(), 600, 3600);
-        $mid = free_machine_id(body_json());
-        $limit = (int)get_setting($pdo, 'free_daily_projects', '1');
+        $b = body_json();
+        $mid = free_machine_id($b);
+        $limit = (int)get_setting($pdo, 'free_daily_projects', '2');
         $used = free_used($pdo, $mid);
-        json_out(['success' => true, 'used' => $used, 'limit' => $limit, 'left' => max(0, $limit - $used)]);
+        $st = $pdo->prepare('SELECT u.name, u.email, u.phone, u.studio, l.license_key FROM users u LEFT JOIN licenses l ON l.user_id = u.id WHERE u.machine_id = ? ORDER BY l.id DESC LIMIT 1');
+        $st->execute([$mid]);
+        $u = $st->fetch() ?: null;
+        json_out([
+            'success' => true,
+            'used' => $used,
+            'limit' => $limit,
+            'left' => max(0, $limit - $used),
+            'registered' => (bool)($u && !empty($u['phone']) && !empty($u['email'])),
+            'user' => $u ? ['name' => $u['name'], 'email' => $u['email'], 'phone' => $u['phone'], 'studio' => $u['studio']] : null,
+            'license_key' => (string)($u['license_key'] ?? ''),
+        ]);
     }
 
     if ($PATH === '/api/v1/free/claim' && $METHOD === 'POST') {
         $b = body_json();
         $mid = free_machine_id($b);
-        $limit = (int)get_setting($pdo, 'free_daily_projects', '1');
+        $limit = (int)get_setting($pdo, 'free_daily_projects', '2');
         if ($limit <= 0) {
             json_out(['success' => false, 'limit' => 0, 'left' => 0, 'error' => 'The free plan is paused. Please choose a plan.'], 403);
         }
+        // Check or upsert user registration (mandatory for Free Trial across Mobile, Mac & Windows)
+        $prof = is_array($b['user_profile'] ?? null) ? $b['user_profile'] : [];
+        $pName = trim((string)($prof['name'] ?? $b['name'] ?? ''));
+        $pEmail = strtolower(trim((string)($prof['email'] ?? $b['email'] ?? '')));
+        $pPhone = preg_replace('/[^0-9+]/', '', (string)($prof['phone'] ?? $b['phone'] ?? ''));
+        $pStudio = trim((string)($prof['studio'] ?? $b['studio'] ?? ''));
+        $pPlatform = trim((string)($prof['platform'] ?? $b['platform'] ?? ''));
+
+        if ($pName !== '' && strlen($pPhone) >= 10 && filter_var($pEmail, FILTER_VALIDATE_EMAIL)) {
+            upsert_trial_user($pdo, $pName, $pEmail, $pPhone, $pStudio, $mid, $pPlatform);
+        } else {
+            $chk = $pdo->prepare('SELECT id FROM users WHERE machine_id = ? AND phone != \'\' AND email != \'\' LIMIT 1');
+            $chk->execute([$mid]);
+            if (!$chk->fetchColumn()) {
+                json_out([
+                    'success' => false,
+                    'needs_registration' => true,
+                    'error' => 'Free Trial (2 Edits / Day) ke liye My Profile me apna Name, WhatsApp Number aur Email register karna zaroori hai.',
+                ], 403);
+            }
+        }
+
         // Many made-up computer ids from one connection are capped too
         rate_limit($pdo, 'freeclaim:' . client_ip(), max(6, $limit * 4), 86400);
         $pdo->exec('BEGIN IMMEDIATE');
@@ -766,7 +1034,7 @@ if (str_starts_with($PATH, '/api/v1/')) {
         if ($used >= $limit) {
             $pdo->exec('ROLLBACK');
             json_out(['success' => false, 'used' => $used, 'limit' => $limit, 'left' => 0,
-                'error' => "Today's free project" . ($limit > 1 ? 's are' : ' is') . ' used. Choose a plan, or come back tomorrow.'], 429);
+                'error' => "Today's $limit Free Edits are used. Upgrade to a plan for unlimited edits, or come back tomorrow."], 429);
         }
         $pdo->prepare('DELETE FROM free_usage WHERE day < ?')->execute([date('Y-m-d', time() - 86400 * 40)]);
         $pdo->prepare('INSERT INTO free_usage (machine_id, day, count) VALUES (?, ?, 1) ON CONFLICT(machine_id, day) DO UPDATE SET count = count + 1')
@@ -780,24 +1048,51 @@ if (str_starts_with($PATH, '/api/v1/')) {
     if ($PATH === '/api/v1/license/activate' && $METHOD === 'POST') {
         rate_limit($pdo, 'activate:' . client_ip(), 20, 3600);
         $b = body_json();
-        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), true);
+        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), true, (string)($b['platform'] ?? ''));
         $pdo->prepare('UPDATE licenses SET last_seen_at = ?, app_version = ?, platform = ? WHERE id = ?')
             ->execute([time(), substr((string)($b['app_version'] ?? ''), 0, 20), substr((string)($b['platform'] ?? ''), 0, 20), $lic['id']]);
-        json_out(['success' => true] + signed_token($lic, $lic['bound_machine_id']));
+        json_out(['success' => true] + signed_token($lic, $lic['active_device_id'] ?? $lic['bound_machine_id']));
+    }
+
+    // After a reinstall the app has no license file: hand back the license this exact device is already bound to
+    if ($PATH === '/api/v1/license/restore' && $METHOD === 'POST') {
+        rate_limit($pdo, 'restore:' . client_ip(), 30, 3600);
+        $b = body_json();
+        $mid = strtoupper((string)($b['machine_id'] ?? ''));
+        if (!preg_match('/^[A-F0-9]{32,64}$/', $mid)) {
+            json_out(['success' => false, 'error' => 'Invalid machine id.'], 400);
+        }
+        $st = $pdo->prepare("SELECT * FROM licenses WHERE (bound_mobile_id = ? OR bound_machine_id = ?) AND status = 'active'
+            AND (expires_at IS NULL OR expires_at = 0 OR expires_at > ?) ORDER BY CASE WHEN plan_type = 'free' THEN 1 ELSE 0 END, id DESC LIMIT 1");
+        $st->execute([$mid, $mid, time()]);
+        $lic = $st->fetch();
+        if (!$lic) {
+            json_out(['success' => false, 'error' => 'No license is linked to this device.'], 404);
+        }
+        if ($lic['plan_type'] === 'free') {
+            // Free user: give back the registration so the app does not ask for it again
+            $u = $pdo->prepare('SELECT name, email, phone, studio FROM users WHERE id = ?');
+            $u->execute([$lic['user_id']]);
+            json_out(['success' => true, 'license_key' => '', 'profile' => $u->fetch() ?: null]);
+        }
+        $pdo->prepare('UPDATE licenses SET last_seen_at = ?, platform = ? WHERE id = ?')
+            ->execute([time(), substr((string)($b['platform'] ?? ''), 0, 20), $lic['id']]);
+        json_out(['success' => true, 'license_key' => $lic['license_key']] + signed_token($lic, $mid));
     }
 
     if ($PATH === '/api/v1/license/refresh' && $METHOD === 'POST') {
         rate_limit($pdo, 'refresh:' . client_ip(), 120, 3600);
         $b = body_json();
-        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), false);
+        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), false, (string)($b['platform'] ?? ''));
         $pdo->prepare('UPDATE licenses SET last_seen_at = ? WHERE id = ?')->execute([time(), $lic['id']]);
-        json_out(['success' => true] + signed_token($lic, $lic['bound_machine_id']));
+        json_out(['success' => true] + signed_token($lic, $lic['active_device_id'] ?? $lic['bound_machine_id']));
     }
 
     if ($PATH === '/api/v1/license/consume' && $METHOD === 'POST') {
         rate_limit($pdo, 'consume:' . client_ip(), 60, 3600);
         $b = body_json();
-        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), false);
+        $lic = check_license($pdo, (string)($b['license_key'] ?? ''), strtoupper((string)($b['machine_id'] ?? '')), false, (string)($b['platform'] ?? ''));
+        $devId = $lic['active_device_id'] ?? $lic['bound_machine_id'];
         if ($lic['plan_type'] === 'local') {
             json_out(['success' => false, 'error' => 'Smart AI is not part of your AI Editing plan. Add a Smart AI Editing pack.'], 402);
         }
@@ -809,8 +1104,8 @@ if (str_starts_with($PATH, '/api/v1/')) {
             }
         }
         $pdo->prepare('INSERT INTO usage_logs (license_key, machine_id, job_name, timestamp) VALUES (?, ?, ?, ?)')
-            ->execute([$lic['license_key'], $lic['bound_machine_id'], substr((string)($b['job_name'] ?? 'Wedding'), 0, 120), time()]);
-        json_out(['success' => true] + signed_token(load_license($pdo, $lic['license_key']), $lic['bound_machine_id']));
+            ->execute([$lic['license_key'], $devId, substr((string)($b['job_name'] ?? 'Wedding'), 0, 120), time()]);
+        json_out(['success' => true] + signed_token(load_license($pdo, $lic['license_key']), $devId));
     }
 
     // Smart AI audio (ElevenLabs): background music and voiceover, the API key never leaves the server
@@ -1109,7 +1404,7 @@ if (str_starts_with($PATH, '/api/admin/')) {
             json_out(['success' => true]);
 
         case 'POST /licenses/reset-machine':
-            $pdo->prepare('UPDATE licenses SET bound_machine_id = NULL WHERE id = ?')->execute([(int)$b['id']]);
+            $pdo->prepare('UPDATE licenses SET bound_machine_id = NULL, bound_mobile_id = NULL WHERE id = ?')->execute([(int)$b['id']]);
             json_out(['success' => true]);
 
         case 'POST /licenses/status':
@@ -1141,10 +1436,10 @@ if (str_starts_with($PATH, '/api/admin/')) {
             json_out(['success' => true]);
 
         case 'GET /settings/free':
-            json_out(['success' => true, 'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '1')]);
+            json_out(['success' => true, 'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '2')]);
 
         case 'POST /settings/free':
-            set_setting($pdo, 'free_daily_projects', (string)max(0, min(50, (int)($b['free_daily_projects'] ?? 1))));
+            set_setting($pdo, 'free_daily_projects', (string)max(0, min(50, (int)($b['free_daily_projects'] ?? 2))));
             json_out(['success' => true]);
 
         case 'POST /plans/delete':
@@ -1169,6 +1464,7 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 'razorpay_webhook_secret' => mask_secret(get_setting($pdo, 'razorpay_webhook_secret')),
                 'webhook_url' => "https://$host" . $GLOBALS['BASE'] . '/api/v1/pay/webhook',
                 'buy_url' => "https://$host" . $GLOBALS['BASE'] . '/buy',
+                'download_url' => "https://$host" . $GLOBALS['BASE'] . '/download',
                 'anthropic_api_key' => mask_secret(get_setting($pdo, 'anthropic_api_key')),
                 'anthropic_model' => get_setting($pdo, 'anthropic_model', 'claude-opus-5-5'),
                 'ai_daily_limit' => (int)get_setting($pdo, 'ai_daily_limit', '200'),
@@ -1179,6 +1475,12 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 'app_latest_version' => get_setting($pdo, 'app_latest_version'),
                 'app_download_url' => get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL),
                 'app_update_notes' => get_setting($pdo, 'app_update_notes'),
+                'downloads_base_url' => get_setting($pdo, 'downloads_base_url', DEFAULT_DOWNLOADS_BASE),
+                'app_assets' => array_map(fn($k) => ['key' => $k, 'label' => UPDATE_ASSETS[$k],
+                    'url' => get_setting($pdo, "app_asset_url_$k"), 'sha256' => get_setting($pdo, "app_asset_sha256_$k")], array_keys(UPDATE_ASSETS)),
+                'mobile_latest_version' => get_setting($pdo, 'mobile_latest_version'),
+                'mobile_apk_url' => get_setting($pdo, 'mobile_apk_url'),
+                'mobile_update_notes' => get_setting($pdo, 'mobile_update_notes'),
                 'php' => PHP_VERSION,
                 'curl' => function_exists('curl_init'),
             ]);
@@ -1242,15 +1544,43 @@ if (str_starts_with($PATH, '/api/admin/')) {
         case 'POST /settings/update':
             $ver = trim((string)($b['app_latest_version'] ?? ''));
             if ($ver !== '' && !preg_match('/^\d+(\.\d+){1,3}$/', $ver)) {
-                json_out(['success' => false, 'error' => 'Version must look like 1.1.4'], 400);
+                json_out(['success' => false, 'error' => 'Desktop version must look like 1.1.13'], 400);
             }
             $dl = trim((string)($b['app_download_url'] ?? ''));
             if ($dl !== '' && !preg_match('#^https://#', $dl)) {
-                json_out(['success' => false, 'error' => 'Download link must start with https://'], 400);
+                json_out(['success' => false, 'error' => 'Desktop download link must start with https://'], 400);
+            }
+            $mVer = trim((string)($b['mobile_latest_version'] ?? ''));
+            if ($mVer !== '' && !preg_match('/^\d+(\.\d+){1,3}$/', $mVer)) {
+                json_out(['success' => false, 'error' => 'Mobile version must look like 1.1.13'], 400);
+            }
+            $mDl = trim((string)($b['mobile_apk_url'] ?? ''));
+            if ($mDl !== '' && !preg_match('#^https://#', $mDl)) {
+                json_out(['success' => false, 'error' => 'Mobile APK link must start with https://'], 400);
+            }
+            $dlBase = trim((string)($b['downloads_base_url'] ?? ''));
+            if ($dlBase !== '' && !preg_match('#^https://#', $dlBase)) {
+                json_out(['success' => false, 'error' => 'Installer folder link must start with https://'], 400);
+            }
+            set_setting($pdo, 'downloads_base_url', rtrim($dlBase, '/'));
+            foreach (UPDATE_ASSETS as $key => $label) {
+                $aUrl = trim((string)($b["app_asset_url_$key"] ?? ''));
+                $aSha = strtolower(trim((string)($b["app_asset_sha256_$key"] ?? '')));
+                if ($aUrl !== '' && !preg_match('#^https://#', $aUrl)) {
+                    json_out(['success' => false, 'error' => "$label link must start with https://"], 400);
+                }
+                if ($aSha !== '' && !preg_match('/^[0-9a-f]{64}$/', $aSha)) {
+                    json_out(['success' => false, 'error' => "$label SHA-256 must be 64 hex characters"], 400);
+                }
+                set_setting($pdo, "app_asset_url_$key", $aUrl);
+                set_setting($pdo, "app_asset_sha256_$key", $aSha);
             }
             set_setting($pdo, 'app_latest_version', $ver);
             set_setting($pdo, 'app_download_url', $dl ?: DEFAULT_DOWNLOAD_URL);
             set_setting($pdo, 'app_update_notes', trim(substr((string)($b['app_update_notes'] ?? ''), 0, 300)));
+            set_setting($pdo, 'mobile_latest_version', $mVer);
+            set_setting($pdo, 'mobile_apk_url', $mDl);
+            set_setting($pdo, 'mobile_update_notes', trim(substr((string)($b['mobile_update_notes'] ?? ''), 0, 300)));
             json_out(['success' => true]);
 
         case 'GET /2fa/status':
@@ -1305,6 +1635,58 @@ if (str_starts_with($PATH, '/api/admin/')) {
             json_out(['success' => true]);
     }
     json_out(['success' => false, 'error' => 'Not found'], 404);
+}
+
+// ---------------------------------------------------------------------------
+// Permanent download links: /download (picks by device), /download/windows, /download/mac-arm64,
+// /download/mac-x86_64, /download/android. They always redirect to the latest installer set in the admin portal.
+// ---------------------------------------------------------------------------
+if ($PATH === '/download' || str_starts_with($PATH, '/download/')) {
+    $fallback = get_setting($pdo, 'app_download_url', DEFAULT_DOWNLOAD_URL);
+    $links = [];
+    foreach (DOWNLOAD_FILES as $key => $_) {
+        $links[$key] = update_asset($pdo, $key)['url'] ?? '';
+    }
+    $which = substr($PATH, strlen('/download/'));
+    if ($PATH === '/download') {
+        $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+        $which = str_contains($ua, 'Android') ? 'android' : (str_contains($ua, 'Windows') ? 'windows' : '');
+    }
+    header('Cache-Control: no-store');
+    if ($which !== '' && array_key_exists($which, $links)) {
+        header('Location: ' . ($links[$which] ?: $fallback), true, 302);
+        exit;
+    }
+    if ($which !== '') {
+        http_response_code(404);
+    }
+    // Mac (Apple Silicon and Intel can't be told apart from the browser) and anything else: let the user pick
+    $names = ['windows' => 'Windows (64-bit)', 'mac-arm64' => 'Mac — Apple Silicon (M1/M2/M3/M4)', 'mac-x86_64' => 'Mac — Intel', 'android' => 'Android (Reels app)'];
+    $ver = get_setting($pdo, 'app_latest_version');
+    ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download AI Video Flow</title>
+<style>
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: #0f1115; color: #eceef2; display: grid; place-items: center; min-height: 100vh; padding: 16px; box-sizing: border-box; }
+  main { width: 100%; max-width: 440px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } p { color: #9aa1ad; margin: 0 0 20px; font-size: 14px; }
+  a { display: block; padding: 14px 16px; margin-bottom: 10px; border-radius: 10px; background: #1a1d24; border: 1px solid #2a2f3a; color: inherit; text-decoration: none; font-weight: 600; }
+  a:hover { border-color: #e8b95f; }
+</style>
+</head>
+<body><main>
+  <h1>Download AI Video Flow</h1>
+  <p><?= $ver !== '' ? 'Latest version ' . h($ver) . ' · ' : '' ?>Choose your computer or phone. On a Mac, Apple menu → About This Mac shows the chip.</p>
+  <?php foreach ($names as $key => $label): ?>
+    <a href="<?= h($BASE) ?>/download/<?= h($key) ?>"><?= h($label) ?></a>
+  <?php endforeach; ?>
+</main></body>
+</html>
+<?php
+    exit;
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,12 +2120,17 @@ const views = {
       </div>`;
     const load = async () => {
       const d = await api('/users?q=' + encodeURIComponent(document.getElementById('q').value));
-      document.getElementById('ut').innerHTML = (d.users || []).map((u) => `<tr>
-        <td><strong>${esc(u.name)}</strong><div class="muted">${esc(u.studio)}</div></td>
-        <td>${esc(u.email)}<div class="muted">${esc(u.phone)}</div></td>
+      document.getElementById('ut').innerHTML = (d.users || []).map((u) => {
+        const waDigits = String(u.phone || '').replace(/\D/g, '');
+        const waNum = waDigits.length === 10 ? '91' + waDigits : waDigits;
+        const waLink = waNum.length >= 10 ? `<a href="https://wa.me/${waNum}" target="_blank" rel="noopener" style="color:#22c55e;text-decoration:none;font-weight:600">WhatsApp: ${esc(u.phone)}</a>` : esc(u.phone);
+        return `<tr>
+        <td><strong>${esc(u.name)}</strong><div class="muted">${esc(u.studio || '')}${u.platform ? ' · ' + esc(u.platform) : ''}</div></td>
+        <td>${esc(u.email)}<div class="muted">${waLink}</div></td>
         <td>${u.license_count}</td><td><span class="pill ${u.source === 'razorpay' ? 'ok' : 'warn'}">${esc(u.source)}</span></td>
         <td>${date(u.created_at)}</td>
-        <td class="actions"><button class="btn sm" data-lic="${u.id}">Licenses</button><button class="btn sm danger" data-del="${u.id}">Delete</button></td></tr>`).join('')
+        <td class="actions"><button class="btn sm" data-lic="${u.id}">Licenses</button><button class="btn sm danger" data-del="${u.id}">Delete</button></td></tr>`;
+      }).join('')
         || '<tr><td colspan="6" class="muted">No users yet.</td></tr>';
     };
     document.getElementById('q').addEventListener('input', load);
@@ -1802,7 +2189,7 @@ const views = {
         <td>${keyCell(l.license_key)}</td>
         <td>${esc(l.user_name || l.client_name)}<div class="muted">${esc(l.user_email || l.client_email)}</div></td>
         <td>${esc(l.plan_name || l.tier_display)}</td>
-        <td><strong>${l.plan_type === 'local' ? 'Pro' : (l.plan_type === 'unlimited' ? '∞' : l.credits)}</strong></td>
+        <td><strong>${l.plan_type === 'free' ? 'Free' : (l.plan_type === 'local' ? 'Pro' : (l.plan_type === 'unlimited' ? '∞' : l.credits))}</strong></td>
         <td>${l.bound_machine_id ? `<span class="mono" title="${esc(l.bound_machine_id)}">${esc(l.bound_machine_id.slice(0, 8))}…</span><div class="muted">${esc(l.platform || '')} ${esc(l.app_version || '')}</div>` : '<span class="muted">Not activated</span>'}</td>
         <td>${date(l.expires_at)}</td>
         <td><span class="pill ${l.status === 'active' && !expired ? 'ok' : 'bad'}">${expired ? 'expired' : esc(l.status)}</span></td>
@@ -1954,13 +2341,22 @@ const views = {
             <div class="row"><button class="btn primary">Save audio settings</button><button type="button" class="btn" id="audio-test">Test connection</button></div>
           </form>
         </div>
-        <div class="card"><h3>App update notice</h3>
+        <div class="card"><h3>App &amp; Mobile APK update notice</h3>
           <form id="f-update">
-            <div class="field"><label>Latest app version</label><input name="app_latest_version" value="${esc(s.app_latest_version)}" placeholder="e.g. 1.1.4 (empty = no notice)"></div>
-            <div class="field"><label>Download link</label><input name="app_download_url" value="${esc(s.app_download_url)}" placeholder="https://…"></div>
-            <div class="field"><label>What's new (optional)</label><input name="app_update_notes" value="${esc(s.app_update_notes)}" maxlength="300" placeholder="Short note shown in the app"></div>
-            <p class="hint">Apps older than this version show a "New version available" banner with the download link.</p>
-            <button class="btn primary block">Save update notice</button>
+            <div class="field"><label>Latest Desktop version (Win/Mac)</label><input name="app_latest_version" value="${esc(s.app_latest_version)}" placeholder="e.g. 1.1.13 (empty = no notice)"></div>
+            <div class="field"><label>Desktop download link</label><input name="app_download_url" value="${esc(s.app_download_url)}" placeholder="https://…"></div>
+            <div class="field"><label>Desktop what's new (optional)</label><input name="app_update_notes" value="${esc(s.app_update_notes)}" maxlength="300" placeholder="Short note shown in desktop app"></div>
+            <p class="hint">Permanent links to share (always the latest version): <span class="mono">${esc(s.download_url)}</span> — or add <span class="mono">/windows</span>, <span class="mono">/mac-arm64</span>, <span class="mono">/mac-x86_64</span>, <span class="mono">/android</span>.</p>
+            <div class="field"><label>Installer folder on the website</label><input name="downloads_base_url" value="${esc(s.downloads_base_url)}" placeholder="https://aivideoflow.in/downloads"></div>
+            <p class="hint">Upload the installers to this folder (Hostinger: <span class="mono">public_html/downloads/</span>) with the names the build makes: AI-Video-Flow-Windows-Setup.exe, AI-Video-Flow-Mac-arm64.dmg, AI-Video-Flow-Mac-x86_64.dmg, AI-Video-Flow-Reels.apk. The links and auto update use them automatically. The fields below are only for a file kept somewhere else; the SHA-256 (printed by the build) adds a tamper check.</p>
+            ${s.app_assets.map((a) => `<div class="field"><label>${esc(a.label)} link</label><input name="app_asset_url_${a.key}" value="${esc(a.url)}" placeholder="https://…"></div>
+            <div class="field"><label>${esc(a.label)} SHA-256</label><input name="app_asset_sha256_${a.key}" value="${esc(a.sha256)}" maxlength="64" class="mono" placeholder="64 hex characters"></div>`).join('')}
+            <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">
+            <div class="field"><label>Latest Mobile APK version</label><input name="mobile_latest_version" value="${esc(s.mobile_latest_version || '')}" placeholder="e.g. 1.1.14 (leave empty to use desktop version)"></div>
+            <div class="field"><label>Mobile .APK direct download link</label><input name="mobile_apk_url" value="${esc(s.mobile_apk_url || '')}" placeholder="https://aivideoflow.in/downloads/AI-Video-Flow-Reels.apk"></div>
+            <div class="field"><label>Mobile what's new (optional)</label><input name="mobile_update_notes" value="${esc(s.mobile_update_notes || '')}" maxlength="300" placeholder="Short note shown on user's phone"></div>
+            <p class="hint">When you increase the version here, every user with the app installed on their phone or PC immediately gets an in-app "Update Now" banner.</p>
+            <button class="btn primary block">Publish update notice</button>
           </form>
         </div>
         <div class="card"><h3>Security</h3>

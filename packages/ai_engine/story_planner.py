@@ -806,6 +806,154 @@ class StoryPlanner:
             "prompt_directives": directives
         }
 
+    def _detect_voice_pauses(self, audio_path: str, target_count: int, max_dur: float) -> List[float]:
+        try:
+            import soundfile as sf
+            import numpy as np
+            data, sr = sf.read(audio_path)
+            if data.ndim > 1:
+                mono = np.mean(data, axis=1)
+            else:
+                mono = data
+            tot_sec = min(float(len(mono) / sr), max_dur)
+            hop = int(sr * 0.05)  # 50ms frames
+            n_frames = int(tot_sec * sr) // hop
+            if n_frames < 20:
+                return []
+            energies = np.array([np.sqrt(np.mean(mono[i*hop:(i+1)*hop]**2) + 1e-9) for i in range(n_frames)])
+            max_e = np.max(energies)
+            if max_e <= 0:
+                return []
+            db = 20 * np.log10(energies / max_e)
+            is_pause = db < -24.0
+
+            pauses = []
+            start = None
+            for i, p in enumerate(is_pause):
+                if p and start is None:
+                    start = i
+                elif not p and start is not None:
+                    if (i - start) >= 3:  # >= 150ms pause
+                        mid = (start + i) / 2 * 0.05
+                        if 1.2 < mid < tot_sec - 1.2:
+                            pauses.append(mid)
+                    start = None
+            if not pauses:
+                return []
+            ideal = [i * (tot_sec / target_count) for i in range(1, target_count)]
+            picked = []
+            avail = list(pauses)
+            for target_t in ideal:
+                if not avail:
+                    break
+                closest = min(avail, key=lambda p: abs(p - target_t))
+                picked.append(closest)
+                avail.remove(closest)
+            picked.sort()
+            return [0.0] + [round(p, 3) for p in picked] + [round(tot_sec, 3)]
+        except Exception:
+            return []
+
+    def plan_voiceover_motion_graphics(
+        self,
+        analyzed_clips: List[Dict[str, Any]],
+        audio_path: Optional[str] = None,
+        instructions: str = "",
+        ref_video_path: Optional[str] = None,
+        is_vertical: bool = False,
+        target_duration: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Creates a custom motion-graphics timeline timed precisely to the user's voiceover/audio recording.
+        Detects sentence pauses and phrase breaks in the audio so photos/PSD/PNG layers cut naturally
+        with the speaker's voice, animated with alternating Ken Burns pan/zoom moves.
+        """
+        directives = parse_prompt_directives(instructions)
+        is_square = directives.get("is_square") or directives.get("aspect_ratio") == "1:1 (1080x1080)"
+
+        aspect_ratio = "1:1 (1080x1080)" if is_square else ("9:16 (1080x1920)" if is_vertical else "16:9")
+        tl_w, tl_h = (1080, 1080) if is_square else ((1080, 1920) if is_vertical else (1920, 1080))
+
+        # Determine audio duration
+        audio_duration = 0.0
+        if audio_path and os.path.isfile(audio_path):
+            try:
+                import soundfile as sf
+                info = sf.info(audio_path)
+                audio_duration = float(info.duration)
+            except Exception:
+                pass
+
+        if target_duration and target_duration > 0 and (audio_duration == 0 or target_duration < audio_duration):
+            total_duration = target_duration
+        else:
+            total_duration = audio_duration if audio_duration > 0 else (len(analyzed_clips) * 4.0)
+
+        # Detect speech breaks in voiceover
+        num_clips = max(1, len(analyzed_clips))
+        cuts = []
+        if audio_path and os.path.isfile(audio_path):
+            cuts = self._detect_voice_pauses(audio_path, num_clips, total_duration)
+
+        if not cuts or len(cuts) < 2:
+            seg_len = total_duration / num_clips
+            cuts = [round(i * seg_len, 3) for i in range(num_clips + 1)]
+
+        KEN_BURNS_MOVES = [
+            "Ken Burns Slow Push-In (1.0x -> 1.15x)",
+            "Ken Burns Pan Left-to-Right",
+            "Ken Burns Dynamic Pull-Out (1.15x -> 1.0x)",
+            "Ken Burns Pan Right-to-Left",
+            "Ken Burns Center Dynamic Pop",
+            "Ken Burns Diagonal Drift (Up-Right)",
+            "Ken Burns Subtle Slow Zoom",
+        ]
+
+        timeline_entries = []
+        for i in range(min(num_clips, len(cuts) - 1)):
+            c = analyzed_clips[i % len(analyzed_clips)]
+            t_start = cuts[i]
+            t_end = cuts[i + 1]
+            seg_dur = max(0.5, t_end - t_start)
+            fps = float(c.get("native_fps") or 25.0)
+            move = KEN_BURNS_MOVES[i % len(KEN_BURNS_MOVES)]
+
+            entry = {
+                "clip_name": f"[{c.get('shot_type', 'graphic').upper()}] {os.path.basename(c.get('file_path', ''))}",
+                "file_path": c.get("file_path"),
+                "timeline_start": round(t_start, 3),
+                "timeline_end": round(t_end, 3),
+                "in_frame": 0,
+                "out_frame": int(seg_dur * fps),
+                "duration": round(seg_dur, 3),
+                "shot_type": "graphic",
+                "role": c.get("role") or f"Voiceover Scene {i+1}",
+                "text_hook": c.get("text_hook", ""),
+                "motion_effect": move,
+                "speed": 1.0,
+                "speed_percent": 100,
+                "speed_label": f"Motion Graphics / {move}",
+                "retime_process": "Normal",
+                "action_trimmed": False,
+                "action_peak_seconds": round(seg_dur / 2.0, 2)
+            }
+            timeline_entries.append(entry)
+
+        seq_name = f"01_Voiceover_Motion_Graphics_{'1x1' if is_square else ('9x16' if is_vertical else '16x9')}"
+        return {
+            "sequence_name": seq_name,
+            "aspect_ratio": aspect_ratio,
+            "timeline_width": tl_w,
+            "timeline_height": tl_h,
+            "total_duration": round(total_duration, 2),
+            "total_minutes": round(total_duration / 60.0, 2),
+            "clip_count": len(timeline_entries),
+            "clips": timeline_entries,
+            "audio": audio_path,
+            "audio_duration": audio_duration,
+            "prompt_directives": directives
+        }
+
 
 # Global instance
 story_planner = StoryPlanner()

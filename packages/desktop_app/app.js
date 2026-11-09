@@ -358,6 +358,7 @@
     music_video: [["highlight", "Music video cut — about 3 min, on the beat"], ["full_film", "Mood montage — 60 s"]],
     podcast: [["clean", "01 Clean edit — silences and dead air removed"], ["shorts", "3 vertical shorts — the liveliest 45 s moments, 9:16"]],
     tutorial: [["clean", "01 Clean edit — pauses and dead air removed"], ["chapters", "YouTube chapters file + chapter markers"]],
+    custom: [["highlight", "01 Voiceover Motion Graphics (Full Audio Sync)"], ["teaser", "02 Snappy Short Ad (30s)"]],
   };
   const LONG_MODES = ["podcast", "tutorial"];
   let cutLevel = store.get("avf.cut") || "normal";
@@ -399,6 +400,7 @@
       music_video: "Cuts follow the beat. Takes shot to playback are placed in the song by their audio (03_Music_Video_Synced_Takes).",
       podcast: "2-3 cameras are synced by their audio and cut at the same moments, one track per camera.",
       tutorial: "2-3 cameras are synced by their audio and cut at the same moments, one track per camera.",
+      custom: "Photos, PSD layers & graphics are cut and animated directly to your voiceover speech, pauses and audio rhythm.",
     }[mode] || "";
     renderOutputs();
   }

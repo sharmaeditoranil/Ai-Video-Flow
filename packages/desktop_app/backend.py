@@ -1236,6 +1236,23 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=False, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
                 p["sequence_name"] = "02_Cinematic_Mood_Montage"
                 plans["teaser"] = p
+        elif mode == "custom" or is_motion_graphics:
+            if "highlight" in formats or "teaser" in formats:
+                p = story_planner.plan_voiceover_motion_graphics(
+                    analyzed, audio_path=audio_path, instructions=instructions,
+                    ref_video_path=ref_video, is_vertical=(not is_square)
+                )
+                p["sequence_name"] = f"01_Custom_Motion_Graphics_{'1x1' if is_square else ('9x16' if (not is_square and 'reel' in instructions.lower()) else '16x9')}"
+                p["aspect_ratio"] = target_aspect
+                plans["highlight"] = p
+            if "teaser" in formats and "highlight" in formats:
+                p2 = story_planner.plan_voiceover_motion_graphics(
+                    analyzed, audio_path=audio_path, instructions=instructions,
+                    ref_video_path=ref_video, is_vertical=(not is_square), target_duration=30.0
+                )
+                p2["sequence_name"] = f"02_Short_Ad_30s_{'1x1' if is_square else '9x16'}"
+                p2["aspect_ratio"] = target_aspect
+                plans["teaser"] = p2
         else:  # Default: wedding
             if "teaser" in formats:
                 plans["teaser"] = story_planner.plan_teaser(analyzed, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
@@ -1257,12 +1274,28 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         if ai_creative_plan and ai_creative_plan.get("storyboard"):
             sb = ai_creative_plan["storyboard"]
             _log(job_id, f"🎬 Applying Claude AI Director Storyboard: {len(sb)} scenes organized with viral hooks & roles...", "info")
+
+            voice_cuts = []
+            if audio_path and os.path.isfile(audio_path):
+                try:
+                    import soundfile as sf
+                    a_info = sf.info(audio_path)
+                    a_dur = float(a_info.duration)
+                    if a_dur > 0:
+                        voice_cuts = story_planner._detect_voice_pauses(audio_path, len(sb), a_dur)
+                        if not voice_cuts or len(voice_cuts) < len(sb) + 1:
+                            seg = a_dur / max(1, len(sb))
+                            voice_cuts = [round(i * seg, 3) for i in range(len(sb) + 1)]
+                        _log(job_id, f"🎙️ Audio Speech Sync: Voiceover ({a_dur:.1f}s) partitioned across {len(sb)} motion graphic scenes!", "info")
+                except Exception:
+                    pass
+
             for plan_key in ("teaser", "highlight"):
                 if plan_key not in plans or not plans[plan_key].get("clips"):
                     continue
                 p = plans[plan_key]
                 ordered_clips = []
-                for scene in sb:
+                for i, scene in enumerate(sb):
                     idx = scene.get("asset_index", 0)
                     if 0 <= idx < len(analyzed):
                         orig = analyzed[idx]
@@ -1275,7 +1308,10 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                         clip_copy["motion_effect"] = effect
                         clip_copy["speed_label"] = f"AI Director: {role} ({effect})"
                         clip_copy["clip_name"] = f"[{role.upper()}] {os.path.basename(orig['file_path'])}"
-                        dur = float(scene.get("duration_seconds") or 3.0)
+                        if voice_cuts and i < len(voice_cuts) - 1:
+                            dur = max(0.5, round(voice_cuts[i+1] - voice_cuts[i], 3))
+                        else:
+                            dur = float(scene.get("duration_seconds") or 3.0)
                         clip_copy["duration"] = dur
                         clip_copy["trimmed_duration"] = dur
                         clip_copy["out_seconds"] = dur

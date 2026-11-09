@@ -509,6 +509,7 @@
       if (job.status === "error") log(consoleBox, "Stopped: " + (job.error || "unknown error"), "error");
       fetchStatus();
       fetchLicense();
+      loadLastPlan();
     } catch (e) {
       log(consoleBox, e.message, "error");
     } finally {
@@ -544,6 +545,121 @@
       btn.disabled = false;
     }
   });
+
+  // ------------------------------------------------------------------
+  // Smart AI Prompt Chips & Timeline Re-Edit System
+  // ------------------------------------------------------------------
+  document.querySelectorAll(".prompt-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.prompt;
+      const notes = $("in-notes");
+      if (!notes.value.trim()) {
+        notes.value = p;
+      } else {
+        notes.value = notes.value.trim() + " | " + p;
+      }
+      $("chk-ai-review").checked = true;
+      syncAiAudio();
+    });
+  });
+
+  document.querySelectorAll(".reedit-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = btn.dataset.prompt;
+      const rNotes = $("in-reedit-prompt");
+      if (!rNotes.value.trim()) {
+        rNotes.value = p;
+      } else {
+        rNotes.value = rNotes.value.trim() + " | " + p;
+      }
+    });
+  });
+
+  async function loadLastPlan() {
+    try {
+      const res = await api("/api/last-plan");
+      const card = $("reedit-card");
+      if (!card) return;
+      if (!res.has_plan) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      const pName = $("reedit-project-name");
+      if (pName) pName.textContent = res.project_name || "Active Project";
+
+      if (res.ref_video && $("in-reedit-ref") && !$("in-reedit-ref").value) {
+        $("in-reedit-ref").value = res.ref_video;
+      }
+
+      const sel = $("reedit-timeline-select");
+      if (sel && res.timelines && res.timelines.length) {
+        const curVal = sel.value;
+        sel.innerHTML = '<option value="all">All Timelines (Teaser + Highlight + Full Film)</option>';
+        res.timelines.forEach((tl) => {
+          const opt = document.createElement("option");
+          opt.value = tl.key;
+          const durStr = tl.duration ? ` · ${Math.round(tl.duration)}s` : "";
+          opt.textContent = `${tl.name}${durStr}`;
+          sel.appendChild(opt);
+        });
+        if (curVal && [...sel.options].some((o) => o.value === curVal)) {
+          sel.value = curVal;
+        }
+      }
+    } catch (e) {
+      /* offline or no plan */
+    }
+  }
+
+  if ($("btn-browse-reedit-ref")) {
+    $("btn-browse-reedit-ref").addEventListener("click", () => browseInto($("in-reedit-ref"), "video", "Select reference video for re-edit"));
+  }
+  if ($("btn-clear-reedit-ref")) {
+    $("btn-clear-reedit-ref").addEventListener("click", () => {
+      $("in-reedit-ref").value = "";
+    });
+  }
+
+  const btnReedit = $("btn-run-reedit");
+  if (btnReedit) {
+    btnReedit.addEventListener("click", async () => {
+      const prompt = $("in-reedit-prompt").value.trim();
+      const refVideo = $("in-reedit-ref") ? $("in-reedit-ref").value.trim() : "";
+      if (!prompt && !refVideo) return alert("Re-edit prompt ya reference video provide kijiye (jaise: 'Teaser ko 30s me tighter cut karo, Bride entry ko pehle lao' ya reference video choose karein)");
+      const timeline = $("reedit-timeline-select").value;
+      const prog = $("progress");
+      const bar = prog.querySelector(".bar");
+
+      btnReedit.disabled = true;
+      btnReedit.textContent = "Re-Editing Timeline…";
+      prog.classList.add("active");
+      bar.style.width = "0%";
+      consoleBox.innerHTML = "";
+      log(consoleBox, `Starting Smart AI Re-Edit: "${prompt || 'Match Reference Look & Pace'}"...`, "info");
+
+      try {
+        const res = await api("/api/re-edit-timeline", { prompt, timeline, target_nle: nle, ref_video: refVideo });
+        if (!res.success) {
+          log(consoleBox, res.error || "Re-Edit could not be started.", "error");
+          return;
+        }
+        const job = await pollJob(res.job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
+        if (job.status === "error") {
+          log(consoleBox, "Re-Edit stopped: " + (job.error || "unknown error"), "error");
+        } else {
+          log(consoleBox, "✨ Smart AI Re-Edit applied successfully!", "info");
+        }
+        loadLastPlan();
+        fetchStatus();
+      } catch (e) {
+        log(consoleBox, e.message, "error");
+      } finally {
+        btnReedit.disabled = false;
+        btnReedit.textContent = "🪄 Apply Smart AI Re-Edit";
+      }
+    });
+  }
 
   // ------------------------------------------------------------------
   // AI Assistant
@@ -816,6 +932,7 @@
   fetchStatus();
   fetchLicense();
   loadTools();
+  loadLastPlan();
   setInterval(fetchStatus, 6000);
   setInterval(fetchLicense, 60000);
 })();

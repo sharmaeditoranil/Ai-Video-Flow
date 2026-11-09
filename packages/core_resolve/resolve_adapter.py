@@ -407,6 +407,17 @@ class ResolveAdapter:
 
         try:
             result = media_pool.AppendToTimeline(clip_items)
+            # Apply Retime / Speed ramping (Optical Flow) on clips with speed != 100%
+            if result and isinstance(result, list):
+                for idx, t_item in enumerate(result):
+                    if idx < len(clip_items):
+                        speed_pct = clip_items[idx].get("speed_percent")
+                        if speed_pct and speed_pct != 100:
+                            try:
+                                t_item.SetProperty("RetimeProcess", 3)  # Optical Flow
+                                t_item.SetProperty("Speed", float(speed_pct))
+                            except Exception:
+                                pass
             return bool(result)
         except Exception as e:
             logger.error(f"Error appending clips to timeline: {e}")
@@ -464,9 +475,33 @@ class ResolveAdapter:
             return False
         items = tl.GetItemListInTrack("video", track_index)
         if items and 0 <= item_index < len(items):
-            graph = items[item_index].GetNodeGraph()
+            item = items[item_index]
+            if hasattr(item, "SetLUT") and item.SetLUT(1, lut_path):
+                return True
+            graph = item.GetNodeGraph() if hasattr(item, "GetNodeGraph") else None
             return bool(graph and graph.SetLUT(1, lut_path))
         return False
+
+    def apply_lut_to_timeline(self, lut_path: str, track_index: int = 1) -> int:
+        """Applies a 3D LUT (.cube) to all video clips on the active timeline."""
+        if not self.is_connected() or not self._current_project or not os.path.isfile(lut_path):
+            return 0
+        tl = self._current_project.GetCurrentTimeline()
+        if not tl:
+            return 0
+        items = tl.GetItemListInTrack("video", track_index)
+        count = 0
+        for item in (items or []):
+            try:
+                if hasattr(item, "SetLUT") and item.SetLUT(1, lut_path):
+                    count += 1
+                    continue
+                graph = item.GetNodeGraph() if hasattr(item, "GetNodeGraph") else None
+                if graph and hasattr(graph, "SetLUT") and graph.SetLUT(1, lut_path):
+                    count += 1
+            except Exception:
+                pass
+        return count
 
     def set_manual_color_grading(
         self,
@@ -588,13 +623,13 @@ class ResolveAdapter:
                 return {"success": success, "node_index": node_index, "enabled": is_enabled}
         return {"error": f"Could not toggle node {node_index}."}
 
-    def create_wedding_node_tree(self, track_index: int = 1, item_index: int = 0, style: str = "Royal Warm") -> Dict[str, Any]:
+    def create_wedding_node_tree(self, track_index: int = 1, item_index: Optional[int] = None, style: str = "Royal Warm") -> Dict[str, Any]:
         """
-        Builds a 5-node professional wedding color grading pipeline on a clip:
+        Builds a professional wedding color grading pipeline on a clip or all timeline clips:
         Node 1: Exposure & Balance
         Node 2: Skin Tone & Face Smoothing
         Node 3: Contrast & Saturation Punch
-        Node 4: Creative Wedding Look / LUT (e.g. Royal Warm, Teal & Orange)
+        Node 4: Creative Wedding Look / LUT (e.g. Royal Warm, Teal & Orange, Vintage Wedding)
         Node 5: Soft Glow & Vignette
         """
         if not self.is_connected() or not self._current_project:
@@ -603,17 +638,39 @@ class ResolveAdapter:
         if not tl:
             return {"error": "No active timeline."}
         items = tl.GetItemListInTrack("video", track_index)
-        if not items or item_index >= len(items):
-            return {"error": f"Clip at index {item_index} not found."}
+        if not items:
+            return {"error": "No clips on timeline track."}
 
-        item = items[item_index]
         looks = {
             "Royal Warm": {"Slope": "1.06 1.0 0.92", "Offset": "0.01 0.0 -0.01", "Power": "0.98 1.0 1.02", "Saturation": "1.12"},
             "Teal & Orange": {"Slope": "1.05 0.98 0.95", "Offset": "0.0 0.0 0.015", "Power": "1.0 1.0 0.97", "Saturation": "1.15"},
             "Soft Pastel": {"Slope": "1.02 1.02 1.0", "Offset": "0.02 0.02 0.02", "Power": "1.04 1.04 1.04", "Saturation": "0.9"},
             "Neutral": {"Slope": "1.0 1.0 1.0", "Offset": "0.0 0.0 0.0", "Power": "1.0 1.0 1.0", "Saturation": "1.05"},
+            "Vintage Wedding": {"Slope": "1.04 0.98 0.90", "Offset": "0.02 0.01 -0.01", "Power": "1.02 1.0 0.98", "Saturation": "0.95"},
+            "Neutral Wedding": {"Slope": "1.0 1.0 1.0", "Offset": "0.0 0.0 0.0", "Power": "1.0 1.0 1.0", "Saturation": "1.05"},
         }
         look = looks.get(style) or looks["Royal Warm"]
+
+        if item_index is None:
+            # Apply across ALL clips on the active timeline
+            graded = 0
+            for item in items:
+                try:
+                    if item.SetCDL({"NodeIndex": "1", **look}):
+                        graded += 1
+                except Exception:
+                    pass
+            return {
+                "success": graded > 0,
+                "clips_graded": graded,
+                "style": style,
+                "message": f"Applied '{style}' color grade across {graded} clips on active timeline."
+            }
+
+        if item_index >= len(items):
+            return {"error": f"Clip at index {item_index} not found."}
+
+        item = items[item_index]
         ok = bool(item.SetCDL({"NodeIndex": "1", **look}))
         return {
             "success": ok,

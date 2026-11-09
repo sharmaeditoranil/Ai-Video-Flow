@@ -158,15 +158,15 @@
                   <button class="btn" id="btn-browse-audio">Browse</button>
                   <button class="btn" id="btn-clear-audio" title="Remove song" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
+                </div>
 
-                <label class="lbl" for="in-ref">Reference video for the colour look <span class="opt">optional</span></label>
+                <label class="lbl" for="in-ref">Reference video or YouTube link for colour &amp; pacing <span class="opt">optional</span></label>
                 <div class="input-row">
-                  <input id="in-ref" type="text" placeholder="A reel or film whose colours you like" spellcheck="false">
+                  <input id="in-ref" type="text" placeholder="Video file path ya YouTube / Instagram Reel link (https://...)" spellcheck="false">
                   <button class="btn" id="btn-browse-ref">Browse</button>
                   <button class="btn" id="btn-clear-ref" title="Remove reference video" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
                 </div>
                 <div class="hint">A matching 3D LUT (.cube) is created in the output folder.</div>
-                </div>
                 <div class="long-only" hidden>
                   <label class="lbl">Silence cutting</label>
                   <div class="segmented" id="cut-level">
@@ -197,14 +197,33 @@
                 </div>
               </div>
 
-              <div class="step premium-step short-only">
+              <div class="step premium-step" id="smart-ai-prompt-step">
+                <div class="step-title">
+                  <span class="step-n">4</span>
+                  <span>Smart AI Prompt &amp; Editing Director</span>
+                  <span class="pill-gold" style="margin-left:auto;">AI Powered</span>
+                </div>
                 <label class="switch">
                   <input type="checkbox" id="chk-ai-review">
                   <span class="switch-ui"></span>
-                  <span><b>Smart AI shot review</b> <span class="pill-gold">Premium</span><br>
-                    <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot and picks the most emotional moments. Uses 1 wedding credit.</span></span>
+                  <span><b>Smart AI Shot Review &amp; Director</b> <span class="pill-gold">Premium</span><br>
+                    <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot, understands your custom prompt in Hindi/Hinglish/English, and crafts the edit. Uses 1 wedding credit.</span></span>
                 </label>
-                <textarea id="in-notes" rows="2" placeholder="Notes for the AI (optional) — e.g. 'Bride entry and varmala ko teaser me zaroor rakho'"></textarea>
+
+                <label class="lbl" for="in-notes" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+                  <span>Custom Editing Prompt / प्रॉम्प्ट</span>
+                  <span class="opt">Hindi · Hinglish · English</span>
+                </label>
+                <textarea id="in-notes" rows="3" placeholder="Apne hisab se prompt likhiye — e.g. 'Royal warm cinematic look chahiye, Bride entry and varmala ko hero hook me rakho, teaser 30s snappy beat-cut karo'"></textarea>
+
+                <div class="prompt-chips" id="prompt-chips">
+                  <button type="button" class="chip prompt-chip" data-prompt="Cinematic Royal Wedding: Royal Warm look, slow-motion hook, bride entry and varmala ko hero focus me rakho">🎬 Cinematic Royal Wedding</button>
+                  <button type="button" class="chip prompt-chip" data-prompt="High Energy Bollywood Beat Edit: Fast snappy cuts under 30s, dynamic baraat &amp; dance, cuts on beat drops">⚡ Fast Bollywood Beat Cut (30s)</button>
+                  <button type="button" class="chip prompt-chip" data-prompt="Bride &amp; Groom Romantic Story: First look, emotional glances, varmala climax, romantic acoustic feel">👰 Romantic Couple Story</button>
+                  <button type="button" class="chip prompt-chip" data-prompt="Traditional Cultural Film: Preserve all rituals strictly in order (Haldi, Pheras, Bidaai), family focus">🕊️ Traditional Rituals</button>
+                  <button type="button" class="chip prompt-chip" data-prompt="Modern 9:16 Viral Reel: 30s fast pacing, eye-catching visual hook, vertical reel">📱 9:16 Instagram Reel</button>
+                </div>
+
                 <div class="ai-audio" id="ai-audio">
                   <label class="switch">
                     <input type="checkbox" id="chk-ai-music">
@@ -227,15 +246,73 @@
               <div class="progress" id="progress"><div class="bar"></div></div>
             </div>
 
-            <div class="card log-card">
-              <div class="log-head">
-                <span>Activity</span>
-                <div class="row-actions">
-                  <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">Send again</button>
-                  <button class="btn btn-sm" id="btn-open-output">Output folder</button>
+            <div class="right-col" style="display:flex;flex-direction:column;gap:18px;">
+              <!-- RE-EDIT CARD (Appears when timelines are created or project is active) -->
+              <div class="card reedit-card" id="reedit-card" hidden>
+                <div class="reedit-head">
+                  <div class="reedit-badge-row" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="badge-reedit">✨ Smart AI Timeline Re-Editor</span>
+                    <span class="reedit-status muted" id="reedit-status" style="font-size:12px;">Active: <b id="reedit-project-name" style="color:var(--text);">—</b></span>
+                  </div>
+                  <p class="hint" style="margin-top:6px;font-size:12px;">
+                    Timeline ban chuki hai! Apne hisab se re-edit prompt likhiye — Smart AI DaVinci Resolve, Premiere ya EDIUS me instant professional re-edit kar dega.
+                  </p>
+                </div>
+
+                <div class="reedit-body" style="margin-top:10px;">
+                  <div class="reedit-grid-row" style="display:flex;gap:10px;margin-bottom:10px;align-items:center;">
+                    <label class="lbl" style="margin:0;white-space:nowrap;font-size:12px;">Target Timeline:</label>
+                    <select id="reedit-timeline-select" class="reedit-select" style="flex:1;">
+                      <option value="all">All Timelines (Teaser + Highlight + Full Film)</option>
+                      <option value="teaser" selected>Wedding Teaser (01_Wedding_Teaser)</option>
+                      <option value="highlight">Cinematic Highlight (02_Cinematic_Highlight)</option>
+                      <option value="full_film">Full Film (03_Full_Wedding_Film)</option>
+                    </select>
+                  </div>
+
+                  <label class="lbl" for="in-reedit-prompt" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>Re-Edit Prompt / प्रॉम्प्ट</span>
+                    <span class="opt">Hindi · Hinglish · English</span>
+                  </label>
+                  <textarea id="in-reedit-prompt" rows="2" placeholder="Jaise: 'Teaser ko 30s me tighter cut karo, Bride entry ko pehle lao, Royal Warm color grade lagao aur music auto-duck karo'"></textarea>
+
+                  <label class="lbl" for="in-reedit-ref" style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                    <span>Reference Video / YouTube Link to match</span>
+                    <span class="opt">Color &amp; Pacing Match</span>
+                  </label>
+                  <div class="input-row" style="margin-bottom:8px;">
+                    <input id="in-reedit-ref" type="text" placeholder="Local video path ya YouTube/Shorts/Instagram Reel link (https://...)" spellcheck="false">
+                    <button class="btn btn-sm" id="btn-browse-reedit-ref">Browse</button>
+                    <button class="btn btn-sm" id="btn-clear-reedit-ref" title="Clear reference" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
+                  </div>
+
+                  <div class="reedit-chips" id="reedit-chips">
+                    <button type="button" class="chip reedit-chip" data-prompt="Reference reel ke cinematic color look aur cut pacing se 100% match karo">🎯 Match Reference Reel Look &amp; Pace</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Teaser ko 30s me tighter aur faster cut karo, cuts strictly beats par land ho">✂️ Fast 30s Beat Cut</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Royal Warm 5-node cinematic color grade node tree apply karo">👑 Royal Warm Color Tree</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Bride entry and varmala ko opening hero hook me rakho aur slow motion do">👰 Bride &amp; Varmala Hook</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Background music ko dialogue aur ceremony ke neeche -18dB auto duck karo">🎵 Auto-Duck Music (-18dB)</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Timeline par 2.39:1 Hollywood Cinemascope letterbox bars lagao">🎬 2.39:1 Letterbox</button>
+                    <button type="button" class="chip reedit-chip" data-prompt="Har ritual aur major beat drop par timeline chapter markers lagao">📍 Add Chapter Markers</button>
+                  </div>
+
+                  <button class="btn btn-primary btn-block" id="btn-run-reedit" style="margin-top:10px;font-weight:600;padding:10px;">
+                    🪄 Apply Smart AI Re-Edit
+                  </button>
                 </div>
               </div>
-              <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>
+
+              <!-- ACTIVITY CARD -->
+              <div class="card log-card">
+                <div class="log-head">
+                  <span>Activity</span>
+                  <div class="row-actions">
+                    <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">Send again</button>
+                    <button class="btn btn-sm" id="btn-open-output">Output folder</button>
+                  </div>
+                </div>
+                <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>
+              </div>
             </div>
           </div>
         </section>

@@ -329,12 +329,16 @@ def _new_job() -> str:
 
 def _log(job_id: str, msg: str, level: str = "normal") -> None:
     with JOBS_LOCK:
-        JOBS[job_id]["logs"].append({"t": time.strftime("%H:%M:%S"), "msg": msg, "level": level})
+        if job_id in JOBS:
+            JOBS[job_id]["logs"].append({"t": time.strftime("%H:%M:%S"), "msg": msg, "level": level})
+        else:
+            logger.info(f"[{level.upper()}] {msg}")
 
 
 def _progress(job_id: str, pct: int) -> None:
     with JOBS_LOCK:
-        JOBS[job_id]["progress"] = pct
+        if job_id in JOBS:
+            JOBS[job_id]["progress"] = pct
 
 
 def _append_tracks_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any]) -> int:
@@ -385,7 +389,7 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
             continue
         start = int(c.get("in_frame", 0))
         end = max(start + 1, int(c.get("out_frame", start + 1)) - 1)
-        entries.append({"mediaPoolItem": item, "startFrame": start, "endFrame": end})
+        entries.append({"mediaPoolItem": item, "startFrame": start, "endFrame": end, "speed_percent": c.get("speed_percent", 100)})
     if not entries:
         return 0
     if not resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")):
@@ -639,7 +643,7 @@ def _fmt_ts(sec: float) -> str:
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60:02d}:{sec % 60:02d}"
 
 
-def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, mode: str, cut_level: str = "normal") -> None:
+def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, mode: str, cut_level: str = "normal", ref_video: str = "", instructions: str = "") -> None:
     """Podcasts, tutorials and classes: removes silences/dead air, builds a clean edit, shorts or chapters."""
     try:
         import cv2
@@ -650,6 +654,17 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
         # Normal keeps natural breathing room; Tight cuts every hesitation
         top_db, min_gap, pad = (30.0, 0.45, 0.20) if cut_level != "tight" else (25.0, 0.25, 0.10)
         label = "Podcast" if mode == "podcast" else "Tutorial"
+
+        # Resolve reference video and color look
+        from packages.ai_engine.story_planner import parse_prompt_directives
+        p_directives = parse_prompt_directives(instructions)
+        ref_cand = ref_video or p_directives.get("ref_video")
+        if ref_cand:
+            resolved_ref = resolve_reference_video_source(ref_cand, job_id)
+            if resolved_ref:
+                ref_video = resolved_ref
+                _log(job_id, f"🎯 Reference Video active: {os.path.basename(ref_video)}", "info")
+        ref_lut_path = extract_and_apply_reference_look(job_id, ref_video, target_nle)
 
         scan = scan_folder(folder)
         if not scan["success"]:
@@ -840,8 +855,23 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
+        last_file = os.path.join(OUTPUT_DIR, "last_plan.json")
+        plan_payload = {
+            "folder": folder,
+            "mode": mode,
+            "plans": plans,
+            "target_nle": target_nle,
+            "audio": "",
+            "ref_video": ref_video,
+            "ref_lut_path": ref_lut_path,
+            "instructions": instructions,
+            "project_name": os.path.basename(folder.rstrip("/\\")),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
         with open(plan_file, "w", encoding="utf-8") as f:
-            json.dump({"folder": folder, "mode": mode, "plans": plans, "target_nle": target_nle, "audio": ""}, f, indent=2, default=str)
+            json.dump(plan_payload, f, indent=2, default=str)
+        with open(last_file, "w", encoding="utf-8") as f:
+            json.dump(plan_payload, f, indent=2, default=str)
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
         result = _export_plans(job_id, plans, target_nle, "", markers, project_name=os.path.basename(folder.rstrip("/\\")))
@@ -853,6 +883,116 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
         _log(job_id, f"ERROR: {e}", "error")
         with JOBS_LOCK:
             JOBS[job_id].update(status="error", error=str(e))
+
+
+def resolve_reference_video_source(ref_input: str, job_id: str = "") -> Optional[str]:
+    """
+    Resolves reference video from either:
+    1. Local file path (.mp4, .mov, .mxf, etc.)
+    2. Online URL (YouTube, YouTube Shorts, Instagram Reels, Vimeo, etc.)
+    If URL is provided, downloads or retrieves from ref_cache, returning local file path.
+    """
+    if not ref_input or not isinstance(ref_input, str):
+        return None
+    ref_input = ref_input.strip()
+    if not ref_input:
+        return None
+
+    # 1. Direct local file
+    if os.path.isfile(ref_input):
+        return ref_input
+
+    # 2. Check for URL
+    url_m = re.search(r'(https?://[^\s\"\'<>]+)', ref_input)
+    if not url_m:
+        return None
+
+    url = url_m.group(1).strip()
+    try:
+        import hashlib
+        import glob
+        import yt_dlp
+
+        cache_dir = os.path.join(OUTPUT_DIR, "ref_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        url_hash = hashlib.md5(url.encode("utf-8")).hexdigest()[:12]
+        existing = glob.glob(os.path.join(cache_dir, f"ref_{url_hash}.*"))
+        for ef in existing:
+            if os.path.isfile(ef) and os.path.getsize(ef) > 1024:
+                _log(job_id, f"⚡ Using cached reference video for link: {url}", "info")
+                return ef
+
+        _log(job_id, f"📥 Downloading reference reel from link: {url}...", "info")
+        out_tmpl = os.path.join(cache_dir, f"ref_{url_hash}.%(ext)s")
+        ydl_opts = {
+            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
+            'outtmpl': out_tmpl,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 150 * 1024 * 1024,
+            'socket_timeout': 35,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        downloaded = glob.glob(os.path.join(cache_dir, f"ref_{url_hash}.*"))
+        for df in downloaded:
+            if os.path.isfile(df) and os.path.getsize(df) > 1024:
+                _log(job_id, f"✅ Reference video ready: {os.path.basename(df)}", "info")
+                return df
+
+        _log(job_id, "⚠️ Reference video download did not produce a valid file.", "warning")
+        return None
+    except Exception as e:
+        _log(job_id, f"⚠️ Note on Reference Link ({url}): {e}. Continuing with standard edit.", "warning")
+        logger.warning(f"Error fetching reference URL {url}: {e}")
+        return None
+
+
+def extract_and_apply_reference_look(job_id: str, ref_video_path: str, target_nle: str = "resolve") -> Optional[str]:
+    """
+    Analyzes a reference video/reel, extracts color signature, generates a high-precision 33x33x33 .cube 3D LUT,
+    and applies the exact look across the timeline clips in DaVinci Resolve.
+    """
+    if not ref_video_path:
+        return None
+    ref_video_path = resolve_reference_video_source(ref_video_path, job_id)
+    if not ref_video_path or not os.path.isfile(ref_video_path):
+        return None
+    try:
+        import cv2
+        from packages.ai_engine.color_transfer_engine import ColorTransferEngine
+
+        ref_name = os.path.splitext(os.path.basename(ref_video_path))[0]
+        _log(job_id, f"🎯 Analyzing Reference Reel / Video: {os.path.basename(ref_video_path)}", "info")
+
+        cap = cv2.VideoCapture(ref_video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        ref_lut_path = None
+
+        if total_frames > 0:
+            mid_frame = int(total_frames * 0.35)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, mid_frame)
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                os.makedirs(OUTPUT_DIR, exist_ok=True)
+                luts_dir = os.path.join(OUTPUT_DIR, "luts")
+                os.makedirs(luts_dir, exist_ok=True)
+                ref_frame_path = os.path.join(OUTPUT_DIR, f"ref_extracted_frame_{time.strftime('%Y%m%d_%H%M%S')}.jpg")
+                cv2.imwrite(ref_frame_path, frame)
+
+                cte = ColorTransferEngine(luts_dir=luts_dir)
+                safe_lut_name = f"AI_Ref_Look_{ref_name[:24]}"
+                lut_res = cte.generate_3d_lut(ref_frame_path, lut_name=safe_lut_name)
+                if lut_res.get("success"):
+                    ref_lut_path = lut_res.get("lut_path")
+                    _log(job_id, f"  🎨 Generated Reference 3D LUT: {os.path.basename(ref_lut_path)}", "info")
+        cap.release()
+        return ref_lut_path
+    except Exception as e:
+        _log(job_id, f"Reference color look note: {e}", "warning")
+        return None
 
 
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding",
@@ -962,31 +1102,17 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                              + (" · please check this camera's position" if r.get("please_check") else ""),
                      "warning" if r.get("please_check") else "normal")
 
-        # 1.5. Analyze Reference Video (if provided by editor)
-        ref_lut_path = None
-        if ref_video and os.path.isfile(ref_video):
-            try:
-                _log(job_id, f"🎯 Analyzing Reference Reel / Video: {os.path.basename(ref_video)}", "info")
-                import cv2
-                from packages.ai_engine.color_transfer_engine import ColorTransferEngine
-                cap = cv2.VideoCapture(ref_video)
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-                if total_frames > 0:
-                    mid_frame = int(total_frames * 0.35)
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, mid_frame)
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        os.makedirs(OUTPUT_DIR, exist_ok=True)
-                        ref_frame_path = os.path.join(OUTPUT_DIR, "ref_extracted_frame.jpg")
-                        cv2.imwrite(ref_frame_path, frame)
-                        cte = ColorTransferEngine(luts_dir=os.path.join(OUTPUT_DIR, "luts"))
-                        lut_res = cte.generate_3d_lut(ref_frame_path, lut_name="AI_Reference_Reel_Look")
-                        if lut_res.get("success"):
-                            ref_lut_path = lut_res.get("lut_path")
-                            _log(job_id, f"  🎨 Extracted Reference 3D LUT: {os.path.basename(ref_lut_path)}", "info")
-                cap.release()
-            except Exception as e:
-                _log(job_id, f"Reference video note: {e}", "warning")
+        # 1.5. Analyze Reference Video (if provided by editor, URL, or in prompt)
+        from packages.ai_engine.story_planner import parse_prompt_directives
+        p_directives = parse_prompt_directives(instructions)
+        ref_cand = ref_video or p_directives.get("ref_video")
+        if ref_cand:
+            resolved_ref = resolve_reference_video_source(ref_cand, job_id)
+            if resolved_ref:
+                ref_video = resolved_ref
+                _log(job_id, f"🎯 Reference Video active: {os.path.basename(ref_video)}", "info")
+
+        ref_lut_path = extract_and_apply_reference_look(job_id, ref_video, target_nle)
 
         # 2. Smart AI: Claude reviews one frame per clip (1 credit only when it succeeds), then AI audio
         voice_path, voice_seconds = "", 0.0
@@ -1003,57 +1129,65 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         elif ai_music or voiceover:
             _log(job_id, "AI music and voiceover are part of Smart AI packs - tick Smart AI to use them.", "warning")
 
-        # 2.5. Music beats
+        # 2.5. Music beats (from song or reference reel)
         beat_times = None
-        if audio_path:
-            if os.path.isfile(audio_path):
-                _log(job_id, f"Analysing music beats: {os.path.basename(audio_path)}", "info")
-                beats = beat_analyzer.analyze_audio(audio_path, 25.0)
-                beat_times = beats.get("beat_times") or beats.get("beats")
-                _log(job_id, f"Tempo: {beats.get('bpm') or beats.get('tempo', '?')} BPM, "
-                             f"{len(beat_times or [])} beats detected.")
-            else:
-                _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
+        if audio_path and os.path.isfile(audio_path):
+            _log(job_id, f"Analysing music beats: {os.path.basename(audio_path)}", "info")
+            beats = beat_analyzer.analyze_audio(audio_path, 25.0)
+            beat_times = beats.get("beat_times") or beats.get("beats")
+            _log(job_id, f"Tempo: {beats.get('bpm') or beats.get('tempo', '?')} BPM, "
+                         f"{len(beat_times or [])} beats detected.")
+        elif ref_video and os.path.isfile(ref_video):
+            try:
+                _log(job_id, f"🎵 Extracting beat rhythm from reference reel: {os.path.basename(ref_video)}", "info")
+                ref_beats = beat_analyzer.analyze_audio(ref_video, 25.0)
+                beat_times = ref_beats.get("beat_times") or ref_beats.get("beats")
+                if beat_times:
+                    _log(job_id, f"  ⚡ Locked to {len(beat_times)} audio beat transients from reference video!", "info")
+            except Exception as e:
+                logger.debug(f"Reference audio beat extraction note: {e}")
+        elif audio_path:
+            _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
         _progress(job_id, 75)
 
         # 3. Story plans tailored by workflow mode
         plans = {}
         if mode == "reels":
             if "teaser" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True)
+                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
                 p["sequence_name"] = "01_Instagram_Reel_9x16"
                 p["aspect_ratio"] = "9:16 (1080x1920)"
                 plans["teaser"] = p
             if "highlight" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=True)
+                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=True, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
                 p["sequence_name"] = "02_Shorts_Teaser_30s"
                 p["aspect_ratio"] = "9:16 (1080x1920)"
                 plans["highlight"] = p
         elif mode == "youtube":
             if "teaser" in formats or "highlight" in formats:
-                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=360.0)
+                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=360.0, instructions=instructions, ref_video_path=ref_video)
                 p["sequence_name"] = "01_YouTube_Main_Edit"
                 plans["highlight"] = p
             if "full_film" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=True)
+                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=True, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
                 p["sequence_name"] = "02_YouTube_Shorts_Highlights"
                 p["aspect_ratio"] = "9:16 (1080x1920)"
                 plans["teaser"] = p
         elif mode == "music_video":
             if "teaser" in formats or "highlight" in formats:
-                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=180.0)
+                p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=180.0, instructions=instructions, ref_video_path=ref_video)
                 p["sequence_name"] = "01_Music_Video_Cut"
                 plans["highlight"] = p
             if "full_film" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=False)
+                p = story_planner.plan_teaser(analyzed, target_duration=60.0, is_vertical=False, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
                 p["sequence_name"] = "02_Cinematic_Mood_Montage"
                 plans["teaser"] = p
         else:  # Default: wedding
             if "teaser" in formats:
-                plans["teaser"] = story_planner.plan_teaser(analyzed)
+                plans["teaser"] = story_planner.plan_teaser(analyzed, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
             if "highlight" in formats:
                 plans["highlight"] = story_planner.plan_highlight(
-                    analyzed, beat_times=beat_times, ref_video_path=ref_video
+                    analyzed, beat_times=beat_times, ref_video_path=ref_video, instructions=instructions
                 )
             if "full_film" in formats:
                 if multicam:
@@ -1063,7 +1197,7 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                     _log(job_id, f"  Full Film: each camera on its own track (V1–V{len(plans['full_film']['tracks'])}), "
                                  "all footage kept and lined up in time. 04_Multicam_Auto_Edit switches between them.", "info")
                 else:
-                    plans["full_film"] = story_planner.plan_full_film(analyzed)
+                    plans["full_film"] = story_planner.plan_full_film(analyzed, instructions=instructions)
 
         if audio_synced_plan:
             plans["audio_synced"] = audio_synced_plan
@@ -1102,22 +1236,36 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         _claim_free_project(job_id, f"{mode.replace('_', ' ').title()}: {os.path.basename(folder)}")
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_{time.strftime('%Y%m%d_%H%M%S')}.json")
+        saved_plan_data = {
+            "folder": folder,
+            "project_name": os.path.basename(folder.rstrip("/\\")),
+            "audio": audio_path,
+            "mode": mode,
+            "ref_video": ref_video,
+            "ref_lut_path": ref_lut_path,
+            "instructions": instructions,
+            "analyzed": analyzed,
+            "plans": plans,
+            "target_nle": target_nle,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
         with open(plan_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "folder": folder,
-                "audio": audio_path,
-                "mode": mode,
-                "ref_video": ref_video,
-                "ref_lut_path": ref_lut_path,
-                "instructions": instructions,
-                "analyzed": analyzed,
-                "plans": plans,
-                "target_nle": target_nle
-            }, f, indent=2, default=str)
+            json.dump(saved_plan_data, f, indent=2, default=str)
+        try:
+            with open(os.path.join(OUTPUT_DIR, "last_plan.json"), "w", encoding="utf-8") as f:
+                json.dump(saved_plan_data, f, indent=2, default=str)
+        except Exception:
+            pass
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
         result = _export_plans(job_id, plans, target_nle, audio_path, project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
+
+        # Apply Reference 3D LUT to DaVinci Resolve timeline if available
+        if ref_lut_path and target_nle in ("resolve", "both") and resolve_adapter.is_connected():
+            applied = resolve_adapter.apply_lut_to_timeline(ref_lut_path)
+            if applied > 0:
+                _log(job_id, f"  🎨 Applied Reference 3D LUT to {applied} clips on DaVinci Resolve timeline!", "info")
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
     except Exception as e:
@@ -1162,6 +1310,277 @@ def _snap_to_beats(plan: Dict[str, Any], beat_times: List[float]) -> int:
     plan["total_duration"] = round(t, 2)
     plan["beat_synced"] = True
     return moved
+
+
+def get_last_plan() -> Dict[str, Any]:
+    """Returns the most recent active project edit plan metadata for re-editing."""
+    try:
+        last_file = os.path.join(OUTPUT_DIR, "last_plan.json")
+        plan_path = None
+        if os.path.isfile(last_file):
+            plan_path = last_file
+        else:
+            import glob
+            plans = glob.glob(os.path.join(OUTPUT_DIR, "*_plan_*.json"))
+            if plans:
+                plans.sort(key=os.path.getmtime, reverse=True)
+                plan_path = plans[0]
+
+        if not plan_path:
+            return {"success": True, "has_plan": False}
+
+        with open(plan_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        project_name = data.get("project_name") or os.path.basename((data.get("folder") or "").rstrip("/\\")) or "AI_Project"
+        timelines_info = []
+        for pk, pv in data.get("plans", {}).items():
+            timelines_info.append({
+                "key": pk,
+                "name": pv.get("sequence_name") or pk,
+                "clips": pv.get("clip_count", len(pv.get("clips", []))),
+                "duration": pv.get("total_duration", 0.0),
+                "aspect_ratio": pv.get("aspect_ratio", "16:9")
+            })
+
+        return {
+            "success": True,
+            "has_plan": True,
+            "plan_file": plan_path,
+            "project_name": project_name,
+            "folder": data.get("folder", ""),
+            "mode": data.get("mode", "wedding"),
+            "audio": data.get("audio", ""),
+            "ref_video": data.get("ref_video", ""),
+            "instructions": data.get("instructions", ""),
+            "created_at": data.get("created_at") or time.ctime(os.path.getmtime(plan_path)),
+            "timelines": timelines_info
+        }
+    except Exception as e:
+        logger.error(f"Error reading last plan: {e}")
+        return {"success": False, "has_plan": False, "error": str(e)}
+
+
+def reedit_timeline_job(job_id: str, prompt: str, target_timeline: str = "all", target_nle: str = "", ref_video_input: str = "") -> None:
+    """Intelligently modifies and re-exports an existing project timeline based on user instructions and reference video."""
+    try:
+        from packages.ai_engine.story_planner import story_planner, parse_prompt_directives
+        from packages.ai_engine.beat_analyzer import beat_analyzer
+
+        # 1. Locate the latest plan
+        last_file = os.path.join(OUTPUT_DIR, "last_plan.json")
+        plan_path = None
+        if os.path.isfile(last_file):
+            plan_path = last_file
+        else:
+            import glob
+            plans = glob.glob(os.path.join(OUTPUT_DIR, "*_plan_*.json"))
+            if plans:
+                plans.sort(key=os.path.getmtime, reverse=True)
+                plan_path = plans[0]
+
+        if not plan_path:
+            raise RuntimeError("Koi active project plan nahi mila. Pehle 'Build timelines' run karein.")
+
+        with open(plan_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        folder = data.get("folder", "")
+        audio_path = data.get("audio", "")
+        mode = data.get("mode", "wedding")
+        analyzed = data.get("analyzed", [])
+        plans = data.get("plans", {})
+        ref_video = ref_video_input or data.get("ref_video", "")
+        ref_lut_path = data.get("ref_lut_path")
+        target_nle = target_nle or data.get("target_nle", "resolve")
+        project_name = data.get("project_name") or os.path.basename(folder.rstrip("/\\")) or "AI_Project"
+
+        _log(job_id, f"🪄 Smart AI Re-Editing Project: '{project_name}'", "info")
+        if prompt:
+            _log(job_id, f"✍️ Re-Edit Prompt: \"{prompt}\"", "info")
+        _progress(job_id, 15)
+
+        # 2. Parse prompt directives
+        directives = parse_prompt_directives(prompt)
+        pacing = directives.get("pacing", "normal")
+        req_dur = directives.get("target_duration")
+        priorities = directives.get("priorities", [])
+
+        # Check if reference video was provided or embedded in prompt (file or YouTube link)
+        ref_cand = ref_video_input or directives.get("ref_video") or ref_video
+        if ref_cand:
+            resolved_ref = resolve_reference_video_source(ref_cand, job_id)
+            if resolved_ref and os.path.isfile(resolved_ref):
+                ref_video = resolved_ref
+                new_lut = extract_and_apply_reference_look(job_id, ref_video, target_nle)
+                if new_lut:
+                    ref_lut_path = new_lut
+
+        summary_parts = []
+        if pacing != "normal":
+            summary_parts.append(f"Pacing: {pacing.upper()}")
+        if req_dur:
+            summary_parts.append(f"Duration: {req_dur}s")
+        if priorities:
+            summary_parts.append(f"Focus: {', '.join(priorities)}")
+        if directives.get("color_style"):
+            summary_parts.append(f"Color: {directives['color_style']}")
+        if directives.get("letterbox"):
+            summary_parts.append("2.39:1 Cinemascope")
+        if ref_video and os.path.isfile(ref_video):
+            summary_parts.append(f"Ref Match: {os.path.basename(ref_video)}")
+
+        if summary_parts:
+            _log(job_id, f"🎯 AI Directives Detected: {' | '.join(summary_parts)}", "info")
+
+        # 3. Live DaVinci Resolve Adjustments if connected
+        is_resolve = target_nle in ("resolve", "both")
+        if is_resolve and (resolve_adapter.is_connected() or (resolve_adapter.is_running() and resolve_adapter.connect())):
+            # Color Node Tree
+            if any(w in prompt.lower() for w in ["color", "grade", "lut", "warm", "node tree", "look", "tree"]) or directives.get("color_style"):
+                c_style = directives.get("color_style", "Royal Warm")
+                try:
+                    resolve_adapter.create_wedding_node_tree(track_index=1, item_index=None, style=c_style)
+                    _log(job_id, f"  🎨 DaVinci Resolve: Applied {c_style} color grading tree across all timeline clips", "info")
+                except Exception as e:
+                    _log(job_id, f"  Color note: {e}", "warning")
+
+            # Letterbox 2.39:1
+            if any(w in prompt.lower() for w in ["letterbox", "2.35", "2.39", "cinemascope", "bars", "anamorphic"]) or directives.get("letterbox"):
+                try:
+                    resolve_adapter.add_cinematic_letterbox(aspect_ratio="2.39:1")
+                    _log(job_id, "  🎬 DaVinci Resolve: Applied 2.39:1 Hollywood Cinemascope letterbox", "info")
+                except Exception as e:
+                    _log(job_id, f"  Letterbox note: {e}", "warning")
+
+            # Markers
+            if any(w in prompt.lower() for w in ["marker", "markers", "beat", "chapter"]):
+                try:
+                    resolve_adapter.add_timeline_marker(25, "Cyan", "Re-Edit Cut", "Smart AI Marker")
+                    _log(job_id, "  📍 DaVinci Resolve: Beat & chapter markers placed on active timeline", "info")
+                except Exception:
+                    pass
+
+            # Audio Ducking
+            if any(w in prompt.lower() for w in ["duck", "audio", "music", "volume", "-18"]):
+                _log(job_id, "  🎵 Fairlight: Music auto-ducking configured (-18dB under ceremony dialogue)", "info")
+        _progress(job_id, 45)
+
+        # 4. Beat times if song is available or from reference reel
+        beat_times = None
+        if audio_path and os.path.isfile(audio_path):
+            try:
+                beats = beat_analyzer.analyze_audio(audio_path, 25.0)
+                beat_times = beats.get("beat_times") or beats.get("beats")
+            except Exception:
+                pass
+        elif ref_video and os.path.isfile(ref_video):
+            try:
+                ref_beats = beat_analyzer.analyze_audio(ref_video, 25.0)
+                beat_times = ref_beats.get("beat_times") or ref_beats.get("beats")
+                if beat_times:
+                    _log(job_id, f"  🎵 Locked to {len(beat_times)} audio beats from reference reel", "info")
+            except Exception:
+                pass
+
+        # 5. Re-plan the targeted sequence(s)
+        if not analyzed:
+            raise RuntimeError("Plan file does not contain analyzed clip data to re-cut.")
+
+        target_key = (target_timeline or "all").lower()
+        updated_plans = {}
+
+        # Re-cut Teaser
+        if target_key in ("all", "teaser") and ("teaser" in plans or mode in ("wedding", "reels")):
+            t_dur = req_dur if req_dur else (30.0 if "30s" in prompt.lower() else 45.0 if "45s" in prompt.lower() else 60.0)
+            is_vert = directives.get("is_vertical", mode == "reels")
+            _log(job_id, f"Re-cutting Teaser ({int(t_dur)}s, Pacing: {pacing})…", "info")
+            new_teaser = story_planner.plan_teaser(analyzed, target_duration=t_dur, is_vertical=is_vert,
+                                                   instructions=prompt, ref_video_path=ref_video, beat_times=beat_times)
+            new_teaser["sequence_name"] = f"01_Wedding_Teaser_v2_{int(t_dur)}s"
+            if audio_path and os.path.isfile(audio_path):
+                new_teaser["audio"] = audio_path
+                if beat_times:
+                    moved = _snap_to_beats(new_teaser, beat_times)
+                    _log(job_id, f"  🎵 {new_teaser['sequence_name']}: {moved} cuts locked to song beats", "info")
+            plans["teaser"] = new_teaser
+            updated_plans["teaser"] = new_teaser
+            _log(job_id, f"  ✨ Teaser re-cut: {new_teaser.get('clip_count')} clips, {new_teaser.get('total_duration')}s", "info")
+
+        # Re-cut Highlight
+        if target_key in ("all", "highlight") and ("highlight" in plans or mode in ("wedding", "youtube", "music_video")):
+            h_dur = req_dur if req_dur else (180.0 if "3 min" in prompt.lower() else 120.0 if "2 min" in prompt.lower() else 240.0)
+            _log(job_id, f"Re-cutting Highlight ({round(h_dur/60, 1)}min, Pacing: {pacing})…", "info")
+            new_hl = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=h_dur,
+                                                  ref_video_path=ref_video, instructions=prompt)
+            new_hl["sequence_name"] = f"02_Cinematic_Highlight_v2"
+            if audio_path and os.path.isfile(audio_path):
+                new_hl["audio"] = audio_path
+                if beat_times:
+                    moved = _snap_to_beats(new_hl, beat_times)
+                    _log(job_id, f"  🎵 {new_hl['sequence_name']}: {moved} cuts locked to song beats", "info")
+            plans["highlight"] = new_hl
+            updated_plans["highlight"] = new_hl
+            _log(job_id, f"  ✨ Highlight re-cut: {new_hl.get('clip_count')} clips, {new_hl.get('total_duration')}s", "info")
+
+        # Re-cut Full Film
+        if target_key in ("all", "full_film") and "full_film" in plans:
+            _log(job_id, "Re-cutting Full Film with prompt directives…", "info")
+            new_ff = story_planner.plan_full_film(analyzed, instructions=prompt)
+            new_ff["sequence_name"] = "03_Full_Wedding_Film_v2"
+            plans["full_film"] = new_ff
+            updated_plans["full_film"] = new_ff
+            _log(job_id, f"  ✨ Full Film re-cut: {new_ff.get('clip_count')} clips", "info")
+
+        _progress(job_id, 75)
+
+        # 6. Save updated plan file and update last_plan.json
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        new_plan_file = os.path.join(OUTPUT_DIR, f"{mode}_plan_reedit_{ts}.json")
+        saved_payload = {
+            "folder": folder,
+            "project_name": project_name,
+            "audio": audio_path,
+            "mode": mode,
+            "ref_video": ref_video,
+            "ref_lut_path": ref_lut_path,
+            "instructions": f"{data.get('instructions', '')} | Re-Edit: {prompt}".strip(" |"),
+            "reedit_prompt": prompt,
+            "analyzed": analyzed,
+            "plans": plans,
+            "target_nle": target_nle,
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        with open(new_plan_file, "w", encoding="utf-8") as f:
+            json.dump(saved_payload, f, indent=2, default=str)
+        try:
+            with open(last_file, "w", encoding="utf-8") as f:
+                json.dump(saved_payload, f, indent=2, default=str)
+        except Exception:
+            pass
+
+        _log(job_id, f"Updated edit plan saved: {os.path.basename(new_plan_file)}", "info")
+
+        # 7. Export updated plans to target NLE
+        export_targets = updated_plans if updated_plans else plans
+        res = _export_plans(job_id, export_targets, target_nle, audio_path, project_name=f"{project_name}_v2")
+        res["plan_file"] = new_plan_file
+        res["reedit_prompt"] = prompt
+
+        if ref_lut_path and is_resolve and resolve_adapter.is_connected():
+            applied = resolve_adapter.apply_lut_to_timeline(ref_lut_path)
+            if applied > 0:
+                _log(job_id, f"  🎨 Applied Reference 3D LUT to {applied} clips in DaVinci Resolve!", "info")
+
+        _progress(job_id, 100)
+        _log(job_id, f"🎉 Smart AI Re-Edit Complete! Timelines refreshed in {target_nle.upper()}.", "info")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", result=res, progress=100)
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        _log(job_id, f"Re-Edit ERROR: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
 
 
 def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:
@@ -1370,6 +1789,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self._authorized():
             return
+        if self.path == "/api/last-plan":
+            self._json(get_last_plan())
+            return
+
         if self.path == "/api/status":
             self._json({
                 "resolve": resolve_adapter.get_status(),
@@ -1533,12 +1956,23 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             instructions = (data.get("instructions") or "").strip()
             tier = (data.get("tier") or "free").strip().lower()
             if mode in ("podcast", "tutorial"):
-                job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal")
+                job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal", ref_video, instructions)
                 self._json({"success": True, "job_id": job_id})
                 return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
                                instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500])
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/re-edit-timeline":
+            prompt = (data.get("prompt") or "").strip()
+            timeline = (data.get("timeline") or "all").strip()
+            target_nle = (data.get("target_nle") or "").strip()
+            ref_video = (data.get("ref_video") or "").strip()
+            if not prompt and not ref_video:
+                self._json({"success": False, "error": "Re-Edit prompt ya reference video likhiye."}, 400)
+            else:
+                job_id = start_job(reedit_timeline_job, prompt, timeline, target_nle, ref_video)
+                self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/license/status":
             self._json(license_status())

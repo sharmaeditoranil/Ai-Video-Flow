@@ -516,6 +516,17 @@ def send_to_resolve(plan_path: Optional[str] = None) -> Dict[str, Any]:
             total_placed += placed
             created_timelines.append(name)
 
+            # Add Smart AI Director & Scene Markers to Resolve timeline
+            try:
+                if p.get("director_note"):
+                    resolve_adapter.add_timeline_marker(0, "Yellow", "Claude AI Director", p["director_note"][:100])
+                for c in p.get("clips", []):
+                    if c.get("text_hook") or c.get("role"):
+                        f = int(float(c.get("timeline_start", 0)) * 25.0)
+                        resolve_adapter.add_timeline_marker(f, "Cyan", c.get("role", "Hook")[:30], c.get("text_hook", "")[:80])
+            except Exception:
+                pass
+
             # Import audio if exists
             audio_file = data.get("audio")
             if audio_file and os.path.isfile(audio_file):
@@ -1050,14 +1061,15 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             _log(job_id, f"Found {len(videos)} video clip(s) and {len(images)} graphic/PSD asset(s) ({scan['total_gb']} GB).")
 
         ai_creative_plan = None
-        if tier == "smart" and (is_motion_graphics or instructions):
+        if is_premium:
             try:
-                _log(job_id, f"🧠 Claude AI Creative Director: Designing motion graphics & editing plan for \"{instructions or 'High Impact Motion Graphics'}\"...", "info")
+                _log(job_id, f"🧠 Claude AI Creative Director: Designing intelligent editing plan & motion storyboard for \"{instructions or 'Smart Cinematic Edit'}\"...", "info")
                 assets_summary = [{"file_name": os.path.basename(vp), "type": "psd" if vp.endswith((".psd", ".psb")) else "image" if vp.endswith((".png", ".jpg", ".jpeg", ".webp")) else "video"} for vp in raw_clips]
                 ai_creative_plan = cloud_ai_client.generate_creative_plan(assets_summary, instructions, ref_video, mode)
-                _log(job_id, f"💡 Claude AI Creative Blueprint: {ai_creative_plan.get('title')} ({ai_creative_plan.get('creative_style')})", "info")
-                if ai_creative_plan.get("director_note"):
-                    _log(job_id, f"📝 Claude AI Director Advice: {ai_creative_plan.get('director_note')}", "info")
+                if ai_creative_plan:
+                    _log(job_id, f"💡 Claude AI Blueprint: {ai_creative_plan.get('title')} ({ai_creative_plan.get('creative_style')})", "info")
+                    if ai_creative_plan.get("director_note"):
+                        _log(job_id, f"📝 Claude AI Director Advice: {ai_creative_plan.get('director_note')}", "info")
             except Exception as e:
                 _log(job_id, f"Claude AI Creative Plan note: {e}", "warning")
 
@@ -1189,18 +1201,21 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             _log(job_id, f"Music file not found, continuing without beat-sync: {audio_path}", "warning")
         _progress(job_id, 75)
 
+        is_square = p_directives.get("is_square") or p_directives.get("aspect_ratio") == "1:1 (1080x1080)"
+        target_aspect = "1:1 (1080x1080)" if is_square else "9:16 (1080x1920)"
+
         # 3. Story plans tailored by workflow mode
         plans = {}
         if mode == "reels":
             if "teaser" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=True, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
-                p["sequence_name"] = "01_Instagram_Reel_9x16"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
+                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
+                p["sequence_name"] = f"01_Ad_{'Square_1x1' if is_square else 'Reel_9x16'}"
+                p["aspect_ratio"] = target_aspect
                 plans["teaser"] = p
             if "highlight" in formats:
-                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=True, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
-                p["sequence_name"] = "02_Shorts_Teaser_30s"
-                p["aspect_ratio"] = "9:16 (1080x1920)"
+                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
+                p["sequence_name"] = f"02_Ad_{'Square_30s_1x1' if is_square else 'Shorts_30s'}"
+                p["aspect_ratio"] = target_aspect
                 plans["highlight"] = p
         elif mode == "youtube":
             if "teaser" in formats or "highlight" in formats:
@@ -1237,6 +1252,52 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                                  "all footage kept and lined up in time. 04_Multicam_Auto_Edit switches between them.", "info")
                 else:
                     plans["full_film"] = story_planner.plan_full_film(analyzed, instructions=instructions)
+
+        # 3.2. Apply Smart AI Creative Director Storyboard if generated
+        if ai_creative_plan and ai_creative_plan.get("storyboard"):
+            sb = ai_creative_plan["storyboard"]
+            _log(job_id, f"🎬 Applying Claude AI Director Storyboard: {len(sb)} scenes organized with viral hooks & roles...", "info")
+            for plan_key in ("teaser", "highlight"):
+                if plan_key not in plans or not plans[plan_key].get("clips"):
+                    continue
+                p = plans[plan_key]
+                ordered_clips = []
+                for scene in sb:
+                    idx = scene.get("asset_index", 0)
+                    if 0 <= idx < len(analyzed):
+                        orig = analyzed[idx]
+                        clip_copy = dict(orig)
+                        role = scene.get("scene_role", "Scene")
+                        hook = scene.get("text_hook", "")
+                        effect = scene.get("motion_effect", "Ken Burns Pan-Zoom")
+                        clip_copy["role"] = role
+                        clip_copy["text_hook"] = hook
+                        clip_copy["motion_effect"] = effect
+                        clip_copy["speed_label"] = f"AI Director: {role} ({effect})"
+                        clip_copy["clip_name"] = f"[{role.upper()}] {os.path.basename(orig['file_path'])}"
+                        dur = float(scene.get("duration_seconds") or 3.0)
+                        clip_copy["duration"] = dur
+                        clip_copy["trimmed_duration"] = dur
+                        clip_copy["out_seconds"] = dur
+                        clip_copy["out_frame"] = int(dur * float(orig.get("native_fps") or 25.0))
+                        ordered_clips.append(clip_copy)
+                if ordered_clips:
+                    t = 0.0
+                    for c in ordered_clips:
+                        c["timeline_start"] = round(t, 3)
+                        t += c["duration"]
+                        c["timeline_end"] = round(t, 3)
+                    p["clips"] = ordered_clips
+                    p["clip_count"] = len(ordered_clips)
+                    p["total_duration"] = round(t, 3)
+                    title_slug = "".join(c if c.isalnum() else "_" for c in (ai_creative_plan.get("title") or "Creative_Ad"))
+                    p["sequence_name"] = f"01_SmartAI_{title_slug[:30]}"
+                    p["creative_style"] = ai_creative_plan.get("creative_style")
+                    p["director_note"] = ai_creative_plan.get("director_note")
+                    if is_square:
+                        p["aspect_ratio"] = "1:1 (1080x1080)"
+                    _log(job_id, f"  ★ Smart AI Timeline ready: {p['sequence_name']} ({len(ordered_clips)} scenes, {p['total_duration']}s, {p.get('aspect_ratio', '16:9')})", "info")
+                    break
 
         if audio_synced_plan:
             plans["audio_synced"] = audio_synced_plan
@@ -1623,8 +1684,23 @@ def reedit_timeline_job(job_id: str, prompt: str, target_timeline: str = "all", 
 
 
 def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:
+    file_path = clip.get("file_path", "")
+    ext = os.path.splitext(file_path)[1].lower()
+    if clip.get("is_still") or clip.get("is_psd") or ext in (".psd", ".psb", ".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        try:
+            from PIL import Image
+            with Image.open(file_path) as img:
+                img = img.convert("RGB")
+                w, h = img.size
+                new_h = max(1, int(h * 384 / w))
+                img = img.resize((384, new_h), Image.Resampling.LANCZOS)
+                path = os.path.join(out_dir, f"shot_{idx:03d}.jpg")
+                img.save(path, "JPEG", quality=80)
+                return path
+        except Exception:
+            return None
     import cv2
-    cap = cv2.VideoCapture(clip["file_path"])
+    cap = cv2.VideoCapture(file_path)
     try:
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         t = (float(clip.get("in_seconds", 0)) + float(clip.get("out_seconds", clip.get("duration", 0)))) / 2

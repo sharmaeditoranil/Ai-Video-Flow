@@ -210,6 +210,17 @@
                     <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot, understands your custom prompt in Hindi/Hinglish/English, and crafts the edit. Uses 1 wedding credit.</span></span>
                 </label>
 
+                <div id="smart-ai-locked-banner" class="smart-ai-locked-banner" hidden>
+                  <div class="locked-banner-content">
+                    <span class="crown-icon-sm">👑</span>
+                    <div class="locked-banner-text">
+                      <b>Smart AI Cloud Director is a Premium Feature</b>
+                      <span>Requires an active Smart AI Pack for Claude AI visual analysis &amp; PSD/reference ads. Free Local AI is active for your daily timeline cuts.</span>
+                    </div>
+                  </div>
+                  <button type="button" class="btn-pill-gold" id="btn-inline-upgrade">⚡ Upgrade / Plans</button>
+                </div>
+
                 <label class="lbl" for="in-notes" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
                   <span>Custom Editing Prompt / प्रॉम्प्ट</span>
                   <span class="opt">Hindi · Hinglish · English</span>
@@ -479,6 +490,68 @@
         </section>
       </div>
     </main>
+  </div>
+
+  <!-- SMART AI UPGRADE MODAL -->
+  <div id="smart-ai-modal" class="smart-ai-modal-overlay" hidden>
+    <div class="smart-ai-modal-card">
+      <div class="smart-ai-modal-header">
+        <div class="smart-ai-modal-title">
+          <span class="crown-icon-lg">👑</span>
+          <div>
+            <h3>Smart AI (Cloud AI) · Premium Feature</h3>
+            <p class="modal-sub">Powered by Claude 3.5 Sonnet &amp; Creative Director Engine</p>
+          </div>
+        </div>
+        <button type="button" class="btn-close-modal" id="btn-close-smart-ai-modal" title="Close">&times;</button>
+      </div>
+      <div class="smart-ai-modal-body">
+        <p class="smart-ai-modal-desc">
+          Smart AI Cloud mode me har candidate shot ko analyze karta hai, YouTube/Reference video style follow karta hai, PSD/PNG motion graphics ads create karta hai, aur Hindi/Hinglish custom prompt ke mutabiq timeline arrange karta hai.
+        </p>
+        <div class="smart-ai-features-grid">
+          <div class="smart-feature-pill">
+            <span class="icon">🎬</span>
+            <div>
+              <b>Ads &amp; Motion Graphics</b>
+              <small>PSD/PNG layers + music se beat-matched viral ads</small>
+            </div>
+          </div>
+          <div class="smart-feature-pill">
+            <span class="icon">🔗</span>
+            <div>
+              <b>Reference Video Styling</b>
+              <small>YouTube/Reels pacing, typography &amp; visual hook match</small>
+            </div>
+          </div>
+          <div class="smart-feature-pill">
+            <span class="icon">🎯</span>
+            <div>
+              <b>Story &amp; Hook Director</b>
+              <small>Emotional scoring, hero moments &amp; beat snapping</small>
+            </div>
+          </div>
+          <div class="smart-feature-pill">
+            <span class="icon">🗣️</span>
+            <div>
+              <b>Hindi / Hinglish Prompts</b>
+              <small>Natural language me pure video ka creative control</small>
+            </div>
+          </div>
+        </div>
+        <div class="smart-ai-callout-note">
+          <span>💡 <b>Note:</b> Agar Smart AI OFF rahega toh inbuilt <b>Local AI Engine</b> chalega jo 100% Free hai aur koi API charge nahi lagta.</span>
+        </div>
+        <div class="smart-ai-modal-actions">
+          <button type="button" class="btn-gold-action" id="btn-modal-upgrade">
+            ⚡ View Plans &amp; Upgrade (from ₹999)
+          </button>
+          <button type="button" class="btn-subtle-action" id="btn-modal-free">
+            Continue with Free Local AI
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

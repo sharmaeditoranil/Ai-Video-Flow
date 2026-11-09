@@ -205,8 +205,14 @@
 
     $("chat-lock").hidden = !!l.has_credits;
     const review = $("chk-ai-review");
-    review.disabled = !l.has_credits;
-    if (!l.has_credits) review.checked = false;
+    review.disabled = false;
+    const banner = $("smart-ai-locked-banner");
+    if (!l.has_credits) {
+      review.checked = false;
+      if (banner) banner.hidden = false;
+    } else {
+      if (banner) banner.hidden = true;
+    }
     ["chk-ai-music", "chk-ai-voice"].forEach((id) => { $(id).disabled = !l.has_credits; if (!l.has_credits) $(id).checked = false; });
     syncAiAudio();
     const from = l.price_from || { local: 399, ai: 999 };
@@ -910,7 +916,63 @@
     $("ai-audio").hidden = !$("chk-ai-review").checked;
     $("in-voice").hidden = !$("chk-ai-voice").checked;
   }
-  ["chk-ai-review", "chk-ai-voice"].forEach((id) => $(id).addEventListener("change", syncAiAudio));
+  $("chk-ai-voice").addEventListener("change", syncAiAudio);
+
+  // Smart AI Premium Modal & Upsell handling
+  function showSmartAiModal() {
+    const modal = $("smart-ai-modal");
+    if (modal) modal.hidden = false;
+  }
+  function hideSmartAiModal() {
+    const modal = $("smart-ai-modal");
+    if (modal) modal.hidden = true;
+  }
+
+  const reviewEl = $("chk-ai-review");
+  reviewEl.addEventListener("click", (e) => {
+    if (!license || !license.has_credits) {
+      e.preventDefault();
+      reviewEl.checked = false;
+      showSmartAiModal();
+      syncAiAudio();
+    }
+  });
+  reviewEl.addEventListener("change", (e) => {
+    if (reviewEl.checked && (!license || !license.has_credits)) {
+      e.preventDefault();
+      reviewEl.checked = false;
+      showSmartAiModal();
+    }
+    syncAiAudio();
+  });
+
+  const btnCloseModal = $("btn-close-smart-ai-modal");
+  if (btnCloseModal) btnCloseModal.addEventListener("click", hideSmartAiModal);
+
+  const btnModalFree = $("btn-modal-free");
+  if (btnModalFree) btnModalFree.addEventListener("click", hideSmartAiModal);
+
+  const btnModalUpgrade = $("btn-modal-upgrade");
+  if (btnModalUpgrade) {
+    btnModalUpgrade.addEventListener("click", () => {
+      hideSmartAiModal();
+      go("pricing");
+    });
+  }
+
+  const btnInlineUpgrade = $("btn-inline-upgrade");
+  if (btnInlineUpgrade) {
+    btnInlineUpgrade.addEventListener("click", () => {
+      go("pricing");
+    });
+  }
+
+  const modalOverlay = $("smart-ai-modal");
+  if (modalOverlay) {
+    modalOverlay.addEventListener("click", (e) => {
+      if (e.target === modalOverlay) hideSmartAiModal();
+    });
+  }
 
   // "New version available" banner (version set in the admin portal, else the latest GitHub release)
   async function checkUpdate() {

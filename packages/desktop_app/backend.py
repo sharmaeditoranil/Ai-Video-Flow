@@ -1049,6 +1049,18 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         else:
             _log(job_id, f"Found {len(videos)} video clip(s) and {len(images)} graphic/PSD asset(s) ({scan['total_gb']} GB).")
 
+        ai_creative_plan = None
+        if tier == "smart" and (is_motion_graphics or instructions):
+            try:
+                _log(job_id, f"🧠 Claude AI Creative Director: Designing motion graphics & editing plan for \"{instructions or 'High Impact Motion Graphics'}\"...", "info")
+                assets_summary = [{"file_name": os.path.basename(vp), "type": "psd" if vp.endswith((".psd", ".psb")) else "image" if vp.endswith((".png", ".jpg", ".jpeg", ".webp")) else "video"} for vp in raw_clips]
+                ai_creative_plan = cloud_ai_client.generate_creative_plan(assets_summary, instructions, ref_video, mode)
+                _log(job_id, f"💡 Claude AI Creative Blueprint: {ai_creative_plan.get('title')} ({ai_creative_plan.get('creative_style')})", "info")
+                if ai_creative_plan.get("director_note"):
+                    _log(job_id, f"📝 Claude AI Director Advice: {ai_creative_plan.get('director_note')}", "info")
+            except Exception as e:
+                _log(job_id, f"Claude AI Creative Plan note: {e}", "warning")
+
         # 1. Analyse every clip
         analyzed = []
         for i, vp in enumerate(raw_clips, 1):

@@ -23,12 +23,14 @@ MODEL = "claude-opus-5-5"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 ASSISTANT_SYSTEM = (
-    "You are Smart AI, the editing assistant inside AI Video Flow, a desktop app for wedding and event video editors. "
-    "You control DaVinci Resolve, Adobe Premiere Pro and Grass Valley EDIUS on the user's computer through the "
-    "provided tools, and can analyse footage, music and reference images. Users write in Hindi, Hinglish or "
-    "English - reply in the same language and style, briefly and practically. Use tools to actually do what is "
-    "asked instead of describing steps. If a tool reports that an editor is not running or a file is missing, "
-    "tell the user exactly what to open or select. Ask before deleting or overwriting anything."
+    "You are Smart AI, the world-class Creative Director, Video Editor and Motion Graphics Producer inside AI Video Flow. "
+    "You control DaVinci Resolve, Adobe Premiere Pro, Grass Valley EDIUS, and the HyperFrames Motion Graphics engine "
+    "on the user's computer through tools. You craft high-impact Commercial Video Ads, Viral Reels/Shorts, Motion Graphics "
+    "from PSD layers and PNG images, beat-synced music videos, and cinematic wedding films. "
+    "When users give creative prompts or reference videos (YouTube links, reference MP4s), extract their rhythm, color look, "
+    "and kinetic motion design to deliver matching professional edits. "
+    "Users write in Hindi, Hinglish or English - reply in the exact same language and tone with clear, enthusiastic, practical "
+    "guidance. Perform actions directly using your tools whenever requested. Ask before deleting or overwriting anything."
 )
 
 REVIEW_SCHEMA = {
@@ -51,6 +53,34 @@ REVIEW_SCHEMA = {
         "story_note": {"type": "string"},
     },
     "required": ["shots", "story_note"],
+    "additionalProperties": False,
+}
+
+CREATIVE_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "creative_style": {"type": "string"},
+        "pacing_bpm": {"type": "integer"},
+        "storyboard": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "asset_index": {"type": "integer"},
+                    "scene_role": {"type": "string"},
+                    "duration_seconds": {"type": "number"},
+                    "motion_effect": {"type": "string"},
+                    "text_hook": {"type": "string"},
+                    "beat_drop": {"type": "boolean"},
+                },
+                "required": ["asset_index", "scene_role", "duration_seconds", "motion_effect", "text_hook", "beat_drop"],
+                "additionalProperties": False,
+            },
+        },
+        "director_note": {"type": "string"},
+    },
+    "required": ["title", "creative_style", "pacing_bpm", "storyboard", "director_note"],
     "additionalProperties": False,
 }
 
@@ -177,6 +207,42 @@ class CloudAIClient:
         except json.JSONDecodeError:
             raise CloudAIError("The AI returned an unreadable audio brief.")
         return {"music_prompt": data.get("music_prompt", ""), "voiceover_script": data.get("voiceover_script", "")}
+
+    # ------------------------------------------------------------------
+    # AI Creative Plan: Commercial Motion Graphics Ads & Stylized Reels
+    # ------------------------------------------------------------------
+    def generate_creative_plan(
+        self,
+        assets_summary: List[Dict[str, Any]],
+        user_prompt: str,
+        ref_video_or_link: str = "",
+        mode: str = "reels"
+    ) -> Dict[str, Any]:
+        """
+        Uses Claude AI to plan a high-impact Motion Graphics Ad / Commercial Video
+        tailored to the user's prompt, PSD layers, PNG graphics, and reference video style.
+        """
+        prompt_content = (
+            f"You are the Lead Creative Director and Motion Graphics Producer. The user wants to create a {mode} video/ad.\n"
+            f"User Creative Prompt: \"{user_prompt or 'Create an energetic, high-converting motion graphics video'}\"\n"
+            + (f"Reference Video / Style Link: {ref_video_or_link}\n" if ref_video_or_link else "")
+            + f"Available Media Assets ({len(assets_summary)} items):\n"
+            + "\n".join(f"[{i}] {a.get('file_name', 'Asset')} (Type: {a.get('type', 'clip')})" for i, a in enumerate(assets_summary[:30]))
+            + "\n\nPlan the complete storyboard cut-by-cut with kinetic motion effects (Ken Burns zoom-in/out, whip pan, pop-in, beat cut), "
+            "catchy text overlays / hooks in Hindi/English, and perfect rhythm."
+        )
+        response = self._create(
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt_content}],
+            output_config={"format": {"type": "json_schema", "schema": CREATIVE_PLAN_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to generate the creative plan.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable creative plan.")
 
     # ------------------------------------------------------------------
     # AI assistant (tool use against the local editing tools)

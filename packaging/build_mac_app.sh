@@ -39,6 +39,7 @@ rm -rf "$DMG_STAGE" && mkdir -p "$DMG_STAGE"
 cp -R "$APP" "$DMG_STAGE/"
 ln -s /Applications "$DMG_STAGE/Applications"
 cp packaging/INSTALL_GUIDE.txt "$DMG_STAGE/Install Guide.txt"
+mkdir -p dist
 OUT="dist/AI-Video-Flow-Mac-$ARCH.dmg"
 rm -f "$OUT"
 hdiutil create -volname "AI Video Flow" -srcfolder "$DMG_STAGE" -ov -format UDZO "$OUT" >/dev/null

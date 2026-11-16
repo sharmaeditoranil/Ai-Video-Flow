@@ -15,6 +15,10 @@ logger = logging.getLogger("ai_video_flow.link_downloader")
 
 MAX_BYTES = 400 * 1024 * 1024
 _URL = re.compile(r"^https?://\S+$", re.I)
+# Picture-only stream the Android decoder and muxer both handle (H.264 in MP4), plain HTTPS download first
+_VIDEO_ONLY = ("bv*[height<=1080][vcodec^=avc1][ext=mp4][protocol^=http]"
+               "/bv*[height<=1080][vcodec^=avc1][ext=mp4]")
+_AUDIO_ONLY = "ba[ext=m4a][protocol^=http]/ba[ext=m4a]/ba[acodec^=mp4a]"
 
 
 class LinkError(RuntimeError):
@@ -31,6 +35,34 @@ def _ffmpeg() -> Optional[str]:
         return ffmpeg_path()
     except Exception:
         return None
+
+
+def _add_sound(url: str, video_path: str, opts: dict, log: Callable[[str, str], None]) -> str:
+    """The link gave a picture-only file: fetches its sound and joins the two on the phone.
+    The reference's cuts, pace and colour need only the picture, so any failure here keeps the silent file."""
+    try:
+        from packages.ai_engine import android_media
+        if not android_media.ON_ANDROID:
+            return video_path
+        import yt_dlp
+        base = os.path.splitext(video_path)[0]
+        audio_opts = dict(opts, format=_AUDIO_ONLY, outtmpl=base + "_sound.%(ext)s")
+        with yt_dlp.YoutubeDL(audio_opts) as ydl:
+            ainfo = ydl.extract_info(url, download=True)
+            audio_path = ydl.prepare_filename(ainfo)
+        joined = base + "_full.mp4"
+        if os.path.isfile(audio_path) and android_media.mux_audio(video_path, audio_path, joined) \
+                and os.path.isfile(joined) and os.path.getsize(joined) >= 10_000:
+            for p in (video_path, audio_path):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return joined
+    except Exception as e:
+        logger.warning(f"Reference sound could not be added: {e!r}")
+    log("  The reference's sound could not be fetched; its cuts and colour are still used.", "warning")
+    return video_path
 
 
 def download_reference(url: str, out_dir: str, log_fn: Optional[Callable[[str, str], None]] = None) -> str:
@@ -68,7 +100,9 @@ def download_reference(url: str, out_dir: str, log_fn: Optional[Callable[[str, s
         "outtmpl": os.path.join(out_dir, "ref_%(extractor)s_%(id)s.%(ext)s"),
         # One file with sound up to 1080p; with FFmpeg (desktop) separate video + audio streams can be joined
         # ("b" is a single file that already has picture and sound; direct links carry no codec details)
-        "format": ("bv*[height<=1080]+ba/b[height<=1080]/b" if ffmpeg else "b[height<=1080]/b"),
+        # Without FFmpeg (the phone) YouTube and many Instagram reels only offer separate streams: take the H.264
+        # picture on its own, then fetch the sound below and join the two with Android's own muxer
+        "format": ("bv*[height<=1080]+ba/b[height<=1080]/b" if ffmpeg else f"b[height<=1080]/{_VIDEO_ONLY}/b"),
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
@@ -99,6 +133,8 @@ def download_reference(url: str, out_dir: str, log_fn: Optional[Callable[[str, s
         raise LinkError("Could not get a video from this link. Download the video and choose the file instead.")
     if not os.path.isfile(path) or os.path.getsize(path) < 10_000:
         raise LinkError("The link did not give a playable video. Download the video and choose the file instead.")
+    if not ffmpeg and info.get("acodec") == "none":
+        path = _add_sound(url, path, opts, log)
     title = (info.get("title") or os.path.basename(path))[:60]
     log(f"  ✓ Reference ready: {title}", "info")
     return path

@@ -70,15 +70,6 @@
     e.preventDefault();
     openUrl(a.getAttribute("href"));
   }));
-  // Paid license: the same key unlocks the phone app (1 computer + 1 phone per license)
-  $("btn-copy-key").addEventListener("click", async () => {
-    const key = $("lic-key").value.trim();
-    try { await navigator.clipboard.writeText(key); $("btn-copy-key").textContent = "Copied ✓"; }
-    catch (e) { prompt("Copy your license key:", key); }
-    setTimeout(() => { $("btn-copy-key").textContent = "Copy key"; }, 2000);
-  });
-  $("btn-get-phone-app").addEventListener("click", () => openUrl("https://license.aivideoflow.in/download/android"));
-
   async function openUrl(url) {
     try { if ((await api("/api/open-url", { url })).success) return; } catch (e) { /* fall through */ }
     window.open(url, "_blank");
@@ -106,12 +97,59 @@
           const job = await api(`/api/job/${jobId}`);
           (job.logs || []).slice(shown).forEach((l) => onLog(l));
           shown = (job.logs || []).length;
-          if (onProgress) onProgress(job.progress || 0);
+          const lastMsg = (job.logs && job.logs.length) ? job.logs[job.logs.length - 1].msg : "";
+          if (onProgress) onProgress(job.progress || 0, lastMsg);
           if (job.status !== "running") return resolve(job);
         } catch (e) { /* retry */ }
         setTimeout(tick, 700);
       };
       tick();
+    });
+  }
+
+  function updateLiveProgress(percent, msg) {
+    const prog = $("progress");
+    if (!prog) return;
+    const bar = prog.querySelector(".bar");
+    const percentEl = $("prog-percent");
+    const statusEl = $("prog-status");
+    const p = Math.max(0, Math.min(100, Math.round(percent)));
+    if (bar) bar.style.width = `${p}%`;
+    if (percentEl) percentEl.textContent = `${p}%`;
+    if (statusEl && msg) {
+      statusEl.textContent = msg;
+    }
+    const steps = [
+      { id: "pstep-scan", min: 1, max: 25 },
+      { id: "pstep-audio", min: 26, max: 55 },
+      { id: "pstep-ai", min: 56, max: 80 },
+      { id: "pstep-nle", min: 81, max: 100 },
+    ];
+    steps.forEach((s) => {
+      const el = $(s.id);
+      if (!el) return;
+      if (p >= s.max || p === 100) {
+        el.className = "prog-step-item done";
+      } else if (p >= s.min) {
+        el.className = "prog-step-item active";
+      } else {
+        el.className = "prog-step-item";
+      }
+    });
+  }
+
+  function resetLiveProgress() {
+    const prog = $("progress");
+    if (!prog) return;
+    const bar = prog.querySelector(".bar");
+    const percentEl = $("prog-percent");
+    const statusEl = $("prog-status");
+    if (bar) bar.style.width = "0%";
+    if (percentEl) percentEl.textContent = "0%";
+    if (statusEl) statusEl.textContent = "Initializing AI Engine…";
+    ["pstep-scan", "pstep-audio", "pstep-ai", "pstep-nle"].forEach((id) => {
+      const el = $(id);
+      if (el) el.className = "prog-step-item";
     });
   }
 
@@ -191,38 +229,23 @@
 
   function renderLicense(l) {
     license = l;
-    const name = l.client_name ? l.client_name : "Guest";
+    const name = l.is_premium && l.client_name ? l.client_name : "Guest";
     const initial = (name.trim()[0] || "?").toUpperCase();
     $("chip-name").textContent = name;
     $("plan-chip").textContent = "My Profile";
     const creditsText = !l.is_premium ? "" : (l.plan_type === "local" ? "Unlimited editing" : (l.unlimited ? "Unlimited Smart AI" : `${l.credits_remaining} Smart AI weddings left`));
-    $("chip-credits").textContent = l.is_premium ? creditsText : (l.free_left_today === 0 ? "Free · used for today" : `Free · ${l.free_limit ?? 2} per day`);
+    $("chip-credits").textContent = l.is_premium ? creditsText : (l.free_left_today === 0 ? "Free · used for today" : `Free · ${l.free_limit ?? 1} per day`);
     $("chip-avatar").textContent = initial;
     document.querySelector(".side-profile").classList.toggle("premium", !!l.is_premium);
     $("pf-avatar").textContent = initial;
     $("pf-name").textContent = name;
-    $("pf-email").textContent = l.client_email
-      ? `${l.client_email}${l.client_phone ? ` · WhatsApp: ${l.client_phone}` : ""}`
-      : "Register your profile below to use Free Trial (2 Edits / Day)";
-    $("pf-plan").textContent = l.is_premium ? l.plan_name : "Free Edition (2/day)";
+    $("pf-email").textContent = l.is_premium ? (l.client_email || "—") : "Activate a license to see your account";
+    $("pf-plan").textContent = l.is_premium ? l.plan_name : "Free Edition";
     $("pf-plan").classList.toggle("premium", !!l.is_premium);
     $("lic-credits").textContent = !l.ai_enabled ? "—" : (l.unlimited ? "Unlimited" : String(l.credits_remaining));
     $("lic-expiry").textContent = l.is_premium ? fmtDate(l.expires_at) : "—";
     $("lic-machine").textContent = l.machine_id || "…";
     if (l.license_key && !$("lic-key").value) $("lic-key").value = l.license_key;
-    $("phone-license").hidden = !(l.is_premium && l.license_key);
-    const prof = l.user_profile || {};
-    if ($("prof-name") && !$("prof-name").value && (prof.name || l.client_name)) $("prof-name").value = prof.name || l.client_name || "";
-    if ($("prof-phone") && !$("prof-phone").value && (prof.phone || l.client_phone)) $("prof-phone").value = prof.phone || l.client_phone || "";
-    if ($("prof-email") && !$("prof-email").value && (prof.email || l.client_email)) $("prof-email").value = prof.email || l.client_email || "";
-    if ($("prof-studio") && !$("prof-studio").value && (prof.studio || l.client_studio)) $("prof-studio").value = prof.studio || l.client_studio || "";
-    if ($("prof-reg-badge")) {
-      $("prof-reg-badge").textContent = l.registered ? "✓ Registered · 2 Edits / Day Active" : "Required for Free Trial";
-      $("prof-reg-badge").className = "badge " + (l.registered ? "ok" : "");
-    }
-    if ($("desktop-reg-modal")) {
-      $("desktop-reg-modal").hidden = !!(l.is_premium || l.registered);
-    }
     const err = $("lic-error");
     err.hidden = !l.error;
     err.textContent = l.error || "";
@@ -231,17 +254,12 @@
     const review = $("chk-ai-review");
     review.disabled = false;
     const banner = $("smart-ai-locked-banner");
-    if (!l.has_credits) {
-      review.checked = false;
-      if (banner) banner.hidden = false;
-    } else {
-      if (banner) banner.hidden = true;
-    }
+    if (banner) banner.hidden = !review.checked || l.has_credits;
     ["chk-ai-music", "chk-ai-voice"].forEach((id) => { $(id).disabled = !l.has_credits; if (!l.has_credits) $(id).checked = false; });
     syncAiAudio();
     const from = l.price_from || { local: 399, ai: 999 };
     const inr = (n) => "₹" + Number(n).toLocaleString("en-IN");
-    const limit = l.free_limit ?? 2;
+    const limit = l.free_limit ?? 1;
     const limitText = limit ? `${limit} project${limit === 1 ? "" : "s"} per day` : "paused";
     document.querySelectorAll(".free-limit-text").forEach((el) => (el.textContent = limitText));
     document.querySelectorAll(".price-local").forEach((el) => (el.textContent = inr(from.local)));
@@ -259,106 +277,19 @@
       quota.innerHTML = "";
       const left = l.free_left_today;
       const txt = document.createElement("span");
-      txt.textContent = !l.registered
-        ? `Free plan · ${limitText} · register Name, WhatsApp & Email in My Profile to start.`
-        : l.free_offline ? `Free plan · ${limitText} · needs an internet connection to start a project.`
+      txt.textContent = l.free_offline ? `Free plan · ${limitText} · needs an internet connection to start a project.`
         : left == null || left > 0 ? `Free plan · ${limitText}` + (left == null ? "." : ` (${left} left today).`)
         : (limit ? "Today's free projects are used. They reset at midnight." : "The free plan is paused.");
       const go = document.createElement("button");
       go.className = "link";
-      go.dataset.goto = !l.registered ? "profile" : "pricing";
-      go.textContent = !l.registered ? "Register Free Profile →" : `Go unlimited from ${inr(from.local)}/month →`;
+      go.dataset.goto = "pricing";
+      go.textContent = `Go unlimited from ${inr(from.local)}/month →`;
       quota.append(txt, " ", go);
     }
   }
 
   async function fetchLicense() {
     try { renderLicense(await api("/api/license/status")); } catch (e) { /* ignore */ }
-  }
-
-  if ($("btn-save-profile")) {
-    $("btn-save-profile").addEventListener("click", async () => {
-      const name = $("prof-name").value.trim();
-      const phone = $("prof-phone").value.trim();
-      const email = $("prof-email").value.trim();
-      const studio = $("prof-studio").value.trim();
-      const errEl = $("prof-error");
-      const okEl = $("prof-ok");
-      errEl.hidden = true;
-      okEl.hidden = true;
-      $("btn-save-profile").disabled = true;
-      try {
-        const r = await api("/api/license/register-profile", { name, phone, email, studio });
-        if (r.success) {
-          okEl.textContent = r.message || "✓ Profile saved! Free Trial (2 Edits / Day) active.";
-          okEl.hidden = false;
-          await fetchLicense();
-        } else {
-          errEl.textContent = r.error || "Registration failed.";
-          errEl.hidden = false;
-        }
-      } catch (e) {
-        errEl.textContent = e.message;
-        errEl.hidden = false;
-      } finally {
-        $("btn-save-profile").disabled = false;
-      }
-    });
-  }
-
-  if ($("drm-form")) {
-    $("drm-form").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const name = $("drm-name").value.trim();
-      const phone = $("drm-phone").value.trim();
-      const email = $("drm-email").value.trim();
-      const studio = $("drm-studio").value.trim();
-      const errEl = $("drm-error");
-      const btn = $("drm-submit-btn");
-      errEl.hidden = true;
-      btn.disabled = true;
-      try {
-        const r = await api("/api/license/register-profile", { name, phone, email, studio });
-        if (r.success) {
-          $("desktop-reg-modal").hidden = true;
-          await fetchLicense();
-        } else {
-          errEl.textContent = r.error || "Registration failed.";
-          errEl.hidden = false;
-        }
-      } catch (err) {
-        errEl.textContent = err.message;
-        errEl.hidden = false;
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  }
-
-  if ($("drm-activate-btn")) {
-    $("drm-activate-btn").addEventListener("click", async () => {
-      const key = ($("drm-lic-key") ? $("drm-lic-key").value : "").trim();
-      const errEl = $("drm-error");
-      if (!key) {
-        errEl.textContent = "Paste your license key first.";
-        errEl.hidden = false;
-        return;
-      }
-      errEl.hidden = true;
-      $("drm-activate-btn").disabled = true;
-      try {
-        const r = await api("/api/license/activate", { license_key: key });
-        if (r.success) {
-          $("desktop-reg-modal").hidden = true;
-          await fetchLicense();
-        } else {
-          errEl.textContent = r.error || "Activation failed.";
-          errEl.hidden = false;
-        }
-      } finally {
-        $("drm-activate-btn").disabled = false;
-      }
-    });
   }
 
   $("btn-activate").addEventListener("click", async () => {
@@ -464,11 +395,7 @@
   // ------------------------------------------------------------------
   const OUTPUTS = {
     wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — real-time order · 2-3 cameras: one track per camera, synced"]],
-    reels: [
-      ["teaser", "01 Instagram Reel — 45 s, 9:16 (with B-Roll on V2)"],
-      ["highlight", "02 Shorts Teaser — 30 s, 9:16"],
-      ["render_mp4", "03 Ready-to-Post .MP4 Video (Depth Text + Hinglish Captions + B-Roll + LUT + 90° Rotate)"]
-    ],
+    reels: [["teaser", "Instagram Reel — 45 s, 9:16"], ["highlight", "Shorts Teaser — 30 s, 9:16"]],
     youtube: [["highlight", "Main edit — about 6 min"], ["full_film", "Shorts highlights — 60 s, 9:16"]],
     music_video: [["highlight", "Music video cut — about 3 min, on the beat"], ["full_film", "Mood montage — 60 s"]],
     podcast: [["clean", "01 Clean edit — silences and dead air removed"], ["shorts", "3 vertical shorts — the liveliest 45 s moments, 9:16"]],
@@ -500,29 +427,17 @@
     store.set("avf.mode", mode);
     document.querySelectorAll(".mode").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
     const long = LONG_MODES.includes(mode);
-    const isReels = (mode === "reels");
     document.querySelectorAll(".short-only").forEach((el) => el.hidden = long);
     document.querySelectorAll(".long-only").forEach((el) => el.hidden = !long);
-    document.querySelectorAll(".reels-only").forEach((el) => el.hidden = !isReels);
-    if ($("lbl-ref")) {
-      $("lbl-ref").innerHTML = isReels
-        ? 'Reference Reel to Clone (Edit Style · Cuts · Speed · Color · B-Roll · Text) <span class="opt">recommended · file or link</span>'
-        : 'Reference video for the colour look <span class="opt">optional · file or link</span>';
-    }
-    if ($("hint-ref")) {
-      $("hint-ref").textContent = isReels
-        ? "Clones Reference Reel cut rhythm, speed-ramps, 90° cinema rotation, 3D LUT (.cube) colour, B-Roll cutaways & depth captions."
-        : "A matching 3D LUT (.cube) is created in the output folder.";
-    }
     $("lbl-folder").textContent = long ? "Folder with the long recording(s)" : "Raw footage folder";
-    $("step2-title").textContent = long ? "Recording" : (isReels ? "Footage, Music & Reference Reel Clone" : "Footage & music");
+    $("step2-title").textContent = long ? "Recording" : "Footage & music";
     $("in-folder").placeholder = long ? "/Volumes/Drive/Podcast_Episode_12" : "/Volumes/Drive/Wedding_Rohit_Priya";
     if (!loadedFolder) $("folder-info").textContent = long
       ? "Put the full podcast / class recording here. Several files are joined in name order."
       : "Choose the folder with your raw clips (subfolders are included).";
     $("mode-hint").textContent = {
       wedding: "2-3 cameras are lined up by shoot time (timecode, camera clock, flashes) — one track per camera.",
-      reels: "Clones Reference Reel pacing, beat cuts, speed-ramps, B-Roll on V2, behind-person depth text & ready .MP4 export.",
+      reels: "Cuts follow the beat of your song.",
       youtube: "Cuts follow the beat of your song. 2-3 cameras are synced by their audio (03_YouTube_Multicam_Synced).",
       music_video: "Cuts follow the beat. Takes shot to playback are placed in the song by their audio (03_Music_Video_Synced_Takes).",
       podcast: "2-3 cameras are synced by their audio and cut at the same moments, one track per camera.",
@@ -610,32 +525,7 @@
     store.set("avf.ref", "");
   });
 
-  function openTrialEndedModal() {
-    if ($("trial-ended-modal")) {
-      $("trial-ended-modal").hidden = false;
-    }
-  }
-  if ($("dt-te-close")) $("dt-te-close").addEventListener("click", () => { $("trial-ended-modal").hidden = true; });
-  if ($("dt-te-later")) $("dt-te-later").addEventListener("click", () => { $("trial-ended-modal").hidden = true; });
-  if ($("dt-te-buy")) {
-    $("dt-te-buy").addEventListener("click", () => {
-      $("trial-ended-modal").hidden = true;
-      go("pricing");
-    });
-  }
-  if ($("dt-te-key")) {
-    $("dt-te-key").addEventListener("click", () => {
-      $("trial-ended-modal").hidden = true;
-      go("profile");
-      setTimeout(() => { if ($("lic-key")) $("lic-key").focus(); }, 120);
-    });
-  }
-
   $("btn-run").addEventListener("click", async () => {
-    if (!license.is_premium && license.free_left_today === 0) {
-      openTrialEndedModal();
-      return;
-    }
     if (!loadedFolder || loadedFolder !== $("in-folder").value.trim()) {
       if (!(await loadFolder())) return;
     }
@@ -648,11 +538,11 @@
 
     const btn = $("btn-run");
     const prog = $("progress");
-    const bar = prog.querySelector(".bar");
     btn.disabled = true;
-    btn.textContent = "Working…";
+    btn.innerHTML = `<span class="btn-icon">⚡</span><span class="btn-text">Working…</span>`;
     prog.classList.add("active");
-    bar.style.width = "0%";
+    resetLiveProgress();
+    updateLiveProgress(5, "Scanning media clips…");
     consoleBox.innerHTML = "";
     try {
       const started = await api("/api/run-wedding", {
@@ -662,83 +552,44 @@
         ai_music: $("chk-ai-review").checked && $("chk-ai-music").checked,
         voiceover: $("chk-ai-review").checked && $("chk-ai-voice").checked ? ($("in-voice").value.trim() || "auto") : "",
         cut_level: cutLevel,
-        reel_options: mode === "reels" ? {
-          reel_style: $("sel-reel-style") ? $("sel-reel-style").value : "auto_ref",
-          depth_text: $("in-depth-text") ? $("in-depth-text").value.trim() : "",
-          caption_text: $("in-reel-captions") ? $("in-reel-captions").value.trim() : "",
-          watermark_text: $("in-watermark") ? $("in-watermark").value.trim() : "",
-          enable_broll: $("chk-reel-broll") ? $("chk-reel-broll").checked : true,
-          use_ref_audio: $("chk-reel-ref-audio") ? $("chk-reel-ref-audio").checked : true,
-          render_mp4: formats.includes("render_mp4"),
-        } : undefined,
       });
       if (!started.success) {
         log(consoleBox, started.error, "warning");
-        if (started.needs_registration) {
-          alert(started.error + "\n\nMy Profile khul raha hai — wahan apna Name, WhatsApp Number aur Email bhar kar Save karein.");
-          go("profile");
-          setTimeout(() => { if ($("prof-name")) $("prof-name").focus(); }, 150);
-          return;
-        }
-        if (started.limit) {
-          await fetchLicense();
-          openTrialEndedModal();
-          return;
-        }
+        updateLiveProgress(0, "Stopped: " + started.error);
+        if (started.limit && confirm(started.error + "\n\nOpen the plans now?")) go("pricing");
         return;
       }
       const job_id = started.job_id;
-      const job = await pollJob(job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
-      if (job.status === "error") log(consoleBox, "Stopped: " + (job.error || "unknown error"), "error");
-      showAdEditor(job.result && job.result.motion_ad);
+      const job = await pollJob(
+        job_id,
+        (l) => log(consoleBox, l.msg, l.level, l.t),
+        (p, msg) => updateLiveProgress(p, msg)
+      );
+      if (job.status === "error") {
+        log(consoleBox, "Stopped: " + (job.error || "unknown error"), "error");
+        updateLiveProgress(job.progress || 0, "Error: " + (job.error || "Stopped"));
+      } else {
+        updateLiveProgress(100, "✨ Timelines Ready! Loaded in " + (nle === "resolve" ? "DaVinci Resolve" : nle.toUpperCase()));
+      }
       fetchStatus();
       fetchLicense();
       loadLastPlan();
     } catch (e) {
       log(consoleBox, e.message, "error");
+      updateLiveProgress(0, "Error: " + e.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = "Build timelines";
+      btn.innerHTML = `<span class="btn-icon">⚡</span><span class="btn-text">Build timelines</span>`;
     }
   });
+
+  if ($("btn-clear-log")) {
+    $("btn-clear-log").addEventListener("click", () => {
+      consoleBox.innerHTML = '<div class="line muted">Ready. Load a footage folder to begin.</div>';
+    });
+  }
 
   $("btn-open-output").addEventListener("click", () => api("/api/open-folder", {}));
-
-  // Smart AI motion-graphics ad: each "Apply edit" sends the change to Smart AI and renders the next version
-  let adProject = null;
-  function showAdEditor(ad) {
-    if (!ad) { return; }
-    adProject = ad;
-    $("ad-version").textContent = `v${ad.version}`;
-    $("ad-edit").hidden = false;
-    $("ad-history").textContent = `Saved: ${ad.video}`;
-  }
-  $("btn-ad-play").addEventListener("click", () => adProject && api("/api/open-folder", { path: adProject.video }));
-  $("btn-ad-folder").addEventListener("click", () => adProject && api("/api/open-folder", { path: adProject.project_dir }));
-  $("btn-ad-apply").addEventListener("click", async () => {
-    const request = $("ad-request").value.trim();
-    if (!adProject || !request) { $("ad-request").focus(); return; }
-    const btn = $("btn-ad-apply");
-    const bar = $("progress").querySelector(".bar");
-    btn.disabled = true;
-    btn.textContent = "Smart AI is editing…";
-    $("progress").classList.add("active");
-    bar.style.width = "0%";
-    try {
-      const started = await api("/api/motion-ad/edit", { project_dir: adProject.project_dir, request });
-      if (!started.success) { log(consoleBox, started.error, "warning"); return; }
-      const job = await pollJob(started.job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
-      if (job.status === "error") { log(consoleBox, "Edit stopped: " + (job.error || "unknown error"), "error"); return; }
-      showAdEditor(job.result.motion_ad);
-      $("ad-request").value = "";
-      api("/api/open-folder", { path: job.result.motion_ad.video });
-    } catch (e) {
-      log(consoleBox, e.message, "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Apply edit";
-    }
-  });
 
   $("btn-send-again").addEventListener("click", async () => {
     const btn = $("btn-send-again");
@@ -849,12 +700,11 @@
       if (!prompt && !refVideo) return alert("Re-edit prompt ya reference video provide kijiye (jaise: 'Teaser ko 30s me tighter cut karo, Bride entry ko pehle lao' ya reference video choose karein)");
       const timeline = $("reedit-timeline-select").value;
       const prog = $("progress");
-      const bar = prog.querySelector(".bar");
-
       btnReedit.disabled = true;
       btnReedit.textContent = "Re-Editing Timeline…";
       prog.classList.add("active");
-      bar.style.width = "0%";
+      resetLiveProgress();
+      updateLiveProgress(10, "Analyzing timeline clips for re-edit…");
       consoleBox.innerHTML = "";
       log(consoleBox, `Starting Smart AI Re-Edit: "${prompt || 'Match Reference Look & Pace'}"...`, "info");
 
@@ -862,18 +712,26 @@
         const res = await api("/api/re-edit-timeline", { prompt, timeline, target_nle: nle, ref_video: refVideo });
         if (!res.success) {
           log(consoleBox, res.error || "Re-Edit could not be started.", "error");
+          updateLiveProgress(0, "Error: " + (res.error || "Failed"));
           return;
         }
-        const job = await pollJob(res.job_id, (l) => log(consoleBox, l.msg, l.level, l.t), (p) => bar.style.width = `${p}%`);
+        const job = await pollJob(
+          res.job_id,
+          (l) => log(consoleBox, l.msg, l.level, l.t),
+          (p, msg) => updateLiveProgress(p, msg)
+        );
         if (job.status === "error") {
           log(consoleBox, "Re-Edit stopped: " + (job.error || "unknown error"), "error");
+          updateLiveProgress(job.progress || 0, "Error: " + (job.error || "Stopped"));
         } else {
           log(consoleBox, "✨ Smart AI Re-Edit applied successfully!", "info");
+          updateLiveProgress(100, "✨ Re-Edit Applied in Timeline!");
         }
         loadLastPlan();
         fetchStatus();
       } catch (e) {
         log(consoleBox, e.message, "error");
+        updateLiveProgress(0, "Error: " + e.message);
       } finally {
         btnReedit.disabled = false;
         btnReedit.textContent = "🪄 Apply Smart AI Re-Edit";
@@ -917,6 +775,15 @@
       $("chat-text").focus();
     }
   }
+
+  // Attach a song / image / reference video: its path goes into the message, Smart AI opens it with its tools
+  $("chat-attach").addEventListener("click", async () => {
+    const r = await api("/api/browse", { kind: "file", prompt: "Gaana, image ya reference video chuniye" });
+    if (!r || !r.path) return;
+    const box = $("chat-text");
+    box.value = (box.value.trim() ? box.value.trim() + " " : "") + `"${r.path}" `;
+    box.focus();
+  });
 
   $("chat-form").addEventListener("submit", (e) => { e.preventDefault(); sendChat($("chat-text").value); });
   $("chat-text").addEventListener("keydown", (e) => {
@@ -1101,7 +968,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.19 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.20 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");
@@ -1139,21 +1006,14 @@
   }
 
   const reviewEl = $("chk-ai-review");
-  reviewEl.addEventListener("click", (e) => {
-    if (!license || !license.has_credits) {
-      e.preventDefault();
-      reviewEl.checked = false;
-      showSmartAiModal();
-      syncAiAudio();
-    }
-  });
-  reviewEl.addEventListener("change", (e) => {
-    if (reviewEl.checked && (!license || !license.has_credits)) {
-      e.preventDefault();
-      reviewEl.checked = false;
-      showSmartAiModal();
-    }
+  reviewEl.addEventListener("change", () => {
     syncAiAudio();
+    const banner = $("smart-ai-locked-banner");
+    if (reviewEl.checked && (!license || !license.has_credits)) {
+      if (banner) banner.hidden = false;
+    } else {
+      if (banner) banner.hidden = true;
+    }
   });
 
   const btnCloseModal = $("btn-close-smart-ai-modal");
@@ -1184,9 +1044,7 @@
     });
   }
 
-  // "New version available" banner (version set in the admin portal, else the latest GitHub release).
-  // Standalone builds download the installer in the background and offer "Restart & Update".
-  let updatePoll = null;
+  // "New version available" banner (version set in the admin portal, else the latest GitHub release)
   async function checkUpdate() {
     try {
       const u = await api("/api/update");
@@ -1194,61 +1052,19 @@
       let hidden = "";
       try { hidden = localStorage.getItem("avf-update-hidden") || ""; } catch (e) { /* storage off */ }
       if (hidden === u.latest) return;
-      const btn = $("update-get");
       $("update-text").textContent = `v${u.latest} is ready (you have v${u.current})` + (u.notes ? ` · ${u.notes}` : "") + ".";
-      btn.textContent = "Download";
-      btn.disabled = false;
-      btn.onclick = () => openUrl(u.url);
+      $("update-get").onclick = () => openUrl(u.url);
       $("update-close").onclick = () => {
         $("update-bar").hidden = true;
         try { localStorage.setItem("avf-update-hidden", u.latest); } catch (e) { /* storage off */ }
       };
       $("update-bar").hidden = false;
-      if (u.auto && !updatePoll) {
-        await api("/api/update/download", {});
-        updatePoll = setInterval(() => showUpdateProgress(u), 1500);
-        showUpdateProgress(u);
-      }
     } catch (e) { /* offline */ }
-  }
-
-  async function showUpdateProgress(u) {
-    const btn = $("update-get");
-    let s;
-    try { s = await api("/api/update/status"); } catch (e) { return; }
-    if (s.state === "downloading") {
-      btn.textContent = `Downloading ${s.progress}%…`;
-      btn.disabled = true;
-      return;
-    }
-    clearInterval(updatePoll);
-    updatePoll = null;
-    btn.disabled = false;
-    if (s.state === "ready") {
-      btn.textContent = "Restart & Update";
-      btn.onclick = async () => {
-        btn.disabled = true;
-        btn.textContent = "Updating…";
-        const r = await api("/api/update/install", {}).catch((e) => ({ error: e.message }));
-        if (r.success) {
-          $("update-text").textContent = `Installing v${u.latest}. AI Video Flow will open again in a moment.`;
-        } else {
-          alert(r.error || "Could not start the update.");
-          btn.disabled = false;
-          btn.textContent = "Restart & Update";
-        }
-      };
-    } else if (s.state === "error") {
-      // Automatic download failed: fall back to the manual link
-      btn.textContent = "Download";
-      btn.onclick = () => openUrl(u.url);
-    }
   }
 
   if (START_TAB && PAGES[START_TAB]) go(START_TAB);
   syncAiAudio();
   checkUpdate();
-  setInterval(checkUpdate, 6 * 3600 * 1000);
   fetchStatus();
   fetchLicense();
   loadTools();

@@ -1,7 +1,7 @@
 {
   "app": "ai-video-flow-reels-mobile",
-  "version": "1.1.18",
-  "latest_version": "1.1.18",
+  "version": "1.1.19",
+  "latest_version": "1.1.19",
   "apk_download_url": "https://license.aivideoflow.in/download/android",
-  "release_notes": "Reference-to-Reel Clone, 90° Cinema Rotate, Speed-Ramp, Depth Text & In-App Mobile Purchase."
+  "release_notes": "YouTube & Instagram reference links now work on the phone, plus Reference-to-Reel Clone, Speed-Ramp & Depth Text."
 }

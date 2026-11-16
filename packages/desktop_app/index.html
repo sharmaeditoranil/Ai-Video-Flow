@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.19 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.20 · AI editing assistant</div>
         </div>
       </div>
 
@@ -120,92 +120,82 @@
 
         <!-- AI STUDIO -->
         <section class="pane" id="pane-studio">
-          <a class="qa-ad ad-strip" href="https://quickartphotography.in/master-class/">
-            <img src="ads/qa-logo.webp" alt="">
-            <span><b>AI Advanced Video Editing Course</b> — wedding films, reels &amp; AI editing in DaVinci, Premiere &amp; EDIUS with Anil Sharma.</span>
-            <span class="ad-cta">Join the course →</span>
-          </a>
-
           <div class="studio">
+            <!-- LEFT COLUMN: The Complete Creation Flow (Steps 1 to 4 + Action & Progress) -->
             <div class="card form-card">
+              <!-- STEP 1: Workflow Selection -->
               <div class="step">
                 <div class="step-title"><span class="step-n">1</span>Workflow</div>
                 <div class="modes" id="modes">
-                  <button class="mode active" data-mode="wedding"><b>Wedding Film</b><span>Teaser · Highlight · Full film</span></button>
-                  <button class="mode" data-mode="reels"><b>Reels &amp; Shorts</b><span>9:16 vertical, fast cuts</span></button>
-                  <button class="mode" data-mode="youtube"><b>YouTube</b><span>Main edit + Shorts</span></button>
-                  <button class="mode" data-mode="music_video"><b>Music Video</b><span>Beat-synced montage</span></button>
-                  <button class="mode" data-mode="podcast"><b>Podcast · long</b><span>Cut silences + 9:16 shorts</span></button>
-                  <button class="mode" data-mode="tutorial"><b>Tutorial / Class · long</b><span>Cut dead air + chapters</span></button>
-                  <button class="mode" data-mode="custom"><b>Custom Motion Graphics</b><span>Photo / PSD + Voiceover &amp; Audio sync</span></button>
+                  <button class="mode active" data-mode="wedding">
+                    <span class="mode-icon">💒</span>
+                    <div class="mode-text"><b>Wedding Film</b><span>Teaser · Highlight · Full film</span></div>
+                  </button>
+                  <button class="mode" data-mode="reels">
+                    <span class="mode-icon">📱</span>
+                    <div class="mode-text"><b>Reels &amp; Shorts</b><span>9:16 vertical, fast cuts</span></div>
+                  </button>
+                  <button class="mode" data-mode="youtube">
+                    <span class="mode-icon">🎥</span>
+                    <div class="mode-text"><b>YouTube</b><span>Main edit + Shorts</span></div>
+                  </button>
+                  <button class="mode" data-mode="music_video">
+                    <span class="mode-icon">🎵</span>
+                    <div class="mode-text"><b>Music Video</b><span>Beat-synced montage</span></div>
+                  </button>
+                  <button class="mode" data-mode="podcast">
+                    <span class="mode-icon">🎙️</span>
+                    <div class="mode-text"><b>Podcast · long</b><span>Cut silences + 9:16 shorts</span></div>
+                  </button>
+                  <button class="mode" data-mode="tutorial">
+                    <span class="mode-icon">🎓</span>
+                    <div class="mode-text"><b>Tutorial / Class</b><span>Cut dead air + chapters</span></div>
+                  </button>
+                  <button class="mode mode-full" data-mode="custom">
+                    <span class="mode-icon">✨</span>
+                    <div class="mode-text">
+                      <div class="mode-title-row">
+                        <b>Custom Motion Graphics</b>
+                        <span class="pill-gold">AI Voice Sync</span>
+                      </div>
+                      <span>Photo / PSD layers animated directly to voiceover sentence pauses &amp; beat rhythm</span>
+                    </div>
+                  </button>
                 </div>
               </div>
 
+              <!-- STEP 2: Footage & Media Input -->
               <div class="step">
                 <div class="step-title"><span class="step-n">2</span><span id="step2-title">Footage &amp; music</span></div>
                 <label class="lbl" for="in-folder" id="lbl-folder">Raw footage folder</label>
                 <div class="input-row">
                   <input id="in-folder" type="text" placeholder="/Volumes/Drive/Wedding_Rohit_Priya" spellcheck="false">
-                  <button class="btn" id="btn-browse-folder">Browse</button>
-                  <button class="btn" id="btn-load-folder">Load</button>
-                  <button class="btn" id="btn-clear-folder" title="Remove / Clear loaded folder" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕ Remove</button>
+                  <button class="btn btn-secondary" id="btn-browse-folder" title="Browse Folder">📁 Browse</button>
+                  <button class="btn btn-primary-action" id="btn-load-folder" title="Load Media Files">⚡ Load</button>
+                  <button class="btn btn-danger-action" id="btn-clear-folder" title="Remove loaded folder">✕</button>
                 </div>
                 <div class="hint" id="folder-info">Choose the folder with your raw video clips, PSD layers, or PNG/images (subfolders included).</div>
 
-                <div class="short-only">
-                <label class="lbl" for="in-audio">Song for beat sync <span class="opt">optional</span></label>
-                <div class="input-row">
-                  <input id="in-audio" type="text" placeholder="/Music/wedding_song.mp3" spellcheck="false">
-                  <button class="btn" id="btn-browse-audio">Browse</button>
-                  <button class="btn" id="btn-clear-audio" title="Remove song" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
-                </div>
+                <div class="short-only input-group" style="margin-top:14px;">
+                  <label class="lbl" for="in-audio">Song for beat sync <span class="opt">optional</span></label>
+                  <div class="input-row">
+                    <input id="in-audio" type="text" placeholder="/Music/wedding_song.mp3" spellcheck="false">
+                    <button class="btn btn-secondary" id="btn-browse-audio">🎵 Browse</button>
+                    <button class="btn btn-danger-action" id="btn-clear-audio" title="Remove song">✕</button>
+                  </div>
                 </div>
 
-                <label class="lbl" for="in-ref" id="lbl-ref">Reference video for the colour look <span class="opt">optional</span></label>
-                <div class="input-row">
-                  <input id="in-ref" type="text" placeholder="Choose a video file, or paste a link (Instagram, Facebook, YouTube…)" spellcheck="false">
-                  <button class="btn" id="btn-browse-ref">Browse</button>
-                  <button class="btn" id="btn-clear-ref" title="Remove reference video" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
+                <div class="input-group" style="margin-top:14px;">
+                  <label class="lbl" for="in-ref">Reference video or YouTube link for colour &amp; pacing <span class="opt">optional</span></label>
+                  <div class="input-row">
+                    <input id="in-ref" type="text" placeholder="Video file path ya YouTube / Instagram Reel link (https://...)" spellcheck="false">
+                    <button class="btn btn-secondary" id="btn-browse-ref">🎬 Browse</button>
+                    <button class="btn btn-danger-action" id="btn-clear-ref" title="Remove reference video">✕</button>
+                  </div>
+                  <div class="hint">A matching 3D LUT (.cube) is created in the output folder.</div>
                 </div>
-                <div class="hint" id="hint-ref">A matching 3D LUT (.cube) is created in the output folder.</div>
 
-                <!-- Viral Reel Clone Pro Controls (shown only when Reels & Shorts workflow is active) -->
-                <div class="reels-only" id="reels-pro-box" hidden style="margin-top:12px;">
-                  <label class="lbl" for="sel-reel-style" style="margin-top:0">Reel editing style</label>
-                  <select id="sel-reel-style" style="width:100%;">
-                    <option value="auto_ref">Auto-match reference video (cuts, speed, LUT &amp; B-roll)</option>
-                    <option value="talking_depth_captions">Talking head — Behind-person depth text &amp; captions</option>
-                    <option value="cinema_90_rotated">90° rotated cinema wedding reel + watermark</option>
-                    <option value="speed_ramp_luxury">Luxury macro speed-ramp + moody color grade</option>
-                    <option value="beat_sync_montage">Fast beat-synced 9:16 montage</option>
-                  </select>
-
-                  <details style="margin-top:8px;padding:8px 10px;border-radius:8px;background:#10141c;border:1px solid var(--line);">
-                    <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);user-select:none;">Typography, B-roll &amp; audio options <span class="opt">optional</span></summary>
-                    <div style="margin-top:10px;">
-                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                        <div>
-                          <label class="lbl" for="in-depth-text" style="margin-top:0">Depth text <span class="opt">optional</span></label>
-                          <input id="in-depth-text" type="text" placeholder="ROUGH CUT | READY" spellcheck="false">
-                        </div>
-                        <div>
-                          <label class="lbl" for="in-watermark" style="margin-top:0">Watermark <span class="opt">optional</span></label>
-                          <input id="in-watermark" type="text" placeholder="Studio name" spellcheck="false">
-                        </div>
-                      </div>
-
-                      <label class="lbl" for="in-reel-captions" style="margin-top:8px">On-screen captions <span class="opt">optional (separate lines with |)</span></label>
-                      <input id="in-reel-captions" type="text" placeholder="पूरा Rough Cut Ready करता है | Automatic Beat Sync" spellcheck="false">
-
-                      <div class="checks" style="margin-top:10px;">
-                        <label><input type="checkbox" id="chk-reel-broll" checked>Auto B-roll cutaways on Track V2 (+ retouch split wipe)</label>
-                        <label><input type="checkbox" id="chk-reel-ref-audio" checked>Use reference video audio when no song is selected</label>
-                      </div>
-                    </div>
-                  </details>
-                </div>
-                </div>
-                <div class="long-only" hidden>
+                <div class="long-only" hidden style="margin-top:14px;">
                   <label class="lbl">Silence cutting</label>
                   <div class="segmented" id="cut-level">
                     <button data-cut="normal" class="active">Normal — keeps natural pauses</button>
@@ -214,11 +204,14 @@
                 </div>
               </div>
 
+              <!-- STEP 3: Timelines & Export Target -->
               <div class="step">
-                <div class="step-title"><span class="step-n">3</span>Timelines</div>
+                <div class="step-title"><span class="step-n">3</span>Timelines &amp; NLE Target</div>
+                <label class="lbl" style="margin-top:0;">Output Timelines</label>
                 <div class="checks" id="outputs"></div>
                 <div class="hint" id="mode-hint"></div>
-                <label class="lbl">Send to</label>
+
+                <label class="lbl" style="margin-top:14px;">Send to NLE</label>
                 <div class="nle-picker" id="nle">
                   <button data-nle="resolve" class="active" title="DaVinci Resolve">
                     <img src="nle/resolve.png" alt=""><span>DaVinci Resolve</span>
@@ -230,22 +223,26 @@
                     <img src="nle/edius.png" alt=""><span>EDIUS</span>
                   </button>
                   <button data-nle="both" title="All editors">
-                    <span class="nle-stack"><img src="nle/resolve.png" alt=""><img src="nle/premiere.png" alt=""><img src="nle/edius.png" alt=""></span><span>All</span>
+                    <span class="nle-stack"><img src="nle/resolve.png" alt=""><img src="nle/premiere.png" alt=""><img src="nle/edius.png" alt=""></span><span>All Editors</span>
                   </button>
                 </div>
               </div>
 
+              <!-- STEP 4: Smart AI Prompt & Editing Director -->
               <div class="step premium-step" id="smart-ai-prompt-step">
                 <div class="step-title">
                   <span class="step-n">4</span>
                   <span>Smart AI Prompt &amp; Editing Director</span>
                   <span class="pill-gold" style="margin-left:auto;">AI Powered</span>
                 </div>
-                <label class="switch">
+
+                <label class="switch" for="chk-ai-review">
                   <input type="checkbox" id="chk-ai-review">
                   <span class="switch-ui"></span>
-                  <span><b>Smart AI Shot Review &amp; Director</b> <span class="pill-gold">Premium</span><br>
-                    <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot, understands your custom prompt in Hindi/Hinglish/English, and crafts the edit. Uses 1 wedding credit.</span></span>
+                  <span>
+                    <b>Smart AI Shot Review &amp; Director</b> <span class="pill-gold">Premium</span><br>
+                    <span class="muted" id="ai-review-note">Smart AI looks at every candidate shot, understands your custom prompt in Hindi/Hinglish/English, and crafts the edit. Uses 1 wedding credit.</span>
+                  </span>
                 </label>
 
                 <div id="smart-ai-locked-banner" class="smart-ai-locked-banner" hidden>
@@ -290,12 +287,45 @@
                 </div>
               </div>
 
-              <button class="btn btn-primary btn-lg btn-block" id="btn-run">Build timelines</button>
-              <div class="quota" id="quota" hidden></div>
-              <div class="progress" id="progress"><div class="bar"></div></div>
+              <!-- BUILD ACTION & ANIMATED PROGRESS BOX -->
+              <div class="build-action-wrap">
+                <button class="btn btn-primary btn-lg btn-block btn-build" id="btn-run">
+                  <span class="btn-icon">⚡</span>
+                  <span class="btn-text">Build timelines</span>
+                </button>
+                <div class="quota" id="quota" hidden></div>
+
+                <!-- BEAUTIFULLY DESIGNED GLOWING PROGRESS BOX -->
+                <div class="progress-box" id="progress">
+                  <div class="prog-head">
+                    <div class="prog-status-wrap">
+                      <span class="prog-pulse-dot"></span>
+                      <span class="prog-status" id="prog-status">Initializing AI Engine…</span>
+                    </div>
+                    <span class="prog-percent-badge" id="prog-percent">0%</span>
+                  </div>
+                  <div class="progress-track">
+                    <div class="bar"></div>
+                  </div>
+                  <div class="prog-steps-pills">
+                    <span class="prog-step-item" id="pstep-scan"><i class="step-dot"></i>Scan Media</span>
+                    <span class="prog-step-item" id="pstep-audio"><i class="step-dot"></i>Beat &amp; Audio</span>
+                    <span class="prog-step-item" id="pstep-ai"><i class="step-dot"></i>AI Storyboard</span>
+                    <span class="prog-step-item" id="pstep-nle"><i class="step-dot"></i>NLE Timelines</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
+            <!-- RIGHT COLUMN: Operations, Activity Terminal & Re-Editor -->
             <div class="right-col" style="display:flex;flex-direction:column;gap:18px;">
+              <!-- Course Ad Strip -->
+              <a class="qa-ad ad-strip" href="https://quickartphotography.in/master-class/">
+                <img src="ads/qa-logo.webp" alt="">
+                <span><b>AI Advanced Video Editing Course</b> — wedding films, reels &amp; AI editing in DaVinci, Premiere &amp; EDIUS with Anil Sharma.</span>
+                <span class="ad-cta">Join the course →</span>
+              </a>
+
               <!-- RE-EDIT CARD (Appears when timelines are created or project is active) -->
               <div class="card reedit-card" id="reedit-card" hidden>
                 <div class="reedit-head">
@@ -303,12 +333,12 @@
                     <span class="badge-reedit">✨ Smart AI Timeline Re-Editor</span>
                     <span class="reedit-status muted" id="reedit-status" style="font-size:12px;">Active: <b id="reedit-project-name" style="color:var(--text);">—</b></span>
                   </div>
-                  <p class="hint" style="margin-top:6px;font-size:12px;">
+                  <p class="hint" style="margin-top:6px;font-size:12.5px;">
                     Timeline ban chuki hai! Apne hisab se re-edit prompt likhiye — Smart AI DaVinci Resolve, Premiere ya EDIUS me instant professional re-edit kar dega.
                   </p>
                 </div>
 
-                <div class="reedit-body" style="margin-top:10px;">
+                <div class="reedit-body" style="margin-top:12px;">
                   <div class="reedit-grid-row" style="display:flex;gap:10px;margin-bottom:10px;align-items:center;">
                     <label class="lbl" style="margin:0;white-space:nowrap;font-size:12px;">Target Timeline:</label>
                     <select id="reedit-timeline-select" class="reedit-select" style="flex:1;">
@@ -331,8 +361,8 @@
                   </label>
                   <div class="input-row" style="margin-bottom:8px;">
                     <input id="in-reedit-ref" type="text" placeholder="Local video path ya YouTube/Shorts/Instagram Reel link (https://...)" spellcheck="false">
-                    <button class="btn btn-sm" id="btn-browse-reedit-ref">Browse</button>
-                    <button class="btn btn-sm" id="btn-clear-reedit-ref" title="Clear reference" style="background:#1e293b;color:#f87171;border:1px solid #334155;">✕</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-browse-reedit-ref">📁 Browse</button>
+                    <button class="btn btn-sm btn-danger-action" id="btn-clear-reedit-ref" title="Clear reference">✕</button>
                   </div>
 
                   <div class="reedit-chips" id="reedit-chips">
@@ -345,36 +375,47 @@
                     <button type="button" class="chip reedit-chip" data-prompt="Har ritual aur major beat drop par timeline chapter markers lagao">📍 Add Chapter Markers</button>
                   </div>
 
-                  <button class="btn btn-primary btn-block" id="btn-run-reedit" style="margin-top:10px;font-weight:600;padding:10px;">
-                    🪄 Apply Smart AI Re-Edit
-                  </button>
+                  <div class="reedit-actions" style="margin-top:14px;display:flex;gap:10px;">
+                    <button class="btn btn-primary btn-block btn-reedit" id="btn-run-reedit">
+                      <span class="btn-icon">⚡</span>
+                      <span class="btn-text">Apply Smart AI Re-Edit</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <!-- ACTIVITY CARD -->
+              <!-- Smart AI motion-graphics ad: play it and change it by writing what to change -->
+              <div class="card ad-edit" id="ad-edit" hidden>
+                <div class="ad-edit-head">
+                  <b>✨ Motion-graphics ad <span id="ad-version">v1</span></b>
+                  <div class="row-actions">
+                    <button class="btn btn-sm btn-secondary" id="btn-ad-play">▶ Play</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-ad-folder">Folder</button>
+                  </div>
+                </div>
+                <textarea id="ad-request" rows="2" placeholder="Kya badalna hai? e.g. “Scene 2 ka headline bada aur gold karo” · “End me JOIN NOW button aur price ₹21 dikhao” · “Theme navy kar do”"></textarea>
+                <button class="btn btn-gold btn-block" id="btn-ad-apply">Apply edit</button>
+                <div class="hint" id="ad-history"></div>
+              </div>
+
+              <!-- ACTIVITY TERMINAL -->
               <div class="card log-card">
                 <div class="log-head">
-                  <span>Activity</span>
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <div class="window-dots">
+                      <span class="w-dot red"></span>
+                      <span class="w-dot yellow"></span>
+                      <span class="w-dot green"></span>
+                    </div>
+                    <span style="font-weight:700;font-size:13px;letter-spacing:0.02em;">Activity Terminal</span>
+                  </div>
                   <div class="row-actions">
-                    <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">Send again</button>
-                    <button class="btn btn-sm" id="btn-open-output">Output folder</button>
+                    <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">↺ Send again</button>
+                    <button class="btn btn-sm" id="btn-clear-log" title="Clear console output">✕ Clear</button>
+                    <button class="btn btn-sm" id="btn-open-output">📁 Output folder</button>
                   </div>
                 </div>
                 <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>
-
-                <!-- Smart AI motion-graphics ad: play it and change it by writing what to change -->
-                <div class="ad-edit" id="ad-edit" hidden>
-                  <div class="ad-edit-head">
-                    <b>✨ Motion-graphics ad <span id="ad-version">v1</span></b>
-                    <div class="row-actions">
-                      <button class="btn btn-sm" id="btn-ad-play">▶ Play</button>
-                      <button class="btn btn-sm" id="btn-ad-folder">Folder</button>
-                    </div>
-                  </div>
-                  <textarea id="ad-request" rows="2" placeholder="Kya badalna hai? e.g. “Scene 2 ka headline bada aur gold karo” · “End me JOIN NOW button aur price ₹21 dikhao” · “Theme navy kar do”"></textarea>
-                  <button class="btn btn-gold btn-block" id="btn-ad-apply">Apply edit</button>
-                  <div class="hint" id="ad-history"></div>
-                </div>
               </div>
             </div>
           </div>
@@ -395,13 +436,16 @@
               <div class="msg bot">Namaste! Main aapka AI editing assistant hoon. DaVinci Resolve, Premiere ya EDIUS me kya karna hai? Hindi, Hinglish ya English — kisi bhi bhasha me likhiye.</div>
             </div>
             <div class="chips" id="chips">
+              <button class="chip">Gaana sun ke aur footage dekh ke 60s ka teaser khud cut karo, cuts beat par</button>
+              <button class="chip">Highlight me sabse emotional shots drop par rakho aur slow-mo do</button>
               <button class="chip">DaVinci Resolve ka status batao</button>
               <button class="chip">Is timeline par har 10 second me marker lagao</button>
               <button class="chip">Music ko dialogue ke neeche duck karo</button>
               <button class="chip">Warm wedding colour node tree banao</button>
             </div>
             <form class="chat-input" id="chat-form">
-              <textarea id="chat-text" rows="1" placeholder="Message the AI assistant…"></textarea>
+              <button class="btn" type="button" id="chat-attach" title="Gaana, image ya reference video jodiye — Smart AI use dekh/sun kar edit karega">📎 Attach</button>
+              <textarea id="chat-text" rows="1" placeholder="Jaise: “Is gaane par 60s teaser banao, reference jaisa look” — 📎 se song / image / video jodiye"></textarea>
               <button class="btn btn-primary" type="submit" id="chat-send">Send</button>
               <button class="btn" type="button" id="chat-reset" title="Start a new conversation">New chat</button>
             </form>
@@ -431,7 +475,7 @@
             <span class="avatar avatar-lg" id="pf-avatar">?</span>
             <div class="pf-id">
               <h2 id="pf-name">Guest</h2>
-              <div class="muted" id="pf-email">Register your profile below to use Free Trial (2 Edits / Day)</div>
+              <div class="muted" id="pf-email">Activate a license to see your account</div>
             </div>
             <span class="plan-badge" id="pf-plan">Free Edition</span>
           </div>
@@ -440,48 +484,6 @@
             <div class="card metric"><span class="muted">Smart AI weddings</span><b id="lic-credits">—</b></div>
             <div class="card metric"><span class="muted">Valid until</span><b id="lic-expiry">—</b></div>
             <div class="card metric"><span class="muted">Computer ID</span><b><code id="lic-machine">…</code> <button class="link" id="btn-copy-machine">Copy</button></b></div>
-          </div>
-
-          <div class="card phone-license" id="phone-license" hidden>
-            <div>
-              <b>📱 Use this license on your phone too — free</b>
-              <div class="muted">Every license works on 1 computer + 1 phone. Install the AI Video Flow Reels app, open <b>Account</b> and paste this key.</div>
-            </div>
-            <div class="phone-license-actions">
-              <button class="btn btn-sm" id="btn-copy-key">Copy key</button>
-              <button class="btn btn-gold btn-sm" id="btn-get-phone-app">Get the phone app</button>
-            </div>
-          </div>
-
-          <div class="card" style="margin-bottom:14px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
-              <h3 style="margin:0;">User Profile · Free Trial Registration (2 Edits / Day)</h3>
-              <span class="badge" id="prof-reg-badge">Required for Free Trial</span>
-            </div>
-            <p class="hint" style="margin:0 0 12px;">Enter your Name, WhatsApp Number and Email to unlock <b>2 Free Edits Per Day</b> on Mac, Windows &amp; Mobile.</p>
-            <div class="hint error" id="prof-error" hidden></div>
-            <div class="hint ok" id="prof-ok" hidden></div>
-            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
-              <div>
-                <label class="lbl" for="prof-name" style="margin-top:0">Your Name *</label>
-                <input id="prof-name" type="text" placeholder="e.g. Rahul Sharma" autocomplete="name">
-              </div>
-              <div>
-                <label class="lbl" for="prof-phone" style="margin-top:0">WhatsApp Number *</label>
-                <input id="prof-phone" type="tel" placeholder="+91 98765 43210" autocomplete="tel">
-              </div>
-              <div>
-                <label class="lbl" for="prof-email" style="margin-top:0">Email Address *</label>
-                <input id="prof-email" type="email" placeholder="you@studio.com" autocomplete="email">
-              </div>
-              <div>
-                <label class="lbl" for="prof-studio" style="margin-top:0">Studio Name / City <span class="opt">optional</span></label>
-                <input id="prof-studio" type="text" placeholder="e.g. Royal Wedding Films, Patna">
-              </div>
-            </div>
-            <div class="row-actions" style="margin-top:12px">
-              <button class="btn btn-primary" id="btn-save-profile">Save Profile &amp; Unlock Free Trial (2 Edits/Day)</button>
-            </div>
           </div>
 
           <div class="profile-grid">
@@ -495,12 +497,12 @@
                 <button class="btn" id="btn-refresh-lic">Check again</button>
                 <button class="btn btn-ghost-danger" id="btn-remove-lic">Remove</button>
               </div>
-              <p class="hint">A license works on one computer + one mobile phone for free. To move it to a new computer, ask support to reset the lock.</p>
+              <p class="hint">A license works on one computer. To move it to a new computer, ask support to reset the computer lock.</p>
             </div>
             <div class="card">
               <h3>Plans at a glance</h3>
               <ul class="perks">
-                <li><b>Free</b> · every workflow and editor, <span class="free-limit-text">2 projects per day</span></li>
+                <li><b>Free</b> · every workflow and editor, <span class="free-limit-text">1 project per day</span></li>
                 <li><b>AI Editing</b> · unlimited projects — from <span class="price-local">₹399</span>/month</li>
                 <li><b>Smart AI Editing</b> · AI shot review, AI music &amp; voiceover, AI Assistant, unlimited editing included — from <span class="price-ai">₹999</span></li>
               </ul>
@@ -529,7 +531,7 @@
                 <div class="price">₹0</div>
                 <div class="per">forever · with a daily limit</div>
                 <ul class="perks">
-                  <li class="free-limit-text">2 projects per day</li>
+                  <li class="free-limit-text">1 project per day</li>
                   <li>All workflows &amp; editors</li>
                   <li>Shake trim, beat sync, silence cut</li>
                 </ul>
@@ -548,7 +550,7 @@
             <table>
               <thead><tr><th></th><th>Free</th><th>AI Editing</th><th>Smart AI Editing</th></tr></thead>
               <tbody>
-                <tr><td>Projects per day</td><td>2</td><td>Unlimited</td><td>Unlimited</td></tr>
+                <tr><td>Projects per day</td><td>1</td><td>Unlimited</td><td>Unlimited</td></tr>
                 <tr><td>Wedding, Reels, YouTube, Music, Podcast, Tutorial</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>DaVinci Resolve · Premiere Pro · EDIUS</td><td>✓</td><td>✓</td><td>✓</td></tr>
                 <tr><td>Smart AI shot review</td><td>—</td><td>—</td><td>✓</td></tr>
@@ -644,67 +646,6 @@
             Continue with Free Local AI
           </button>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Mandatory Startup Registration Gate (Mac & Windows: opens first if not registered / licensed) -->
-  <div class="avf-modal-backdrop" id="desktop-reg-modal">
-    <div class="avf-modal-card" style="max-width:460px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-        <img src="logo.png" alt="" style="width:36px;height:36px;border-radius:8px;">
-        <div>
-          <div style="font-weight:700;font-size:15px;">AI Video Flow</div>
-          <div class="muted" style="font-size:12px;">AI Editing Studio · Mac &amp; Windows</div>
-        </div>
-      </div>
-      <span class="avf-trial-badge" style="margin-bottom:10px;">🎁 Free Trial · 2 Edits Per Day</span>
-      <h2 style="font-size:20px;font-weight:700;margin:0 0 6px;">Register to Open AI Video Flow</h2>
-      <p class="muted" style="font-size:13px;line-height:1.5;margin:0 0 14px;">
-        App shuru karne ke liye apna Name, WhatsApp Number aur Email register karein. Roz <b>2 Free Edits</b> turant unlock ho jayenge!
-      </p>
-      <form id="drm-form">
-        <label class="lbl" for="drm-name" style="margin-top:0">Your Full Name *</label>
-        <input id="drm-name" type="text" required placeholder="e.g. Rahul Sharma" autocomplete="name">
-        <label class="lbl" for="drm-phone">WhatsApp Number *</label>
-        <input id="drm-phone" type="tel" required placeholder="+91 98765 43210" autocomplete="tel">
-        <label class="lbl" for="drm-email">Email Address *</label>
-        <input id="drm-email" type="email" required placeholder="you@studio.com" autocomplete="email">
-        <label class="lbl" for="drm-studio">Studio Name / City <span class="opt">optional</span></label>
-        <input id="drm-studio" type="text" placeholder="e.g. Royal Wedding Films, Patna">
-        <div class="hint error" id="drm-error" hidden style="margin-top:8px;"></div>
-        <button type="submit" class="btn btn-primary btn-lg btn-block" id="drm-submit-btn" style="margin-top:14px;">Register &amp; Open App →</button>
-      </form>
-      <details style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);">
-        <summary style="color:var(--gold);font-weight:600;font-size:12.5px;cursor:pointer;text-align:center;list-style:none;">Already have a License Key? Activate here →</summary>
-        <div style="margin-top:10px;display:grid;gap:8px;">
-          <input id="drm-lic-key" type="text" placeholder="AVF-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off">
-          <button type="button" class="btn btn-gold btn-block" id="drm-activate-btn">Activate Key &amp; Open App</button>
-        </div>
-      </details>
-    </div>
-  </div>
-
-  <!-- Free Trial Ended / Upgrade Popup Modal (Mac & Windows) -->
-  <div class="avf-modal-backdrop" id="trial-ended-modal" hidden>
-    <div class="avf-modal-card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <span class="avf-trial-badge">⚡ 2 / 2 Free Edits Used Today</span>
-        <button class="update-close" id="dt-te-close" aria-label="Close">×</button>
-      </div>
-      <h2 style="font-size:20px;font-weight:700;margin:0 0 8px;">Your Today's Free Trial Has Ended</h2>
-      <p class="muted" style="font-size:13.5px;line-height:1.55;margin:0;">
-        Aaj ke aapke <b>2 Free Edits</b> poore ho chuke hain. Aapka Free Trial <b>kal raat 12 baje reset hoga</b> — ya abhi Plan Purchase karein aur bina ruke <b>Unlimited Edit</b> karein!
-      </p>
-      <div class="avf-trial-perks">
-        <div><i>✓</i><span><b>Unlimited Edits Every Day</b> — No daily limit or waiting till tomorrow</span></div>
-        <div><i>✓</i><span><b>DaVinci Resolve · Premiere Pro · EDIUS · Reels</b> — All workflows unlocked</span></div>
-        <div><i>✓</i><span><b>1 Plan = PC/Mac + Mobile App Free</b> — Starts from <span class="price-local">₹399</span>/month</span></div>
-      </div>
-      <div style="display:grid;gap:8px;">
-        <button class="btn btn-gold btn-lg btn-block" id="dt-te-buy">Purchase Plan · Unlock Unlimited Edits →</button>
-        <button class="btn btn-block" id="dt-te-key">Already Have a License Key? Activate</button>
-        <button class="link" id="dt-te-later" style="margin-top:4px;justify-self:center;">Wait Until Tomorrow (Reset Kal Hoga)</button>
       </div>
     </div>
   </div>

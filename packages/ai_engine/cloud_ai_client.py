@@ -469,17 +469,20 @@ class CloudAIClient:
         tools: List[Dict[str, Any]],
         execute: Callable[[str, Dict[str, Any]], Any],
         on_event: Optional[Callable[[str, str], None]] = None,
-        max_steps: int = 12,
+        max_steps: int = 60,
+        system_extra: str = "",
     ) -> str:
-        """Runs one user turn to completion. `history` is extended in place so the chat keeps context."""
+        """Runs one user turn to completion. `history` is extended in place so the chat keeps context.
+        A tool may return {"_content": [blocks]} to hand back images (frames it looked at) instead of JSON."""
         history.append({"role": "user", "content": user_text})
         for _ in range(max_steps):
             response = self._create(
                 max_tokens=16000,
-                system=ASSISTANT_SYSTEM,
+                system=ASSISTANT_SYSTEM + system_extra,
                 tools=tools,
                 messages=history,
                 cache_control={"type": "ephemeral"},
+                output_config={"effort": "high"},
             )
             history.append({"role": "assistant", "content": response.content})
 
@@ -495,14 +498,21 @@ class CloudAIClient:
                     text += "\n\n(The answer was cut short - ask me to continue.)"
                 return text or "Done."
 
+            if on_event:  # what Smart AI says between tool calls ("Song dekh liya, ab footage dekh raha hoon…")
+                for b in response.content:
+                    if b.type == "text" and b.text.strip():
+                        on_event("text", b.text.strip()[:400])
             results = []
             for tu in tool_uses:
                 if on_event:
                     on_event("tool", tu.name)
                 try:
                     out = execute(tu.name, dict(tu.input or {}))
-                    results.append({"type": "tool_result", "tool_use_id": tu.id,
-                                    "content": json.dumps(out, ensure_ascii=False, default=str)[:20000]})
+                    if isinstance(out, dict) and isinstance(out.get("_content"), list):
+                        content: Any = out["_content"]
+                    else:
+                        content = json.dumps(out, ensure_ascii=False, default=str)[:60000]
+                    results.append({"type": "tool_result", "tool_use_id": tu.id, "content": content})
                 except Exception as e:
                     results.append({"type": "tool_result", "tool_use_id": tu.id, "content": f"Error: {e}", "is_error": True})
             history.append({"role": "user", "content": results})

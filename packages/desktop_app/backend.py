@@ -15,6 +15,7 @@ so web pages open in the user's browser cannot drive this server.
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -38,7 +39,6 @@ from packages.core_premiere.premiere_adapter import premiere_adapter
 from packages.core_edius.edius_adapter import edius_adapter
 from packages.hyperframes_engine.hyperframes_service import hyperframes_service
 from packages.licensing.license_manager import license_manager
-from packages.licensing.updater import updater
 from packages.ai_engine.cloud_ai_client import cloud_ai_client
 from installer.connect_all_engine import ConnectAllEngine
 
@@ -50,14 +50,14 @@ PSD_EXTS = {".psd", ".psb"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".svg"} | PSD_EXTS
 STILL_EXTS = IMAGE_EXTS
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.19"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.20"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
 
 # Free plan: projects per day (any paid plan removes the limit). The admin portal can change it;
 # the last plan list from the server is cached so prices and the limit also show offline.
-FREE_DAILY_PROJECTS = 2
+FREE_DAILY_PROJECTS = 1
 PLANS_CACHE = os.path.join(os.path.expanduser("~"), ".ai-video-flow", "plans.json")
 
 
@@ -83,11 +83,7 @@ def fetch_plans() -> Dict[str, Any]:
 
 def free_daily_limit() -> int:
     try:
-        cached = _cached_plans().get("free_daily_projects")
-        if cached is not None:
-            val = int(cached)
-            return 0 if val == 0 else max(FREE_DAILY_PROJECTS, val)
-        return FREE_DAILY_PROJECTS
+        return max(0, int(_cached_plans().get("free_daily_projects", FREE_DAILY_PROJECTS)))
     except (TypeError, ValueError):
         return FREE_DAILY_PROJECTS
 
@@ -116,14 +112,7 @@ def free_status(force: bool = False) -> Optional[Dict[str, Any]]:
     if license_manager.get_status().get("local_unlimited"):
         return None
     if force or not _FREE_CACHE["data"] or time.time() - _FREE_CACHE["t"] > 30:
-        st = license_manager.free_status()
-        if isinstance(st, dict) and st.get("success"):
-            srv_lim = int(st.get("limit", FREE_DAILY_PROJECTS))
-            used = int(st.get("used", 0))
-            eff_lim = 0 if srv_lim == 0 else max(FREE_DAILY_PROJECTS, srv_lim)
-            st["limit"] = eff_lim
-            st["left"] = max(0, eff_lim - used)
-        _FREE_CACHE.update(t=time.time(), data=st)
+        _FREE_CACHE.update(t=time.time(), data=license_manager.free_status())
     return _FREE_CACHE["data"]
 
 
@@ -420,38 +409,6 @@ def _append_plan_to_resolve(plan: Dict[str, Any], items_by_path: Dict[str, Any])
         return 0
     if not resolve_adapter.append_clips_to_timeline(entries, plan.get("sequence_name")):
         return 0
-
-    # Place B-Roll cutaways on Video Track 2 (V2) when present (e.g. Reels & Shorts workflow)
-    broll_list = plan.get("broll_clips") or []
-    if broll_list:
-        try:
-            project = resolve_adapter._current_project
-            tl = project.GetCurrentTimeline() if project else None
-            if tl:
-                while tl.GetTrackCount("video") < 2:
-                    tl.AddTrack("video")
-                tl_fps = float(project.GetSetting("timelineFrameRate") or 25.0)
-                tl_start = int(tl.GetStartFrame() or 0)
-                broll_entries = []
-                for bc in broll_list:
-                    b_item = items_by_path.get(os.path.normpath(bc.get("file_path") or ""))
-                    if not b_item:
-                        continue
-                    b_in = int(bc.get("in_frame", 0))
-                    b_out = max(b_in + 1, int(bc.get("out_frame", b_in + 1)) - 1)
-                    broll_entries.append({
-                        "mediaPoolItem": b_item,
-                        "startFrame": b_in,
-                        "endFrame": b_out,
-                        "trackIndex": 2,
-                        "recordFrame": tl_start + int(round(float(bc.get("timeline_start", 0)) * tl_fps)),
-                        "mediaType": 1,
-                    })
-                if broll_entries:
-                    project.GetMediaPool().AppendToTimeline(broll_entries)
-        except Exception as e:
-            logger.warning(f"Resolve B-roll V2 placement note: {e}")
-
     # Music bed from 0:00 and the AI voiceover from 1 s, each on its own audio track
     end = float(plan.get("total_duration") or 0)
     if plan.get("audio") and os.path.isfile(plan["audio"]) and end > 0:
@@ -603,12 +560,7 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
     if target_nle in ("resolve", "both"):
         if resolve_adapter.is_connected():
             _log(job_id, "Importing footage into DaVinci Resolve Media Pool (bin: AI_Raw_Footage)...", "info")
-            used = sorted({
-                c["file_path"]
-                for p in plans.values()
-                for c in (list(p.get("clips") or []) + list(p.get("broll_clips") or []))
-                if c.get("file_path")
-            })
+            used = sorted({c["file_path"] for p in plans.values() for c in p.get("clips", []) if c.get("file_path")})
             items = resolve_adapter.import_media_files(used, bin_name="AI_Raw_Footage")
             items_by_path = {}
             for it in items:
@@ -737,8 +689,6 @@ def longform_job(job_id: str, folder: str, formats: List[str], target_nle: str, 
             resolved_ref = resolve_reference_video_source(ref_cand, job_id)
             if resolved_ref:
                 ref_video = resolved_ref
-            elif "://" in ref_cand:
-                ref_video = ""  # the link could not be fetched; never hand a URL to the file-based analysis
                 _log(job_id, f"🎯 Reference Video active: {os.path.basename(ref_video)}", "info")
         ref_lut_path = extract_and_apply_reference_look(job_id, ref_video, target_nle)
 
@@ -989,6 +939,7 @@ def resolve_reference_video_source(ref_input: str, job_id: str = "") -> Optional
     try:
         import hashlib
         import glob
+        import yt_dlp
 
         cache_dir = os.path.join(OUTPUT_DIR, "ref_cache")
         os.makedirs(cache_dir, exist_ok=True)
@@ -1000,19 +951,27 @@ def resolve_reference_video_source(ref_input: str, job_id: str = "") -> Optional
                 _log(job_id, f"⚡ Using cached reference video for link: {url}", "info")
                 return ef
 
-        # yt-dlp with the app's own FFmpeg (customers have none on PATH) and clear messages for blocked sites
-        from packages.ai_engine import link_downloader
-        try:
-            path = link_downloader.download_reference(url, cache_dir, lambda m, lvl="info": _log(job_id, m, lvl))
-        except link_downloader.LinkError as e:
-            _log(job_id, f"⚠️ Reference link: {e} Continuing with the standard edit.", "warning")
-            return None
-        final = os.path.join(cache_dir, f"ref_{url_hash}{os.path.splitext(path)[1] or '.mp4'}")
-        try:
-            os.replace(path, final)  # cached under the link's hash for the next run
-        except OSError:
-            final = path
-        return final
+        _log(job_id, f"📥 Downloading reference reel from link: {url}...", "info")
+        out_tmpl = os.path.join(cache_dir, f"ref_{url_hash}.%(ext)s")
+        ydl_opts = {
+            'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
+            'outtmpl': out_tmpl,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 150 * 1024 * 1024,
+            'socket_timeout': 35,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        downloaded = glob.glob(os.path.join(cache_dir, f"ref_{url_hash}.*"))
+        for df in downloaded:
+            if os.path.isfile(df) and os.path.getsize(df) > 1024:
+                _log(job_id, f"✅ Reference video ready: {os.path.basename(df)}", "info")
+                return df
+
+        _log(job_id, "⚠️ Reference video download did not produce a valid file.", "warning")
+        return None
     except Exception as e:
         _log(job_id, f"⚠️ Note on Reference Link ({url}): {e}. Continuing with standard edit.", "warning")
         logger.warning(f"Error fetching reference URL {url}: {e}")
@@ -1065,14 +1024,12 @@ def extract_and_apply_reference_look(job_id: str, ref_video_path: str, target_nl
 
 
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding",
-                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "",
-                reel_options: Optional[Dict[str, Any]] = None) -> None:
+                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "") -> None:
     """`voiceover`: "" = none, "auto" = Smart AI writes the script, anything else = the script to speak."""
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
         from packages.ai_engine.story_planner import story_planner
-        reel_opts = reel_options or {}
 
         is_premium = (tier == "premium")
         if is_premium:
@@ -1205,8 +1162,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             resolved_ref = resolve_reference_video_source(ref_cand, job_id)
             if resolved_ref:
                 ref_video = resolved_ref
-            elif "://" in ref_cand:
-                ref_video = ""  # the link could not be fetched; never hand a URL to the file-based analysis
                 _log(job_id, f"🎯 Reference Video active: {os.path.basename(ref_video)}", "info")
 
         ref_lut_path = extract_and_apply_reference_look(job_id, ref_video, target_nle)
@@ -1252,83 +1207,17 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         # 3. Story plans tailored by workflow mode
         plans = {}
-        rendered_reels = []
         if mode == "reels":
-            if is_square:
-                # 1:1 square ads: story planner (the reel engine is 9:16)
-                if "teaser" in formats:
-                    p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
-                    p["sequence_name"] = f"01_Ad_{'Square_1x1' if is_square else 'Reel_9x16'}"
-                    p["aspect_ratio"] = target_aspect
-                    plans["teaser"] = p
-                if "highlight" in formats:
-                    p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
-                    p["sequence_name"] = f"02_Ad_{'Square_30s_1x1' if is_square else 'Shorts_30s'}"
-                    p["aspect_ratio"] = target_aspect
-                    plans["highlight"] = p
-            else:
-                from packages.ai_engine.reel_cloner import reel_cloner
-                ref_dna = reel_cloner.analyze_reference_reel(
-                    ref_video,
-                    extract_audio=bool(reel_opts.get("use_ref_audio", True)),
-                    log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
-                )
-                if ref_dna.get("lut_path"):
-                    ref_lut_path = ref_dna["lut_path"]
-                if not audio_path and reel_opts.get("use_ref_audio", True) and ref_dna.get("ref_audio_path"):
-                    audio_path = ref_dna["ref_audio_path"]
-                    beat_times = ref_dna.get("beat_times") or beat_times
-
-                ai_blueprint = None
-                if is_premium and ref_dna.get("keyframes"):
-                    try:
-                        thumb_dir = os.path.join(OUTPUT_DIR, ".thumbs")
-                        os.makedirs(thumb_dir, exist_ok=True)
-                        u_thumbs = [p for c in analyzed[:24] if (p := _thumbnail(c, thumb_dir, len(os.listdir(thumb_dir))))]
-                        if u_thumbs:
-                            _log(job_id, "🤖 Smart AI is matching Reference Reel style, shot order, B-roll & Hinglish captions…", "info")
-                            ai_blueprint = cloud_ai_client.plan_reel_clone(ref_dna["keyframes"], u_thumbs, instructions, 45.0)
-                    except Exception as e:
-                        _log(job_id, f"Reference AI style note: {e}", "warning")
-
-                reel_style = reel_opts.get("reel_style") or "auto_ref"
-                enable_broll = bool(reel_opts.get("enable_broll", True))
-                depth_text = (reel_opts.get("depth_text") or "").strip()
-                caption_text = (reel_opts.get("caption_text") or "").strip()
-                watermark_text = (reel_opts.get("watermark_text") or "").strip()
-
-                if "teaser" in formats or "render_mp4" in formats:
-                    plans["teaser"] = reel_cloner.build_viral_reel_plan(
-                        analyzed_clips=analyzed,
-                        ref_dna=ref_dna,
-                        target_duration=45.0,
-                        sequence_name="01_Instagram_Reel_9x16",
-                        reel_style=reel_style,
-                        audio_path=audio_path,
-                        use_ref_audio=bool(reel_opts.get("use_ref_audio", True)),
-                        depth_text=depth_text,
-                        caption_text=caption_text,
-                        watermark_text=watermark_text,
-                        enable_broll=enable_broll,
-                        ai_clone_blueprint=ai_blueprint,
-                        log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
-                    )
-                if "highlight" in formats:
-                    plans["highlight"] = reel_cloner.build_viral_reel_plan(
-                        analyzed_clips=analyzed,
-                        ref_dna=ref_dna,
-                        target_duration=30.0,
-                        sequence_name="02_Shorts_Teaser_30s",
-                        reel_style=reel_style,
-                        audio_path=audio_path,
-                        use_ref_audio=bool(reel_opts.get("use_ref_audio", True)),
-                        depth_text=depth_text,
-                        caption_text=caption_text,
-                        watermark_text=watermark_text,
-                        enable_broll=enable_broll,
-                        ai_clone_blueprint=ai_blueprint,
-                        log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
-                    )
+            if "teaser" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=45.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
+                p["sequence_name"] = f"01_Ad_{'Square_1x1' if is_square else 'Reel_9x16'}"
+                p["aspect_ratio"] = target_aspect
+                plans["teaser"] = p
+            if "highlight" in formats:
+                p = story_planner.plan_teaser(analyzed, target_duration=30.0, is_vertical=(not is_square), instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
+                p["sequence_name"] = f"02_Ad_{'Square_30s_1x1' if is_square else 'Shorts_30s'}"
+                p["aspect_ratio"] = target_aspect
+                plans["highlight"] = p
         elif mode == "youtube":
             if "teaser" in formats or "highlight" in formats:
                 p = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=360.0, instructions=instructions, ref_video_path=ref_video)
@@ -1458,8 +1347,8 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             if voice_path and key in ("teaser", "highlight"):
                 p["voiceover"], p["voiceover_duration"] = voice_path, voice_seconds
 
-        # YouTube and Music Video: the music leads - every cut lands on a beat (Reels already beat-snapped in reel_cloner)
-        if mode in ("youtube", "music_video"):
+        # YouTube, Music Video and Reels: the music leads - every cut lands on a beat
+        if mode in ("youtube", "music_video", "reels"):
             if beat_times:
                 for p in plans.values():
                     if p.get("tracks"):
@@ -1469,10 +1358,10 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             else:
                 _log(job_id, "Add a song in AI Studio to cut this edit on the beat.", "warning")
 
-        # 3.5. Non-reel modes keep a single primary track without extra B-roll overlay; Reels & Shorts preserves V2 B-Roll
-        if mode != "reels":
-            for p in plans.values():
-                p["broll_clips"] = []
+        # 3.5. Every editor gets the same arrangement as the DaVinci Resolve timeline, which has no
+        # extra B-roll overlay track - so none is added to the Premiere / EDIUS XML either
+        for p in plans.values():
+            p["broll_clips"] = []
 
         for p in plans.values():
             _log(job_id, f"Planned {p.get('sequence_name')}: {p.get('clip_count', len(p.get('clips', [])))} clips "
@@ -1506,18 +1395,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             pass
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        # 4.5. Render Ready-to-Post .MP4 Reel when requested in Reels & Shorts workflow
-        if mode == "reels" and ("render_mp4" in formats or reel_opts.get("render_mp4")):
-            from packages.ai_engine.reel_cloner import reel_cloner
-            primary_reel = plans.get("teaser") or next(iter(plans.values()), None)
-            if primary_reel:
-                mp4_res = reel_cloner.render_reel_mp4(
-                    primary_reel,
-                    log_fn=lambda msg, lvl="info": _log(job_id, msg, lvl),
-                )
-                if mp4_res.get("success"):
-                    rendered_reels.append(mp4_res["mp4_path"])
-
         result = _export_plans(job_id, plans, target_nle, audio_path, project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
 
@@ -1526,8 +1403,6 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             applied = resolve_adapter.apply_lut_to_timeline(ref_lut_path)
             if applied > 0:
                 _log(job_id, f"  🎨 Applied Reference 3D LUT to {applied} clips on DaVinci Resolve timeline!", "info")
-        if rendered_reels:
-            result["rendered_reels"] = rendered_reels
         with JOBS_LOCK:
             JOBS[job_id].update(status="done", result=result)
     except Exception as e:
@@ -1623,7 +1498,76 @@ def get_last_plan() -> Dict[str, Any]:
         return {"success": False, "has_plan": False, "error": str(e)}
 
 
+_DIRECTOR_STEP_LABELS = {
+    "director_project_overview": "Project padh raha hoon", "director_list_clips": "Footage list dekh raha hoon",
+    "director_view_clips": "Footage ke frames dekh raha hoon", "director_view_media": "Reference dekh raha hoon",
+    "director_analyze_audio": "Gaana sun raha hoon (beats & energy)", "director_get_timeline": "Current timeline padh raha hoon",
+    "director_build_timeline": "Naya cut bana raha hoon",
+}
+
+
 def reedit_timeline_job(job_id: str, prompt: str, target_timeline: str = "all", target_nle: str = "", ref_video_input: str = "") -> None:
+    """Smart AI re-edits like a human editor (looks at the footage, the song and the reference, then cuts).
+    Without Smart AI (or if it fails before cutting) the rule-based re-edit below runs instead."""
+    if not (license_manager.get_status().get("has_credits") and cloud_ai_client.get_status().get("available")):
+        return _reedit_rules_job(job_id, prompt, target_timeline, target_nle, ref_video_input)
+    built = []
+    steps = [0]
+
+    def on_event(kind: str, msg: str) -> None:
+        if kind == "tool":
+            steps[0] += 1
+            _progress(job_id, min(92, 8 + steps[0] * 4))
+            _log(job_id, f"🤖 {_DIRECTOR_STEP_LABELS.get(msg, 'Running ' + msg)}…", "info")
+        else:
+            _log(job_id, f"💬 {msg}", "normal")
+
+    base = _assistant_execute(job_id)
+
+    def execute(name: str, args: Dict[str, Any]) -> Any:
+        out = base(name, args)
+        if name == "director_build_timeline":
+            built.append(out)
+        return out
+
+    request = (
+        f"RE-EDIT REQUEST from the Timeline Re-Editor.\n"
+        f"Timeline to change: {target_timeline or 'all'} (keys: teaser, highlight, full_film; 'all' = every timeline in the project).\n"
+        f"Send to editor: {target_nle or 'project'}.\n"
+        + (f"Reference to match (look at it): {ref_video_input}\n" if ref_video_input else "")
+        + f"Editor's prompt: {prompt or 'Match the reference look and pacing.'}\n\n"
+        "Do it yourself now without asking questions: read the current timeline(s), listen to the song, look at the "
+        "footage and the reference, then rebuild the timeline(s) with director_build_timeline using the SAME key "
+        f"and editor='{target_nle or 'project'}'. Apply colour / letterbox / markers in the editor too if the prompt asks. "
+        "Finish with a 3-5 line summary in the prompt's language."
+    )
+    try:
+        _log(job_id, "🪄 Smart AI Director is taking over the re-edit (looks at footage, song & reference)…", "info")
+        _progress(job_id, 5)
+        reply = cloud_ai_client.assistant_turn([], request, _assistant_tools(), execute, on_event=on_event,
+                                               system_extra=DIRECTOR_GUIDE)
+    except Exception as e:
+        if built:
+            _log(job_id, f"Smart AI stopped after cutting: {e}", "warning")
+            reply = ""
+        else:
+            _log(job_id, f"Smart AI could not finish ({e}) — using the standard re-edit instead.", "warning")
+            return _reedit_rules_job(job_id, prompt, target_timeline, target_nle, ref_video_input)
+    if not built:
+        _log(job_id, "Smart AI did not build a new cut — using the standard re-edit instead.", "warning")
+        if reply:
+            _log(job_id, f"💬 {reply[:600]}", "normal")
+        return _reedit_rules_job(job_id, prompt, target_timeline, target_nle, ref_video_input)
+    for line in (reply or "").splitlines():
+        if line.strip():
+            _log(job_id, f"💬 {line.strip()}", "info")
+    _progress(job_id, 100)
+    _log(job_id, f"🎉 Smart AI Re-Edit Complete! {len(built)} timeline(s) cut and sent.", "info")
+    with JOBS_LOCK:
+        JOBS[job_id].update(status="done", result={"reply": reply, "built": built, "reedit_prompt": prompt}, progress=100)
+
+
+def _reedit_rules_job(job_id: str, prompt: str, target_timeline: str = "all", target_nle: str = "", ref_video_input: str = "") -> None:
     """Intelligently modifies and re-exports an existing project timeline based on user instructions and reference video."""
     try:
         from packages.ai_engine.story_planner import story_planner, parse_prompt_directives
@@ -1914,51 +1858,6 @@ def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: s
     return _use_credit(job_id, job_name), review.get("story_note", "")
 
 
-def _motion_ad_aspect(text: str) -> str:
-    t = (text or "").lower()
-    if any(w in t for w in ("1:1", "square", "feed post", "feed ad")):
-        return "1:1"
-    if any(w in t for w in ("16:9", "landscape", "horizontal", "youtube video", "widescreen")):
-        return "16:9"
-    return "9:16"
-
-
-def motion_ad_job(job_id: str, folder: str, audio_path: str, instructions: str) -> None:
-    """Smart AI motion-graphics ad: voiceover words + photos + brief -> Claude scene design -> rendered MP4."""
-    from packages.ai_engine import motion_ad
-    try:
-        license_manager.refresh()
-        if not license_manager.get_status().get("has_credits"):
-            raise RuntimeError("Smart AI motion graphics need a Smart AI pack with weddings left (Pricing page).")
-        aspect = _motion_ad_aspect(instructions)
-        _log(job_id, f"✨ Smart AI Motion Graphics · {aspect} · photos from {folder}", "info")
-        res = motion_ad.create(folder, audio_path, instructions, aspect, os.path.join(OUTPUT_DIR, "motion_ads"),
-                               lambda m, lvl="info": _log(job_id, m, lvl), lambda p: _progress(job_id, int(p * 100)))
-        _use_credit(job_id, os.path.basename(folder.rstrip("/\\")))
-        _log(job_id, "✏️ Not perfect? Write the change below (e.g. “scene 2 ka headline bada karo”) and press Apply edit.", "info")
-        with JOBS_LOCK:
-            JOBS[job_id].update(status="done", progress=100, result={"motion_ad": res, "rendered_reels": [res["video"]]})
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        _log(job_id, f"ERROR: {e}", "error")
-        with JOBS_LOCK:
-            JOBS[job_id].update(status="error", error=str(e))
-
-
-def motion_ad_edit_job(job_id: str, project_dir: str, request: str) -> None:
-    from packages.ai_engine import motion_ad
-    try:
-        res = motion_ad.edit(project_dir, request, lambda m, lvl="info": _log(job_id, m, lvl),
-                             lambda p: _progress(job_id, int(p * 100)))
-        with JOBS_LOCK:
-            JOBS[job_id].update(status="done", progress=100, result={"motion_ad": res, "rendered_reels": [res["video"]]})
-    except Exception as e:
-        logger.error(traceback.format_exc())
-        _log(job_id, f"ERROR: {e}", "error")
-        with JOBS_LOCK:
-            JOBS[job_id].update(status="error", error=str(e))
-
-
 def _use_credit(job_id: str, job_name: str) -> bool:
     credit = license_manager.consume_wedding_credit(job_name=f"Wedding: {job_name}")
     if credit.get("success"):
@@ -2022,8 +1921,367 @@ def smart_audio(job_id: str, mode: str, formats: List[str], analyzed: List[Dict[
     return music_path, voice_path, voice_seconds
 
 
+# ----------------------------------------------------------------------
+# Smart AI Director: like Claude Code, Smart AI looks at the footage, listens to the song, studies the
+# reference images / videos and then cuts the timeline itself (clip by clip), instead of keyword rules.
+# ----------------------------------------------------------------------
+_DIR_IMG_W = 512
+
+DIRECTOR_TOOLS: List[Dict[str, Any]] = [
+    {"name": "director_project_overview",
+     "description": "Start here. The active project: footage folder, song, reference video, editing mode, the timelines "
+                    "already built (key, name, clip count, duration) and how many analysed clips are available.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "director_list_clips",
+     "description": "Table of the analysed footage clips (index, file, camera, length, usable action window, peak moment, "
+                    "shot type, quality 0-100, AI moment label). Use the index with director_view_clips and director_build_timeline.",
+     "input_schema": {"type": "object", "properties": {
+         "offset": {"type": "integer", "default": 0},
+         "limit": {"type": "integer", "default": 120, "description": "max 300"},
+         "sort": {"type": "string", "enum": ["time", "quality"], "default": "time"},
+         "camera": {"type": "string", "description": "only clips of this camera folder, e.g. 'Cam 02'"}}}},
+    {"name": "director_view_clips",
+     "description": "LOOK at footage: returns real frames of the given clips (up to 16 clips per call, 1-4 frames each, "
+                    "spread over the clip's action window, each labelled with its time in seconds). Use it to pick shots, "
+                    "check focus/emotion/framing and choose exact in/out points.",
+     "input_schema": {"type": "object", "properties": {
+         "indices": {"type": "array", "items": {"type": "integer"}},
+         "frames_per_clip": {"type": "integer", "default": 2}}, "required": ["indices"]}},
+    {"name": "director_view_media",
+     "description": "LOOK at any image or video the user gives (a path on this computer, or a YouTube / Shorts / Instagram "
+                    "link for videos): an image is returned as is; a video returns frames at the given times or evenly "
+                    "spread, plus its length / fps / size. Use it to study a reference look, framing and pacing.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string"},
+         "times": {"type": "array", "items": {"type": "number"}, "description": "seconds to grab (video only)"},
+         "count": {"type": "integer", "default": 8, "description": "frames when no times are given, max 16"}},
+         "required": ["path"]}},
+    {"name": "director_analyze_audio",
+     "description": "LISTEN to a song / voiceover / video soundtrack: length, BPM, every beat time, the big drops and a "
+                    "loudness curve per second (0-100) to find intro, build-ups and drops. transcribe=true also returns "
+                    "the spoken words with timestamps (for a voiceover or dialogue).",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string"}, "transcribe": {"type": "boolean", "default": False}}, "required": ["path"]}},
+    {"name": "director_get_timeline",
+     "description": "The current cut of one timeline (teaser, highlight, full_film, reel …): every shot with its clip "
+                    "index, source in/out seconds, speed and position. Read it before changing an existing edit.",
+     "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}},
+    {"name": "director_build_timeline",
+     "description": "CUT the edit: builds a timeline from your own shot list, in order, saves it in the project and sends it "
+                    "to DaVinci Resolve / Premiere Pro / EDIUS. Each cut: clip (index from director_list_clips), in / out "
+                    "in SOURCE seconds, optional speed_percent (50 = slow motion) and role. Re-using a key replaces that "
+                    "timeline (a new version is created in the editor).",
+     "input_schema": {"type": "object", "properties": {
+         "key": {"type": "string", "description": "teaser | highlight | full_film | reel | any short id"},
+         "sequence_name": {"type": "string"},
+         "aspect": {"type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"], "default": "16:9"},
+         "music": {"type": "string", "description": "song path for the music track ('' = none, omit = project song)"},
+         "snap_to_beats": {"type": "boolean", "default": False, "description": "trim cuts so each lands on a beat"},
+         "cuts": {"type": "array", "items": {"type": "object", "properties": {
+             "clip": {"type": "integer"}, "in": {"type": "number"}, "out": {"type": "number"},
+             "speed_percent": {"type": "integer", "default": 100}, "role": {"type": "string"}},
+             "required": ["clip", "in", "out"]}},
+         "markers": {"type": "array", "items": {"type": "object", "properties": {
+             "seconds": {"type": "number"}, "name": {"type": "string"}}, "required": ["seconds", "name"]}},
+         "editor": {"type": "string", "enum": ["project", "resolve", "premiere", "edius", "both", "none"], "default": "project"}},
+         "required": ["key", "cuts"]}},
+]
+DIRECTOR_NAMES = {t["name"] for t in DIRECTOR_TOOLS}
+
+DIRECTOR_GUIDE = (
+    "\n\nHOW YOU EDIT (work like a senior editor sitting at the timeline, not like a preset):\n"
+    "1. Understand first: director_project_overview, then director_list_clips. Listen to the song with "
+    "director_analyze_audio and look at every reference image / video the user mentions with director_view_media.\n"
+    "2. Really look at the footage with director_view_clips before choosing shots - several calls are fine. "
+    "Never pick shots only from file names or scores.\n"
+    "3. Plan the story (hook, build, emotional peak, ending) against the song structure: cut on beats, put the "
+    "strongest shots on the drops, slow motion for emotion, faster cuts in high-energy parts. Match the reference's "
+    "pacing, framing and mood when one is given.\n"
+    "4. Cut it with director_build_timeline (choose exact source in/out seconds inside each clip's usable window). "
+    "For a change to an existing edit, read it with director_get_timeline and rebuild it with your changes.\n"
+    "5. Then finish in the editor with the other tools (colour, letterbox, markers, audio, titles) when asked.\n"
+    "6. Check your result (director_get_timeline) and end with a short summary of what you cut and why.\n"
+    "Footage paths the user writes in quotes are files on this computer - open them with your tools."
+)
+
+
+def _dir_project() -> Tuple[str, Dict[str, Any]]:
+    info = get_last_plan()
+    path = info.get("plan_file") if info.get("has_plan") else None
+    if not path:
+        raise RuntimeError("No project yet. Build a first edit from AI Studio (Load footage → Create), then ask again.")
+    with open(path, "r", encoding="utf-8") as f:
+        return path, json.load(f)
+
+
+def _dir_save_project(data: Dict[str, Any]) -> str:
+    ts = time.strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(OUTPUT_DIR, f"{data.get('mode', 'wedding')}_plan_ai_{ts}.json")
+    data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    for p in (path, os.path.join(OUTPUT_DIR, "last_plan.json")):
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+    return path
+
+
+def _dir_jpeg(img_bgr_or_pil, label: str) -> List[Dict[str, Any]]:
+    """One labelled JPEG image block (frames are scaled to _DIR_IMG_W wide to keep requests small)."""
+    import base64
+    import io
+    from PIL import Image
+    img = img_bgr_or_pil
+    if not isinstance(img, Image.Image):  # OpenCV BGR array
+        img = Image.fromarray(img[:, :, ::-1])
+    img = img.convert("RGB")
+    w, h = img.size
+    if w > _DIR_IMG_W:
+        img = img.resize((_DIR_IMG_W, max(1, int(h * _DIR_IMG_W / w))), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=78)
+    return [{"type": "text", "text": label},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                         "data": base64.standard_b64encode(buf.getvalue()).decode("ascii")}}]
+
+
+def _dir_frames(path: str, times: List[float]) -> Tuple[List[Tuple[float, Any]], Dict[str, Any]]:
+    import cv2
+    cap = cv2.VideoCapture(path)
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        meta = {"duration": round(n / fps, 2) if n else 0, "fps": round(fps, 3),
+                "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0), "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)}
+        out = []
+        for t in times:
+            if meta["duration"] and t > meta["duration"]:
+                continue
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(t * fps)))
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                out.append((round(t, 2), frame))
+        return out, meta
+    finally:
+        cap.release()
+
+
+def _dir_is_still(clip: Dict[str, Any]) -> bool:
+    return bool(clip.get("is_still") or clip.get("is_psd")) or os.path.splitext(clip.get("file_path", ""))[1].lower() in STILL_EXTS
+
+
+def _dir_window(clip: Dict[str, Any]) -> Tuple[float, float]:
+    dur = float(clip.get("duration") or 0)
+    a = float(clip.get("full_in_seconds", clip.get("action_start_seconds", 0)) or 0)
+    b = float(clip.get("full_out_seconds", clip.get("action_end_seconds", dur)) or dur)
+    if b <= a:
+        a, b = 0.0, dur
+    return a, b
+
+
+def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
+    if name == "director_project_overview":
+        path, data = _dir_project()
+        info = get_last_plan()
+        return {"project": info.get("project_name"), "plan_file": path, "folder": data.get("folder"),
+                "mode": data.get("mode"), "song": data.get("audio"), "reference_video": data.get("ref_video"),
+                "editor": data.get("target_nle"), "instructions": data.get("instructions"),
+                "analysed_clips": len(data.get("analyzed", [])), "timelines": info.get("timelines", [])}
+
+    if name == "director_list_clips":
+        _, data = _dir_project()
+        clips = list(enumerate(data.get("analyzed", [])))
+        cam = (args.get("camera") or "").strip().lower()
+        if cam:
+            clips = [(i, c) for i, c in clips if cam in str(c.get("camera", "")).lower()]
+        if args.get("sort") == "quality":
+            clips.sort(key=lambda x: x[1].get("quality_score", 0), reverse=True)
+        off, lim = max(0, int(args.get("offset") or 0)), min(300, max(1, int(args.get("limit") or 120)))
+        rows = []
+        for i, c in clips[off:off + lim]:
+            a, b = _dir_window(c)
+            rows.append({"i": i, "file": os.path.basename(c.get("file_path", "")), "cam": c.get("camera", ""),
+                         "len": round(float(c.get("duration") or 0), 2), "use": [round(a, 2), round(b, 2)],
+                         "peak": c.get("action_peak_seconds"), "shot": c.get("shot_type", ""),
+                         "q": c.get("quality_score"), "moment": c.get("ai_moment", ""), "still": _dir_is_still(c)})
+        return {"total": len(clips), "offset": off, "clips": rows}
+
+    if name == "director_view_clips":
+        _, data = _dir_project()
+        analyzed = data.get("analyzed", [])
+        per = min(4, max(1, int(args.get("frames_per_clip") or 2)))
+        blocks: List[Dict[str, Any]] = []
+        for i in [int(x) for x in (args.get("indices") or [])][:16]:
+            if not 0 <= i < len(analyzed):
+                blocks.append({"type": "text", "text": f"Clip {i}: no such clip."})
+                continue
+            c = analyzed[i]
+            label = f"Clip {i} · {os.path.basename(c.get('file_path', ''))} · {c.get('camera', '')}"
+            try:
+                if _dir_is_still(c):
+                    from PIL import Image
+                    with Image.open(c["file_path"]) as img:
+                        blocks += _dir_jpeg(img.copy(), label + " (still image)")
+                    continue
+                a, b = _dir_window(c)
+                times = [a + (b - a) * (k + 0.5) / per for k in range(per)]
+                frames, _ = _dir_frames(c["file_path"], times)
+                for t, fr in frames:
+                    blocks += _dir_jpeg(fr, f"{label} @ {t}s")
+                if not frames:
+                    blocks.append({"type": "text", "text": label + ": could not read frames."})
+            except Exception as e:
+                blocks.append({"type": "text", "text": f"{label}: {e}"})
+        return {"_content": blocks or [{"type": "text", "text": "No clips given."}]}
+
+    if name == "director_view_media":
+        src = str(args.get("path") or "").strip().strip('"').strip("'")
+        if src.lower().startswith(("http://", "https://")):
+            _log(job_id, "  Downloading the reference video…", "info") if job_id else None
+            src = resolve_reference_video_source(src, job_id) or ""
+        src = os.path.expanduser(src)
+        if not os.path.isfile(src):
+            raise RuntimeError(f"File not found: {args.get('path')}")
+        ext = os.path.splitext(src)[1].lower()
+        if ext in IMAGE_EXTS:
+            from PIL import Image
+            with Image.open(src) as img:
+                return {"_content": _dir_jpeg(img.copy(), f"Image {os.path.basename(src)} ({img.size[0]}x{img.size[1]})")}
+        _, meta = _dir_frames(src, [])
+        times = [float(t) for t in (args.get("times") or [])][:16]
+        if not times:
+            n = min(16, max(1, int(args.get("count") or 8)))
+            d = meta["duration"] or 0
+            times = [d * (k + 0.5) / n for k in range(n)]
+        frames, meta = _dir_frames(src, times)
+        blocks = [{"type": "text", "text": f"Video {os.path.basename(src)}: {json.dumps(meta)}"}]
+        for t, fr in frames:
+            blocks += _dir_jpeg(fr, f"@ {t}s")
+        return {"_content": blocks}
+
+    if name == "director_analyze_audio":
+        src = os.path.expanduser(str(args.get("path") or "").strip().strip('"').strip("'"))
+        if not os.path.isfile(src):
+            raise RuntimeError(f"File not found: {args.get('path')}")
+        from packages.ai_engine.beat_analyzer import beat_analyzer
+        beats = beat_analyzer.analyze_audio(src, 25.0)
+        out = {k: beats.get(k) for k in ("duration", "bpm", "beat_count", "drop_times")}
+        out["beat_times"] = (beats.get("beat_times") or [])[:600]
+        try:
+            import numpy as np
+            from packages.ai_engine.audio_io import load_audio
+            samples, sr = load_audio(src, 8000)
+            secs = len(samples) // sr
+            rms = np.array([float(np.sqrt(np.mean(samples[s * sr:(s + 1) * sr] ** 2))) for s in range(secs)]) if secs else np.array([])
+            if rms.size:
+                out["loudness_per_second"] = [int(v) for v in np.round(100 * rms / (rms.max() or 1))]
+                out["duration"] = out.get("duration") or secs
+        except Exception as e:
+            out["loudness_note"] = f"loudness curve unavailable: {e}"
+        if args.get("transcribe"):
+            from packages.ai_engine import ai_audio
+            tr = ai_audio.transcribe(src)
+            out["transcript"] = tr.get("text", "")
+            out["words"] = [[w.get("text"), round(float(w.get("start", 0)), 2), round(float(w.get("end", 0)), 2)]
+                            for w in (tr.get("words") or [])][:1500]
+        return out
+
+    if name == "director_get_timeline":
+        _, data = _dir_project()
+        key = str(args.get("key") or "")
+        plan = (data.get("plans") or {}).get(key)
+        if not plan:
+            return {"error": f"No timeline '{key}'.", "available": list((data.get("plans") or {}).keys())}
+        index_of = {os.path.normpath(c.get("file_path", "")): i for i, c in enumerate(data.get("analyzed", []))}
+        fps_of = {os.path.normpath(c.get("file_path", "")): float(c.get("native_fps") or 25.0) for c in data.get("analyzed", [])}
+        shots = []
+        for c in plan.get("clips", []):
+            fp = os.path.normpath(c.get("file_path") or "")
+            fps = fps_of.get(fp, 25.0)
+            shots.append({"clip": index_of.get(fp), "file": os.path.basename(fp),
+                          "in": round(c.get("in_frame", 0) / fps, 2), "out": round(c.get("out_frame", 0) / fps, 2),
+                          "speed_percent": c.get("speed_percent", 100), "at": c.get("timeline_start"),
+                          "len": c.get("duration"), "role": c.get("role", "")})
+        return {"key": key, "name": plan.get("sequence_name"), "aspect": plan.get("aspect_ratio"),
+                "duration": plan.get("total_duration"), "music": plan.get("audio"), "shots": shots}
+
+    if name == "director_build_timeline":
+        _, data = _dir_project()
+        analyzed = data.get("analyzed", [])
+        key = re.sub(r"[^A-Za-z0-9_\-]", "_", str(args.get("key") or "ai_edit"))[:40]
+        entries, t, problems = [], 0.0, []
+        for n, cut in enumerate(args.get("cuts") or []):
+            i = int(cut.get("clip", -1))
+            if not 0 <= i < len(analyzed):
+                problems.append(f"cut {n}: clip {i} does not exist")
+                continue
+            c = analyzed[i]
+            fps = float(c.get("native_fps") or 25.0)
+            dur = float(c.get("duration") or 0)
+            a, b = float(cut.get("in", 0)), float(cut.get("out", 0))
+            speed = min(400, max(10, int(cut.get("speed_percent") or 100)))
+            still = _dir_is_still(c)
+            if still:
+                a, b, speed = 0.0, max(0.5, b - a), 100
+            else:
+                a, b = max(0.0, min(a, dur)), max(0.0, min(b, dur))
+                if b - a < 0.2:
+                    problems.append(f"cut {n}: clip {i} in/out {cut.get('in')}-{cut.get('out')} is outside its {dur}s")
+                    continue
+            length = round((b - a) * 100.0 / speed, 3)
+            entries.append({"clip_name": os.path.basename(c.get("file_path", "")), "file_path": c.get("file_path"),
+                            "timeline_start": round(t, 3), "timeline_end": round(t + length, 3),
+                            "in_frame": int(round(a * fps)), "out_frame": int(round(b * fps)),
+                            "in_seconds": round(a, 3), "out_seconds": round(b, 3), "duration": length,
+                            "shot_type": c.get("shot_type", "mid"), "role": cut.get("role") or "",
+                            "is_still": still, "speed": speed / 100.0, "speed_percent": speed,
+                            "speed_label": f"{speed}%" + (" Slow-Mo (Optical Flow)" if speed < 100 else ""),
+                            "retime_process": "Optical Flow" if speed != 100 else "Normal"})
+            t += length
+        if not entries:
+            raise RuntimeError("No usable cuts. " + "; ".join(problems))
+        aspect = args.get("aspect") or "16:9"
+        plan = {"format": f"Smart_AI_{key}", "aspect_ratio": {"16:9": "16:9 (1920x1080 / 3840x2160)", "9:16": "9:16 (1080x1920)",
+                                                                 "1:1": "1:1 (1080x1080)", "4:5": "4:5 (1080x1350)"}.get(aspect, aspect),
+                "sequence_name": (args.get("sequence_name") or f"Smart_AI_{key}_{time.strftime('%H%M%S')}")[:80],
+                "clips": entries, "clip_count": len(entries), "total_duration": round(t, 2), "edited_by": "Smart AI Director"}
+        music = args.get("music")
+        music = data.get("audio", "") if music is None else os.path.expanduser(str(music).strip().strip('"'))
+        if music and os.path.isfile(music):
+            plan["audio"] = music
+            if args.get("snap_to_beats"):
+                from packages.ai_engine.beat_analyzer import beat_analyzer
+                bt = beat_analyzer.analyze_audio(music, 25.0).get("beat_times") or []
+                moved = _snap_to_beats(plan, bt)
+                _log(job_id, f"  🎵 {moved} cuts locked to the beat", "info") if job_id else None
+        data.setdefault("plans", {})[key] = plan
+        if music and os.path.isfile(music):
+            data["audio"] = music
+        saved = _dir_save_project(data)
+        editor = args.get("editor") or "project"
+        target = data.get("target_nle") or "resolve" if editor == "project" else editor
+        markers = {key: [{"seconds": float(m["seconds"]), "name": str(m["name"])[:60]} for m in (args.get("markers") or [])]}
+        _log(job_id, f"✂️ Smart AI cut '{plan['sequence_name']}': {len(entries)} shots, {plan['total_duration']}s", "info") if job_id else None
+        res: Dict[str, Any] = {}
+        if target != "none":
+            res = _export_plans(job_id or _new_job(), {key: plan}, target, plan.get("audio", ""), markers=markers,
+                                project_name=data.get("project_name") or "AI_Project")
+        return {"built": plan["sequence_name"], "shots": len(entries), "duration": plan["total_duration"],
+                "beat_synced": bool(plan.get("beat_synced")), "editor": target, "plan_file": saved,
+                "in_resolve": res.get("timelines_created", []), "premiere_xmls": res.get("premiere_xmls", []),
+                "edius_xmls": res.get("edius_xmls", []), "skipped": problems}
+
+    raise RuntimeError(f"Unknown tool {name}")
+
+
+def _assistant_execute(job_id: str):
+    def run(name: str, args: Dict[str, Any]) -> Any:
+        if name in DIRECTOR_NAMES:
+            return director_call(name, args, job_id)
+        return _mcp().handle_tool_call(name, args)
+    return run
+
+
 def _assistant_tools() -> List[Dict[str, Any]]:
-    seen, tools = set(), []
+    seen, tools = set(DIRECTOR_NAMES), list(DIRECTOR_TOOLS)
     for t in _mcp().MCP_TOOLS:
         if t["name"] in seen:
             continue
@@ -2038,8 +2296,9 @@ def assistant_job(job_id: str, text: str) -> None:
         mark = len(ASSISTANT_HISTORY)
         try:
             reply = cloud_ai_client.assistant_turn(
-                ASSISTANT_HISTORY, text, _assistant_tools(), _mcp().handle_tool_call,
-                on_event=lambda kind, name: _log(job_id, f"Running {name}…", "info"),
+                ASSISTANT_HISTORY, text, _assistant_tools(), _assistant_execute(job_id),
+                on_event=lambda kind, msg: _log(job_id, f"Running {msg}…" if kind == "tool" else msg, "info"),
+                system_extra=DIRECTOR_GUIDE,
             )
             with JOBS_LOCK:
                 JOBS[job_id].update(status="done", result={"reply": reply}, progress=100)
@@ -2159,10 +2418,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             self._json(license_manager.update_info())
             return
 
-        if self.path == "/api/update/status":
-            self._json(updater.status())
-            return
-
         if self.path == "/api/cloud-ai/status":
             self._json(cloud_ai_client.get_status())
             return
@@ -2267,13 +2522,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 res.pop("psds", None)
             self._json(res)
 
-        elif self.path == "/api/run-wedding" and not license_manager.get_status().get("local_unlimited") and not license_manager.is_profile_registered():
-            self._json({
-                "success": False,
-                "needs_registration": True,
-                "error": "Free Trial (2 Edits / Day) chalane ke liye pehle My Profile me apna Name, WhatsApp Number aur Email register karein.",
-            })
-
         elif self.path == "/api/run-wedding" and (free_status(force=True) or {"success": True}).get("success") is False:
             self._json({"success": False, "error": free_status()["error"] or "Could not check the free plan. Try again."})
 
@@ -2295,14 +2543,8 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 job_id = start_job(longform_job, data.get("folder", ""), formats, target_nle, mode, data.get("cut_level") or "normal", ref_video, instructions)
                 self._json({"success": True, "job_id": job_id})
                 return
-            if mode == "custom" and tier == "premium":
-                # Smart AI on: a fully designed motion-graphics ad (like the hand-made ones), editable by prompt
-                job_id = start_job(motion_ad_job, data.get("folder", ""), (data.get("audio") or "").strip(), instructions)
-                self._json({"success": True, "job_id": job_id})
-                return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
-                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500],
-                               data.get("reel_options") or {})
+                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500])
             self._json({"success": True, "job_id": job_id})
 
         elif self.path == "/api/re-edit-timeline":
@@ -2319,14 +2561,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
         elif self.path == "/api/license/status":
             self._json(license_status())
 
-        elif self.path == "/api/license/register-profile":
-            self._json(license_manager.register_user_profile(
-                name=(data.get("name") or "").strip(),
-                phone=(data.get("phone") or "").strip(),
-                email=(data.get("email") or "").strip(),
-                studio=(data.get("studio") or "").strip(),
-            ))
-
         elif self.path == "/api/license/activate":
             key = (data.get("license_key") or "").strip()
             email = (data.get("email") or "").strip()
@@ -2337,17 +2571,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         elif self.path == "/api/license/refresh":
             self._json(license_manager.refresh())
-
-        elif self.path == "/api/update/download":
-            self._json(updater.start_download(license_manager.update_info()))
-
-        elif self.path == "/api/update/install":
-            with JOBS_LOCK:
-                busy = any(j["status"] == "running" for j in JOBS.values())
-            if busy:
-                self._json({"success": False, "error": "A project is still running. Update once it finishes."}, 409)
-            else:
-                self._json(updater.install())
 
         elif self.path == "/api/assistant/send":
             text = (data.get("text") or "").strip()
@@ -2377,15 +2600,6 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 self._json({"success": True})
             else:
                 self._json({"success": False, "error": "Only web links can be opened."}, 400)
-
-        elif self.path == "/api/motion-ad/edit":
-            project_dir = data.get("project_dir") or ""
-            if not os.path.isfile(os.path.join(project_dir, "project.json")):
-                self._json({"success": False, "error": "This ad project was not found."}, 404)
-            elif not (data.get("request") or "").strip():
-                self._json({"success": False, "error": "Write what to change."}, 400)
-            else:
-                self._json({"success": True, "job_id": start_job(motion_ad_edit_job, project_dir, data["request"].strip()[:1500])})
 
         elif self.path == "/api/open-folder":
             path = data.get("path") or OUTPUT_DIR

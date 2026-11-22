@@ -1079,7 +1079,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.21 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.22 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");
@@ -1277,4 +1277,22 @@
   ["input", "change", "click"].forEach((ev) => pane.addEventListener(ev, () => setTimeout(refresh, 0)));
   setTimeout(refresh, 300);
   setInterval(refresh, 2000);   // folder / song filled in by Browse or a restored session
+})();
+
+// Smart AI Re-Edit card: closed by default (one-line header), opens on click; state remembered
+(function () {
+  const card = document.getElementById("reedit-card");
+  const head = document.getElementById("reedit-toggle");
+  if (!card || !head) return;
+  let on = false;
+  try { on = localStorage.getItem("avf.reedit.open") === "1"; } catch (e) { /* ignore */ }
+  const set = (v) => {
+    on = v;
+    card.classList.toggle("open", v);
+    head.setAttribute("aria-expanded", v ? "true" : "false");
+    try { localStorage.setItem("avf.reedit.open", v ? "1" : "0"); } catch (e) { /* ignore */ }
+  };
+  head.addEventListener("click", () => set(!on));
+  head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set(!on); } });
+  set(on);
 })();

@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.21 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.22 · AI editing assistant</div>
         </div>
       </div>
 
@@ -332,17 +332,14 @@
 
               <!-- RE-EDIT CARD (Appears when timelines are created or project is active) -->
               <div class="card reedit-card" id="reedit-card" hidden>
-                <div class="reedit-head">
-                  <div class="reedit-badge-row" style="display:flex;justify-content:space-between;align-items:center;">
-                    <span class="badge-reedit">✨ Smart AI Timeline Re-Editor</span>
-                    <span class="reedit-status muted" id="reedit-status" style="font-size:12px;">Active: <b id="reedit-project-name" style="color:var(--text);">—</b></span>
-                  </div>
-                  <p class="hint" style="margin-top:6px;font-size:12.5px;">
-                    Timeline ban chuki hai! Apne hisab se re-edit prompt likhiye — Smart AI DaVinci Resolve, Premiere ya EDIUS me instant professional re-edit kar dega.
-                  </p>
+                <div class="card-head" id="reedit-toggle" role="button" tabindex="0" aria-expanded="false">
+                  <b>✨ Smart AI Re-Edit</b>
+                  <span class="step-sum" id="reedit-status">Active: <b id="reedit-project-name">—</b></span>
+                  <span class="step-chev">▾</span>
                 </div>
 
-                <div class="reedit-body" style="margin-top:12px;">
+                <div class="reedit-body">
+                  <p class="hint" style="margin:0 0 12px;font-size:12.5px;">Likhiye kya badalna hai — Smart AI timeline ko DaVinci Resolve, Premiere ya EDIUS me dobara bana dega.</p>
                   <div class="reedit-grid-row" style="display:flex;gap:10px;margin-bottom:10px;align-items:center;">
                     <label class="lbl" style="margin:0;white-space:nowrap;font-size:12px;">Target Timeline:</label>
                     <select id="reedit-timeline-select" class="reedit-select" style="flex:1;">

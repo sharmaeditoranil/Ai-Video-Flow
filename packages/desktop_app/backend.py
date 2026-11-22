@@ -50,7 +50,7 @@ PSD_EXTS = {".psd", ".psb"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".svg"} | PSD_EXTS
 STILL_EXTS = IMAGE_EXTS
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.21"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.22"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()

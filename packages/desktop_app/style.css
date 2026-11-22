@@ -1219,3 +1219,14 @@ textarea { resize: vertical; }
 .step-chev { color: var(--muted); font-size: 18px; line-height: 1; transition: transform .15s ease; flex-shrink: 0; }
 .step:not(.open) .step-chev { transform: rotate(-90deg); }
 
+
+/* ---------- Right column: one clean card style ---------- */
+.card-head { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; font-size: 15px; }
+.card-head b { font-weight: 700; letter-spacing: -0.01em; }
+.card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+.card-head .step-sum b { font-weight: 600; color: var(--text); }
+.reedit-card:not(.open) .reedit-body { display: none; }
+.reedit-card.open .card-head { margin-bottom: 12px; }
+.reedit-card:not(.open) .step-chev { transform: rotate(-90deg); }
+.reedit-card.open .step-sum { visibility: visible; }
+.people-head b, .log-head b, .log-head span[style*="font-weight:700"] { font-size: 15px; }

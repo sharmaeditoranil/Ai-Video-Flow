@@ -394,7 +394,8 @@
   // AI Studio
   // ------------------------------------------------------------------
   const OUTPUTS = {
-    wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — real-time order · 2-3 cameras: one track per camera, synced"]],
+    wedding: [["teaser", "01 Teaser — 60 s"], ["highlight", "02 Cinematic Highlight — about 4 min"], ["full_film", "03 Full Wedding Film — real-time order · 2-3 cameras: one track per camera, synced"],
+      ["reel", "04 Instagram Reel — 30 s, 9:16 · faces kept in frame", false]],
     reels: [["teaser", "Instagram Reel — 45 s, 9:16"], ["highlight", "Shorts Teaser — 30 s, 9:16"]],
     youtube: [["highlight", "Main edit — about 6 min"], ["full_film", "Shorts highlights — 60 s, 9:16"]],
     music_video: [["highlight", "Music video cut — about 3 min, on the beat"], ["full_film", "Mood montage — 60 s"]],
@@ -411,11 +412,11 @@
 
   function renderOutputs() {
     $("outputs").innerHTML = "";
-    OUTPUTS[mode].forEach(([key, label]) => {
+    OUTPUTS[mode].forEach(([key, label, on = true]) => {
       const l = document.createElement("label");
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.checked = true;
+      cb.checked = on;
       cb.value = key;
       l.append(cb, document.createTextNode(label));
       $("outputs").appendChild(l);
@@ -445,6 +446,7 @@
       custom: "Photos, PSD layers & graphics are cut and animated directly to your voiceover speech, pauses and audio rhythm.",
     }[mode] || "";
     renderOutputs();
+    if ($("same-day-row")) $("same-day-row").hidden = mode !== "wedding";
   }
   document.querySelectorAll(".mode").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
   setMode(mode);
@@ -552,6 +554,7 @@
         ai_music: $("chk-ai-review").checked && $("chk-ai-music").checked,
         voiceover: $("chk-ai-review").checked && $("chk-ai-voice").checked ? ($("in-voice").value.trim() || "auto") : "",
         cut_level: cutLevel,
+        same_day: mode === "wedding" && $("chk-same-day") ? $("chk-same-day").checked : false,
       });
       if (!started.success) {
         log(consoleBox, started.error, "warning");
@@ -656,6 +659,7 @@
         return;
       }
       card.hidden = false;
+      loadPeople();
       const pName = $("reedit-project-name");
       if (pName) pName.textContent = res.project_name || "Active Project";
 
@@ -681,6 +685,113 @@
     } catch (e) {
       /* offline or no plan */
     }
+  }
+
+  // ------------------------------------------------------------------
+  // People: Bride, Groom & family (STEP 2) — face data stays on this computer
+  // ------------------------------------------------------------------
+  const ROLE_LABEL = {
+    bride: "Bride (Dulhan)", groom: "Groom (Dulha)", bride_mother: "Bride's mother", bride_father: "Bride's father",
+    groom_mother: "Groom's mother", groom_father: "Groom's father", sibling: "Brother / Sister",
+    relative: "Relative", friend: "Friend", guest: "Guest",
+  };
+  const peopleCard = $("people-card");
+
+  function renderPeople(r) {
+    if (!peopleCard) return;
+    peopleCard.hidden = !r.has_project && r.has_project !== undefined;
+    const consent = $("people-consent");
+    if (r.consent !== undefined) consent.checked = !!r.consent;
+    const persons = r.persons || [];
+    const auto = new Set(r.auto_couple || []);
+    $("people-status").textContent = persons.length ? `${persons.length} people` : "";
+    const refs = $("people-ref-thumbs");
+    refs.innerHTML = "";
+    (r.references || []).forEach((ref) => {
+      const span = document.createElement("span");
+      span.className = "ref";
+      span.innerHTML = `<img alt=""><span></span><button type="button" title="Remove this photo">✕</button>`;
+      span.querySelector("img").src = ref.thumb;
+      span.querySelector("span").textContent = ROLE_LABEL[ref.role] || ref.role;
+      span.querySelector("button").addEventListener("click", () => peopleAction("/api/people/reference/remove", { role: ref.role }));
+      refs.appendChild(span);
+    });
+    const grid = $("people-grid");
+    grid.innerHTML = "";
+    persons.slice(0, 30).forEach((p) => {
+      const el = document.createElement("div");
+      const couple = p.role === "bride" || p.role === "groom" || (!p.role && auto.has(p.id));
+      el.className = "person" + (couple ? " is-couple" : "");
+      el.innerHTML = `<img alt=""><div class="meta"></div><select></select>`;
+      el.querySelector("img").src = p.thumb;
+      el.querySelector(".meta").textContent = `${p.clips} clip${p.clips === 1 ? "" : "s"}` +
+        (p.role_from === "photo" ? " · photo match" : (!p.role && auto.has(p.id) ? " · couple (auto)" : ""));
+      const sel = el.querySelector("select");
+      sel.add(new Option("— Not named —", ""));
+      Object.entries(ROLE_LABEL).forEach(([k, v]) => sel.add(new Option(v, k)));
+      sel.value = p.role || "";
+      sel.addEventListener("change", () => peopleAction("/api/people/role", { id: p.id, role: sel.value || null }));
+      grid.appendChild(el);
+    });
+    $("people-tools").hidden = !consent.checked;
+    $("btn-people-delete").hidden = !persons.length && !(r.references || []).length;
+  }
+
+  async function loadPeople() {
+    if (!peopleCard) return;
+    try { renderPeople(await api("/api/people")); } catch (e) { /* offline */ }
+  }
+
+  async function peopleAction(path, body) {
+    try {
+      const r = await api(path, body);
+      if (!r.success) throw new Error(r.error || "Could not update people.");
+      renderPeople(r);
+    } catch (e) {
+      log(consoleBox, e.message, "error");
+    }
+  }
+
+  async function peopleJob(path, body, label) {
+    peopleCard.setAttribute("aria-busy", "true");
+    log(consoleBox, label, "info");
+    try {
+      const r = await api(path, body);
+      if (!r.success) throw new Error(r.error || "Could not start.");
+      const job = await pollJob(r.job_id, (l) => log(consoleBox, l.msg, l.level, l.t));
+      if (job.status === "error") throw new Error(job.error || "People recognition stopped.");
+      renderPeople(job.result || {});
+    } catch (e) {
+      log(consoleBox, e.message, "error");
+    } finally {
+      peopleCard.removeAttribute("aria-busy");
+      loadPeople();
+    }
+  }
+
+  if (peopleCard) {
+    $("people-consent").addEventListener("change", async (e) => {
+      const hasData = $("people-grid").children.length || $("people-ref-thumbs").children.length;
+      if (!e.target.checked && hasData) {
+        if (!confirm("Anumati hatane par is project ka saara face data delete ho jayega. Continue?")) { e.target.checked = true; return; }
+        await peopleAction("/api/people/delete", {});
+        e.target.checked = false;
+      }
+      $("people-tools").hidden = !e.target.checked;
+    });
+    $("btn-people-scan").addEventListener("click", () => peopleJob("/api/people/scan", {}, "👥 Finding the bride, groom and family in this project…"));
+    ["btn-people-ref-bride", "btn-people-ref-groom"].forEach((id) => $(id).addEventListener("click", async () => {
+      const role = $(id).dataset.role;
+      const pick = await api("/api/browse", { kind: "image", prompt: `Select a clear photo of the ${role}` });
+      if (!pick || !pick.path) return;
+      peopleJob("/api/people/reference", { role, path: pick.path }, `📷 Matching the ${role}'s photo with the footage…`);
+    }));
+    $("btn-people-delete").addEventListener("click", async () => {
+      if (!confirm("Is project ke saare chehre, photos aur naam delete kar dein?")) return;
+      await peopleAction("/api/people/delete", {});
+      $("people-consent").checked = false;
+      renderPeople({ consent: false, persons: [], references: [] });
+    });
   }
 
   if ($("btn-browse-reedit-ref")) {
@@ -968,7 +1079,7 @@
       renderStatus(d);
       box.innerHTML = "";
       const env = d.environment;
-      const items = [["App", `v1.1.20 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
+      const items = [["App", `v1.1.21 · ${env.os}`], ["Python", env.python], ["Output folder", env.output_dir]];
       Object.entries(env.dependencies).forEach(([k, v]) => items.push([k, v || "missing"]));
       items.forEach(([k, v]) => {
         const it = document.createElement("div");
@@ -1071,4 +1182,12 @@
   loadLastPlan();
   setInterval(fetchStatus, 6000);
   setInterval(fetchLicense, 60000);
+})();
+
+// Same-Day mode (wedding): remembered per computer
+(function () {
+  const cb = document.getElementById("chk-same-day");
+  if (!cb) return;
+  try { cb.checked = localStorage.getItem("avf.sameDay") === "1"; } catch (e) { /* ignore */ }
+  cb.addEventListener("change", () => { try { localStorage.setItem("avf.sameDay", cb.checked ? "1" : "0"); } catch (e) { /* ignore */ } });
 })();

@@ -42,7 +42,7 @@ Section "Install"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "DisplayName" "AI Video Flow"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "DisplayIcon" "$INSTDIR\assets\icon.ico"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "DisplayVersion" "1.1.20"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "DisplayVersion" "1.1.21"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AIVideoFlow" "Publisher" "AI Video Flow"
 SectionEnd
 

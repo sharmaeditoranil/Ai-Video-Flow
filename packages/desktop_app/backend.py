@@ -50,7 +50,7 @@ PSD_EXTS = {".psd", ".psb"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".svg"} | PSD_EXTS
 STILL_EXTS = IMAGE_EXTS
 OUTPUT_DIR = os.path.join(os.path.expanduser("~"), "AI-Video-Flow-Output")
-APP_VERSION = "1.1.20"  # launcher only reuses an already-running server with the same version
+APP_VERSION = "1.1.21"  # launcher only reuses an already-running server with the same version
 
 SESSION_TOKEN = os.environ.get("AVF_SESSION_TOKEN", "")
 ALLOWED_HOSTS: set = set()
@@ -577,7 +577,7 @@ def _export_plans(job_id: str, plans: Dict[str, Dict[str, Any]], target_nle: str
                     _log(job_id, f"  ✨ DaVinci Resolve: {name} created with {placed} clips", "info")
                     fps = float(p.get("fps") or 25.0)
                     for m in (markers or {}).get(key, []):
-                        resolve_adapter.add_timeline_marker(int(m["seconds"] * fps), "Blue", m["name"], "")
+                        resolve_adapter.add_timeline_marker(int(m["seconds"] * fps), "Blue", m["name"], m.get("note", ""))
             resolve_adapter.save_project()
         else:
             _log(job_id, "DaVinci Resolve is not connected — skipped the Resolve timelines (the plan is saved).", "warning")
@@ -1024,8 +1024,10 @@ def extract_and_apply_reference_look(job_id: str, ref_video_path: str, target_nl
 
 
 def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], target_nle: str = "resolve", mode: str = "wedding",
-                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "") -> None:
-    """`voiceover`: "" = none, "auto" = Smart AI writes the script, anything else = the script to speak."""
+                ref_video: str = "", instructions: str = "", tier: str = "free", ai_music: bool = False, voiceover: str = "",
+                same_day: bool = False) -> None:
+    """`voiceover`: "" = none, "auto" = Smart AI writes the script, anything else = the script to speak.
+    `same_day` (wedding): Same-Day mode — quick analysis, no Smart AI shot review, plus the 05 Same-Day Edit."""
     try:
         from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
         from packages.ai_engine.beat_analyzer import beat_analyzer
@@ -1074,20 +1076,34 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             except Exception as e:
                 _log(job_id, f"Claude AI Creative Plan note: {e}", "warning")
 
-        # 1. Analyse every clip
+        # 1. Analyse every clip (Same-Day mode: quick analysis, fewer frames sampled)
+        quick = mode == "wedding" and (same_day or "same_day" in formats)
+        if quick and "same_day" not in formats:
+            formats = list(formats) + ["same_day"]
+        trimmer = in_clip_trimmer
+        if quick:
+            from packages.ai_engine.in_clip_trimmer import InClipTrimmer
+            trimmer = InClipTrimmer(sample_fps=4, cache_dir=in_clip_trimmer.cache_dir)
+            _log(job_id, "⚡ Same-Day mode: quick analysis, every timeline ready faster", "info")
         analyzed = []
         for i, vp in enumerate(raw_clips, 1):
             try:
-                res = in_clip_trimmer.analyze_clip(vp)
+                res = trimmer.analyze_clip(vp)
                 analyzed.append(res)
                 if res.get("is_still") or res.get("is_psd"):
                     _log(job_id, f"[{i}/{len(raw_clips)}] 🎨 {os.path.basename(vp)} → Graphic Layer ({'PSD' if res.get('is_psd') else 'Image'}) · Ready for Motion Graphics")
                 else:
                     full_kept = res.get('full_duration', res.get('duration', 0))
                     total_dur = res.get('duration', 0)
-                    _log(job_id, f"[{i}/{len(raw_clips)}] {os.path.basename(vp)} ({total_dur:.1f}s) → "
+                    faces = (res.get("faces") or {}).get("count", 0)
+                    seen = " · ".join(x for x in [
+                        (res.get("moment") or "").replace("_", " ").title(), res.get("shot_type", "").replace("_", " "),
+                        res.get("camera_move", "").replace("_", " "), f"{faces} face{'s' if faces != 1 else ''}" if "faces" in res else "",
+                        res.get("audio_type", ""), f"wedding score {res['wedding_score']:.0f}" if "wedding_score" in res else ""] if x)
+                    _log(job_id, f"[{i}/{len(raw_clips)}] {os.path.basename(vp)} ({total_dur:.1f}s){' ⚡cached' if res.get('from_cache') else ''} → "
                                  f"Full Film: {full_kept:.1f}s kept (action starts at {res.get('action_start_seconds', 0):.1f}s) | "
-                                 f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})")
+                                 f"Highlight: {res.get('trimmed_duration', 0):.1f}s (score {res.get('quality_score', 0):.0f})"
+                                 + (f"\n      {seen}" if seen else ""))
             except Exception as e:
                 _log(job_id, f"[{i}/{len(raw_clips)}] Skipped {os.path.basename(vp)}: {e}", "warning")
             _progress(job_id, int(i / len(raw_clips) * 65))
@@ -1105,6 +1121,27 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 _log(job_id, "Matching the cameras by their sound (songs, speeches, crowd)…", "info")
                 multicam_sync.audio_place_wedding(analyzed, sync_report)
             analyzed.sort(key=lambda c: c.get("abs_start", 0))
+            from packages.ai_engine.in_clip_trimmer import label_moments
+            relabelled = label_moments(analyzed)
+            counts: Dict[str, int] = {}
+            for c in analyzed:
+                if c.get("moment"):
+                    counts[c["moment"]] = counts.get(c["moment"], 0) + 1
+            if counts:
+                _log(job_id, "🎬 Moments found: " + ", ".join(f"{k.replace('_', ' ').title()} {v}" for k, v in
+                                                           sorted(counts.items(), key=lambda kv: -kv[1]))
+                     + (f" ({relabelled} clips placed by shoot time)" if relabelled else ""), "info")
+            # People: only when the editor turned recognition on for this project (stays on this computer)
+            try:
+                from packages.ai_engine import people
+                prev = people.load_store(folder)
+                if prev and prev.get("consent"):
+                    _log(job_id, "👥 Recognising the bride, groom and family (on this computer)…", "info")
+                    store = people.scan_project(analyzed, folder, people.ensure_model())
+                    roles = sorted({p["role"] for p in store["persons"] if p.get("role")})
+                    _log(job_id, f"   {len(store['persons'])} people" + (f" · {', '.join(roles)}" if roles else ""), "info")
+            except Exception as e:
+                _log(job_id, f"People recognition skipped: {e}", "warning")
         audio_synced_plan = None
         if (mode in ("youtube", "music_video") or is_motion_graphics) and videos:
             song = audio_path if (mode == "music_video" and audio_path and os.path.isfile(audio_path)) else None
@@ -1166,10 +1203,19 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
 
         ref_lut_path = extract_and_apply_reference_look(job_id, ref_video, target_nle)
 
-        # 2. Smart AI: Claude reviews one frame per clip (1 credit only when it succeeds), then AI audio
+        # 2. Shot grades A/B/C: local for everyone; Smart AI reviews a contact sheet per clip (premium,
+        #    1 credit only when new clips were reviewed), then AI audio
+        from packages.ai_engine.in_clip_trimmer import assign_local_tiers
+        local_counts = assign_local_tiers(analyzed)
+        if not is_premium:
+            _log(job_id, f"Shot grades (local): A {local_counts['A']} · B {local_counts['B']} · C {local_counts['C']}", "info")
         voice_path, voice_seconds = "", 0.0
         if is_premium:
-            credit_used, story_note = ai_review_clips(job_id, analyzed, instructions, os.path.basename(folder))
+            if quick:
+                _log(job_id, "⚡ Same-Day mode: Smart AI shot review skipped for speed (local grades used)", "info")
+                credit_used, story_note = False, ""
+            else:
+                credit_used, story_note = ai_review_clips(job_id, analyzed, instructions, os.path.basename(folder))
             if ai_music or voiceover:
                 music_file, voice_path, voice_seconds = smart_audio(
                     job_id, mode, formats, analyzed, instructions, story_note,
@@ -1181,19 +1227,35 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
         elif ai_music or voiceover:
             _log(job_id, "AI music and voiceover are part of Smart AI packs - tick Smart AI to use them.", "warning")
 
+        # 2.4. Vows & speeches (wedding): the most emotional spoken lines, automatic
+        if mode == "wedding" and not quick:
+            try:
+                n_vows = find_vow_lines(job_id, analyzed, is_premium, instructions)
+                if n_vows:
+                    _log(job_id, f"💬 {n_vows} spoken lines chosen for the films", "info")
+            except Exception as e:
+                _log(job_id, f"Vows skipped: {e}", "warning")
+
         # 2.5. Music beats (from song or reference reel)
         beat_times = None
+        music_info: Optional[Dict[str, Any]] = None
         if audio_path and os.path.isfile(audio_path):
             _log(job_id, f"Analysing music beats: {os.path.basename(audio_path)}", "info")
             beats = beat_analyzer.analyze_audio(audio_path, 25.0)
             beat_times = beats.get("beat_times") or beats.get("beats")
+            music_info = beats
             _log(job_id, f"Tempo: {beats.get('bpm') or beats.get('tempo', '?')} BPM, "
                          f"{len(beat_times or [])} beats detected.")
+            if beats.get("sections"):
+                _log(job_id, "  🎼 Song: " + " → ".join(f"{x['label']} {x['start']:.0f}s" for x in beats["sections"])
+                     + (f" · {len(beats.get('instrumental_regions') or [])} instrumental parts for vows" if beats.get("instrumental_regions") else ""), "info")
         elif ref_video and os.path.isfile(ref_video):
             try:
                 _log(job_id, f"🎵 Extracting beat rhythm from reference reel: {os.path.basename(ref_video)}", "info")
                 ref_beats = beat_analyzer.analyze_audio(ref_video, 25.0)
                 beat_times = ref_beats.get("beat_times") or ref_beats.get("beats")
+                music_info = {"beat_times": beat_times, "downbeat_times": ref_beats.get("downbeat_times"),
+                              "drop_times": ref_beats.get("drop_times")}   # rhythm only: the reference's song is not in the edit
                 if beat_times:
                     _log(job_id, f"  ⚡ Locked to {len(beat_times)} audio beat transients from reference video!", "info")
             except Exception as e:
@@ -1254,13 +1316,33 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
                 p2["sequence_name"] = f"02_Short_Ad_30s_{'1x1' if is_square else '9x16'}"
                 p2["aspect_ratio"] = target_aspect
                 plans["teaser"] = p2
-        else:  # Default: wedding
+        else:  # Default: wedding — Story Director (Edit Plan + Assembler, "why chosen" marker on every cut)
+            edit_plans: Dict[str, Any] = {}
+            if is_premium and not quick and ("teaser" in formats or "highlight" in formats):
+                try:
+                    _log(job_id, "🎬 Smart AI is planning the story of this wedding…", "info")
+                    edit_plans = cloud_ai_client.plan_wedding_story(_footage_summary(analyzed), 60.0, 240.0, instructions)
+                    for fmt, ep in edit_plans.items():
+                        acts = " → ".join(f"{a['name']} {a['seconds']:.0f}s" for a in ep.get("acts", []))
+                        _log(job_id, f"  {fmt.title()} plan: {acts}", "info")
+                        if ep.get("director_note"):
+                            _log(job_id, f"  📝 {ep['director_note']}", "info")
+                except Exception as e:
+                    _log(job_id, f"Story plan from the built-in wedding template ({e})", "warning")
             if "teaser" in formats:
-                plans["teaser"] = story_planner.plan_teaser(analyzed, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times)
+                plans["teaser"] = story_planner.plan_teaser(analyzed, instructions=instructions, ref_video_path=ref_video, beat_times=beat_times,
+                                                            story_mode="wedding", edit_plan=edit_plans.get("teaser"), music_info=music_info)
             if "highlight" in formats:
                 plans["highlight"] = story_planner.plan_highlight(
-                    analyzed, beat_times=beat_times, ref_video_path=ref_video, instructions=instructions
+                    analyzed, beat_times=beat_times, ref_video_path=ref_video, instructions=instructions,
+                    story_mode="wedding", edit_plan=edit_plans.get("highlight"), music_info=music_info
                 )
+            if "reel" in formats:
+                plans["reel"] = story_planner.plan_reel(analyzed, beat_times=beat_times, instructions=instructions,
+                                                        ref_video_path=ref_video, music_info=music_info)
+            if "same_day" in formats:
+                plans["same_day"] = story_planner.plan_same_day_edit(analyzed, beat_times=beat_times, instructions=instructions,
+                                                                     ref_video_path=ref_video, music_info=music_info)
             if "full_film" in formats:
                 if multicam:
                     plans["full_film"] = multicam_sync.plan_multicam_tracks(analyzed)
@@ -1395,7 +1477,17 @@ def wedding_job(job_id: str, folder: str, audio_path: str, formats: List[str], t
             pass
         _log(job_id, f"Edit plan saved: {plan_file}", "info")
 
-        result = _export_plans(job_id, plans, target_nle, audio_path, project_name=os.path.basename(folder.rstrip("/\\")))
+        for k, p in plans.items():   # captions (SRT) of the vows used in each film, e.g. for reels
+            if isinstance(p, dict) and p.get("captions"):
+                try:
+                    from packages.ai_engine.ai_audio import write_srt
+                    p["captions_srt"] = write_srt(p["captions"], os.path.join(OUTPUT_DIR, "captions", f"{p.get('sequence_name', k)}.srt"))
+                    _log(job_id, f"  📝 Captions: {os.path.basename(p['captions_srt'])}", "info")
+                except Exception as e:
+                    _log(job_id, f"Captions not written: {e}", "warning")
+        why_markers = {k: p["markers"] for k, p in plans.items() if isinstance(p, dict) and p.get("markers")}
+        result = _export_plans(job_id, plans, target_nle, audio_path, markers=why_markers or None,
+                               project_name=os.path.basename(folder.rstrip("/\\")))
         result["plan_file"] = plan_file
 
         # Apply Reference 3D LUT to DaVinci Resolve timeline if available
@@ -1674,10 +1766,12 @@ def _reedit_rules_job(job_id: str, prompt: str, target_timeline: str = "all", ta
 
         # 4. Beat times if song is available or from reference reel
         beat_times = None
+        music_info = None
         if audio_path and os.path.isfile(audio_path):
             try:
                 beats = beat_analyzer.analyze_audio(audio_path, 25.0)
                 beat_times = beats.get("beat_times") or beats.get("beats")
+                music_info = beats
             except Exception:
                 pass
         elif ref_video and os.path.isfile(ref_video):
@@ -1702,7 +1796,8 @@ def _reedit_rules_job(job_id: str, prompt: str, target_timeline: str = "all", ta
             is_vert = directives.get("is_vertical", mode == "reels")
             _log(job_id, f"Re-cutting Teaser ({int(t_dur)}s, Pacing: {pacing})…", "info")
             new_teaser = story_planner.plan_teaser(analyzed, target_duration=t_dur, is_vertical=is_vert,
-                                                   instructions=prompt, ref_video_path=ref_video, beat_times=beat_times)
+                                                   instructions=prompt, ref_video_path=ref_video, beat_times=beat_times,
+                                                   story_mode="wedding" if mode == "wedding" else None, music_info=music_info)
             new_teaser["sequence_name"] = f"01_Wedding_Teaser_v2_{int(t_dur)}s"
             if audio_path and os.path.isfile(audio_path):
                 new_teaser["audio"] = audio_path
@@ -1718,7 +1813,8 @@ def _reedit_rules_job(job_id: str, prompt: str, target_timeline: str = "all", ta
             h_dur = req_dur if req_dur else (180.0 if "3 min" in prompt.lower() else 120.0 if "2 min" in prompt.lower() else 240.0)
             _log(job_id, f"Re-cutting Highlight ({round(h_dur/60, 1)}min, Pacing: {pacing})…", "info")
             new_hl = story_planner.plan_highlight(analyzed, beat_times=beat_times, target_duration=h_dur,
-                                                  ref_video_path=ref_video, instructions=prompt)
+                                                  ref_video_path=ref_video, instructions=prompt,
+                                                  story_mode="wedding" if mode == "wedding" else None, music_info=music_info)
             new_hl["sequence_name"] = f"02_Cinematic_Highlight_v2"
             if audio_path and os.path.isfile(audio_path):
                 new_hl["audio"] = audio_path
@@ -1769,7 +1865,8 @@ def _reedit_rules_job(job_id: str, prompt: str, target_timeline: str = "all", ta
 
         # 7. Export updated plans to target NLE
         export_targets = updated_plans if updated_plans else plans
-        res = _export_plans(job_id, export_targets, target_nle, audio_path, project_name=f"{project_name}_v2")
+        why = {k: p["markers"] for k, p in export_targets.items() if isinstance(p, dict) and p.get("markers")}
+        res = _export_plans(job_id, export_targets, target_nle, audio_path, markers=why or None, project_name=f"{project_name}_v2")
         res["plan_file"] = new_plan_file
         res["reedit_prompt"] = prompt
 
@@ -1823,39 +1920,246 @@ def _thumbnail(clip: Dict[str, Any], out_dir: str, idx: int) -> Optional[str]:
         cap.release()
 
 
+AI_REVIEW_MAX = 120      # clips per wedding sent to Smart AI (best local scores first)
+AI_REVIEW_BATCH = 8      # contact sheets per request
+
+
+def _review_cache_dir() -> str:
+    from packages.ai_engine.in_clip_trimmer import in_clip_trimmer
+    return os.path.join(in_clip_trimmer.cache_dir, "review")
+
+
+def _apply_review(clip: Dict[str, Any], r: Dict[str, Any]) -> None:
+    clip["tier"], clip["tier_source"], clip["tier_note"] = r["tier"], "ai", r.get("note", "")
+    clip["ai_moment"], clip["ai_emotion"] = r.get("moment", ""), int(r.get("emotion", 0))
+    clip["ai_people"], clip["ai_action"] = r.get("people", ""), r.get("action", "")
+    hero = r.get("hero_frame_time")
+    dur = float(clip.get("duration") or 0)
+    if isinstance(hero, (int, float)) and 0 < hero < dur:
+        clip.setdefault("action_peak_seconds_local", clip.get("action_peak_seconds"))
+        clip["hero_frame_time"] = round(float(hero), 2)
+        clip["action_peak_seconds"] = round(float(hero), 2)  # the planners centre each cut on this moment
+
+
+VOW_CANDIDATES = 30      # speech clips transcribed per wedding (couple / family / best first)
+VOW_LINES = 5
+
+
+def find_vow_lines(job_id: str, analyzed: List[Dict[str, Any]], is_premium: bool, instructions: str = "") -> int:
+    """STEP 6: transcribes the speech clips (Smart AI: license server; otherwise on this computer), splits
+    them into lines and marks the most emotional line of the best clips as clip["vow_line"]. Automatic;
+    cached per file. Returns how many lines were chosen."""
+    from packages.ai_engine import ai_audio
+    from packages.ai_engine.in_clip_trimmer import in_clip_trimmer, review_cache_key
+    from packages.ai_engine.people import FAMILY
+    speech = [c for c in analyzed if c.get("audio_type") == "speech" and not c.get("is_still") and c.get("tier") != "C"]
+    if not speech:
+        return 0
+
+    def rank(c):
+        roles = set(c.get("people_roles") or [])
+        return (bool(c.get("couple_in_shot")), bool(roles & FAMILY), c.get("wedding_score", c.get("quality_score", 0)))
+
+    speech = sorted(speech, key=rank, reverse=True)[:VOW_CANDIDATES]
+    local_ok = ai_audio.local_transcription_available()
+    if not is_premium and not local_ok:
+        _log(job_id, "Vows: offline transcription is not installed in this version — skipped.", "warning")
+        return 0
+    cache_dir = os.path.join(in_clip_trimmer.cache_dir, "transcripts")
+    os.makedirs(cache_dir, exist_ok=True)
+    told_download = False
+    cloud_failed = False
+    done = 0
+    for c in speech:
+        key = review_cache_key(c)
+        cache = os.path.join(cache_dir, f"{key}.json") if key else None
+        tx = None
+        if cache and os.path.isfile(cache):
+            try:
+                with open(cache, "r", encoding="utf-8") as f:
+                    tx = json.load(f)
+            except (OSError, ValueError):
+                tx = None
+        if tx is None:
+            a = float(c.get("full_in_seconds", 0) or 0)
+            b = min(float(c.get("full_out_seconds", c.get("duration", 0)) or 0), a + 90.0)
+            try:
+                if is_premium and not cloud_failed:
+                    tx = ai_audio.transcribe(c["file_path"], a, b)
+                    tx["engine"] = "smart_ai"
+            except Exception as e:
+                cloud_failed = True
+                _log(job_id, f"Vows: cloud transcription unavailable ({str(e)[:120]}), using this computer.", "warning")
+            if tx is None and local_ok:
+                if not told_download and not ai_audio.local_model_ready():
+                    _log(job_id, "Vows: downloading the speech model (about 480 MB, one time only)…", "info")
+                    told_download = True
+                try:
+                    tx = ai_audio.transcribe_local(c["file_path"], a, b)
+                except Exception as e:
+                    _log(job_id, f"Vows: could not transcribe {os.path.basename(c['file_path'])}: {str(e)[:120]}", "warning")
+                    tx = {"words": [], "text": "", "engine": "failed"}
+            if tx is None:
+                continue
+            if cache and tx.get("engine") != "failed":
+                try:
+                    with open(cache, "w", encoding="utf-8") as f:
+                        json.dump(tx, f, ensure_ascii=False)
+                except OSError:
+                    pass
+        c["transcript"] = {"lines": ai_audio.split_lines(tx.get("words") or []), "language": tx.get("language"),
+                           "engine": tx.get("engine")}
+        done += 1
+        if done % 5 == 0:
+            _log(job_id, f"  Vows: {done}/{len(speech)} speech clips transcribed", "info")
+
+    candidates = []
+    clip_of: Dict[int, Dict[str, Any]] = {}
+    for c in speech:
+        roles = set(c.get("people_roles") or [])
+        bonus = 10.0 if c.get("couple_in_shot") else (6.0 if roles & FAMILY else 0.0)
+        for ln in (c.get("transcript") or {}).get("lines", []):
+            if not 1.2 <= ln["end"] - ln["start"] <= 8.0:
+                continue
+            i = len(candidates)
+            clip_of[i] = c
+            candidates.append({"id": i, "text": ln["text"], "start": ln["start"], "end": ln["end"], "bonus": bonus,
+                               "seconds": round(ln["end"] - ln["start"], 1), "moment": c.get("moment") or c.get("ai_moment"),
+                               "who": ", ".join(sorted(roles)) or None})
+    if not candidates:
+        _log(job_id, "Vows: no clear spoken lines found.", "info")
+        return 0
+    picked: List[Dict[str, Any]] = []
+    if is_premium:
+        try:
+            ids = cloud_ai_client.pick_vow_lines(candidates[:200], VOW_LINES, instructions)
+            seen = set()
+            for i in ids:
+                if id(clip_of[i]) not in seen:
+                    picked.append(candidates[i])
+                    seen.add(id(clip_of[i]))
+        except Exception as e:
+            _log(job_id, f"Vows: Smart AI could not pick lines ({str(e)[:100]}), using the local choice.", "warning")
+    if not picked:
+        picked = ai_audio.choose_lines_local(candidates, VOW_LINES)
+    for rank_i, ln in enumerate(picked):
+        c = clip_of[ln["id"]]
+        c["vow_line"] = {"text": ln["text"], "start": ln["start"], "end": ln["end"], "rank": rank_i}
+        _log(job_id, f"  💬 “{ln['text']}” — {os.path.basename(c['file_path'])}", "info")
+    return len(picked)
+
+
+def _footage_summary(analyzed: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """What was shot, for Smart AI's story plan: per moment the clips, A-grade shots and couple shots."""
+    from packages.ai_engine.story_planner import clip_moment
+    moments: Dict[str, Dict[str, int]] = {}
+    for c in analyzed:
+        m = clip_moment(c) or "unknown"
+        d = moments.setdefault(m, {"clips": 0, "A": 0, "couple": 0})
+        d["clips"] += 1
+        d["A"] += 1 if c.get("tier") == "A" else 0
+        d["couple"] += 1 if c.get("couple_in_shot") else 0
+    return {"total_clips": len(analyzed), "moments": moments}
+
+
 def ai_review_clips(job_id: str, analyzed: List[Dict[str, Any]], instructions: str, job_name: str) -> Tuple[bool, str]:
-    """Claude scores the best candidate clips; the scores reshape which shots the planners pick.
-    Returns (credit used, story note)."""
-    candidates = sorted(analyzed, key=lambda c: c.get("quality_score", 0), reverse=True)[:40]
-    thumb_dir = os.path.join(OUTPUT_DIR, ".thumbs")
-    os.makedirs(thumb_dir, exist_ok=True)
-    pairs = []
-    for clip in candidates:
-        path = _thumbnail(clip, thumb_dir, len(pairs))
-        if path:
-            pairs.append((clip, path))
-    if not pairs:
-        _log(job_id, "AI review skipped: could not read frames from the clips.", "warning")
-        return False, ""
-    _log(job_id, f"Sending {len(pairs)} preview frames to Smart AI for review…", "info")
-    try:
-        review = cloud_ai_client.review_shots([p for _, p in pairs], instructions)
-    except Exception as e:
-        _log(job_id, f"AI review failed, continuing with the local edit (no credit used): {e}", "warning")
-        return False, ""
-    for i, (clip, _) in enumerate(pairs):
-        s = review["shots"].get(i)
-        if not s:
-            continue
-        clip["ai_moment"], clip["ai_emotion"] = s["moment"], s["emotion"]
-        base = float(clip.get("quality_score", 0))
-        clip["quality_score"] = round(base * 0.3 if not s["keep"] else base * 0.6 + float(s["emotion"]) * 0.4, 1)
-    top = sorted((c for c, _ in pairs if c.get("ai_moment")), key=lambda c: c.get("ai_emotion", 0), reverse=True)[:5]
-    for c in top:
-        _log(job_id, f"  ★ {os.path.basename(c['file_path'])}: {c['ai_moment']} (emotion {c['ai_emotion']})", "info")
-    if review.get("story_note"):
-        _log(job_id, f"  Story note: {review['story_note']}", "info")
-    return _use_credit(job_id, job_name), review.get("story_note", "")
+    """Smart AI grades every clip A / B / C from a contact sheet of the whole clip (STEP 3).
+    Reviewed clips are cached per file, so they are never sent again. Clips it does not see keep their
+    local tier. Uses 1 wedding credit only when new clips were reviewed. Returns (credit used, story note)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from packages.ai_engine.in_clip_trimmer import assign_local_tiers, contact_sheet, recompute_scores, review_cache_key
+
+    assign_local_tiers(analyzed)
+    videos = [c for c in analyzed if not c.get("is_still")]
+    candidates = sorted(videos, key=lambda c: c.get("wedding_score_base", c.get("quality_score", 0)), reverse=True)[:AI_REVIEW_MAX]
+    cache_dir = _review_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
+
+    todo, cached = [], 0
+    for c in candidates:
+        key = review_cache_key(c)
+        c["_review_key"] = key
+        hit = None
+        if key:
+            try:
+                with open(os.path.join(cache_dir, key + ".json"), "r", encoding="utf-8") as f:
+                    hit = json.load(f)
+            except (OSError, ValueError):
+                hit = None
+        if hit:
+            _apply_review(c, hit)
+            cached += 1
+        else:
+            todo.append(c)
+
+    story_notes: List[str] = []
+    reviewed = 0
+    if todo:
+        _log(job_id, f"🧠 Smart AI will review {len(todo)} new shots"
+                     + (f" ({cached} already reviewed earlier, reused free)" if cached else "")
+                     + " · uses 1 Smart AI wedding credit", "info")
+        sheets = []
+        for c in todo:
+            jpeg, times = contact_sheet(c)
+            if jpeg:
+                roles = ", ".join(c.get("people_roles") or [])
+                hint = " · ".join(x for x in [(c.get("moment") or "").replace("_", " "), roles and f"people: {roles}",
+                                               f"{float(c.get('duration') or 0):.0f}s clip"] if x)
+                sheets.append((c, {"jpeg": jpeg, "times": times, "hint": hint}))
+        batches = [sheets[i:i + AI_REVIEW_BATCH] for i in range(0, len(sheets), AI_REVIEW_BATCH)]
+        done_batches = [0]
+
+        def run(batch):
+            segs = [dict(seg, id=i) for i, (_, seg) in enumerate(batch)]
+            res = cloud_ai_client.review_segments(segs, instructions)
+            done_batches[0] += 1
+            _log(job_id, f"  Smart AI review {done_batches[0]}/{len(batches)} done", "info")
+            return batch, res
+
+        errors = []
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            for fut in [pool.submit(run, b) for b in batches]:
+                try:
+                    batch, res = fut.result()
+                except Exception as e:
+                    errors.append(str(e))
+                    continue
+                if res.get("story_note"):
+                    story_notes.append(res["story_note"])
+                for i, (c, _) in enumerate(batch):
+                    r = res["segments"].get(i)
+                    if not r:
+                        continue
+                    _apply_review(c, r)
+                    reviewed += 1
+                    if c.get("_review_key"):
+                        try:
+                            with open(os.path.join(cache_dir, c["_review_key"] + ".json"), "w", encoding="utf-8") as f:
+                                json.dump(r, f)
+                        except OSError:
+                            pass
+        if errors:
+            _log(job_id, f"Smart AI review: {len(errors)} batch(es) failed, those clips keep the local grade ({errors[0][:160]})", "warning")
+    elif cached:
+        _log(job_id, f"🧠 Smart AI review reused for all {cached} shots (no new credit)", "info")
+
+    for c in analyzed:
+        c.pop("_review_key", None)
+        recompute_scores(c)
+    counts = {t: sum(1 for c in analyzed if c.get("tier") == t) for t in "ABC"}
+    _log(job_id, f"  Shot grades: A (hero) {counts['A']} · B (usable) {counts['B']} · C (reject) {counts['C']}", "info")
+    heroes = sorted((c for c in analyzed if c.get("tier") == "A" and c.get("tier_source") == "ai"),
+                    key=lambda c: c.get("ai_emotion", 0), reverse=True)[:5]
+    for c in heroes:
+        _log(job_id, f"  ★ {os.path.basename(c['file_path'])}: {c.get('ai_moment', '')} — {c.get('tier_note', '')}", "info")
+    note = story_notes[0] if story_notes else ""
+    if note:
+        _log(job_id, f"  Story note: {note}", "info")
+    if reviewed:
+        return _use_credit(job_id, job_name), note
+    if todo:
+        _log(job_id, "Smart AI review did not finish; continuing with local grades (no credit used).", "warning")
+    return False, note
 
 
 def _use_credit(job_id: str, job_name: str) -> bool:
@@ -1934,7 +2238,10 @@ DIRECTOR_TOOLS: List[Dict[str, Any]] = [
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "director_list_clips",
      "description": "Table of the analysed footage clips (index, file, camera, length, usable action window, peak moment, "
-                    "shot type, quality 0-100, AI moment label). Use the index with director_view_clips and director_build_timeline.",
+                    "shot type from face size, quality 0-100, ws = wedding score 0-100, ritual moment, camera move, "
+                    "face count, audio type, people = named roles in the shot like bride / groom / couple, tier A hero / B usable / "
+                    "C reject with a note). Prefer A shots, avoid C. "
+                    "Use the index with director_view_clips and director_build_timeline.",
      "input_schema": {"type": "object", "properties": {
          "offset": {"type": "integer", "default": 0},
          "limit": {"type": "integer", "default": 120, "description": "max 300"},
@@ -2101,7 +2408,12 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
             rows.append({"i": i, "file": os.path.basename(c.get("file_path", "")), "cam": c.get("camera", ""),
                          "len": round(float(c.get("duration") or 0), 2), "use": [round(a, 2), round(b, 2)],
                          "peak": c.get("action_peak_seconds"), "shot": c.get("shot_type", ""),
-                         "q": c.get("quality_score"), "moment": c.get("ai_moment", ""), "still": _dir_is_still(c)})
+                         "q": c.get("quality_score"), "ws": c.get("wedding_score"),
+                         "moment": c.get("ai_moment") or c.get("moment") or "", "move": c.get("camera_move", ""),
+                         "faces": (c.get("faces") or {}).get("count"), "audio": c.get("audio_type", ""),
+                         "people": c.get("people_roles") or [],
+                         "tier": c.get("tier", ""), "note": c.get("tier_note", ""),
+                         "still": _dir_is_still(c)})
         return {"total": len(clips), "offset": off, "clips": rows}
 
     if name == "director_view_clips":
@@ -2280,6 +2592,109 @@ def _assistant_execute(job_id: str):
     return run
 
 
+# ----------------------------------------------------------------------
+# People (STEP 2): Bride / Groom / family recognition, on this computer only, after the editor opts in
+# ----------------------------------------------------------------------
+def _people_project() -> Tuple[str, Dict[str, Any], str]:
+    path, data = _dir_project()
+    return path, data, data.get("folder") or ""
+
+
+def _save_project_inplace(path: str, data: Dict[str, Any]) -> None:
+    targets = {path, os.path.join(OUTPUT_DIR, "last_plan.json")}
+    for p in targets:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+
+
+def people_status() -> Dict[str, Any]:
+    from packages.ai_engine import people
+    try:
+        _, data, folder = _people_project()
+    except Exception:
+        return {"success": True, "has_project": False}
+    view = people.public_view(people.load_store(folder))
+    view.update(success=True, has_project=True, project=data.get("project_name") or os.path.basename(folder.rstrip("/\\")))
+    return view
+
+
+def _people_model(job_id: str) -> str:
+    from packages.ai_engine import people
+    if not os.path.isfile(os.path.join(people.models_dir(), people.SFACE["file"])):
+        _log(job_id, "Downloading the face model (37 MB, one time only)…", "info")
+    return people.ensure_model(on_progress=lambda pct: _progress(job_id, min(25, pct // 4)))
+
+
+def people_scan_job(job_id: str) -> None:
+    from packages.ai_engine import people
+    try:
+        path, data, folder = _people_project()
+        model = _people_model(job_id)
+        _log(job_id, "👥 Finding people in the footage (on this computer)…", "info")
+        store = people.scan_project(data.get("analyzed", []), folder, model,
+                                    on_progress=lambda n, t: _progress(job_id, 25 + int(70 * n / max(1, t))))
+        _save_project_inplace(path, data)
+        named = [p for p in store["persons"] if p.get("role")]
+        _log(job_id, f"Found {len(store['persons'])} people"
+                     + (f" · matched {', '.join(sorted({p['role'] for p in named}))}" if named else "")
+                     + (" · couple guessed from the most-seen faces" if store.get("auto_couple") else ""), "info")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", result=people.public_view(store), progress=100)
+    except Exception as e:
+        _log(job_id, f"People: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
+
+
+def people_reference_job(job_id: str, role: str, image_path: str) -> None:
+    """The editor uploads a photo of the bride / groom: the best match in the footage gets that role."""
+    from packages.ai_engine import people
+    try:
+        path, data, folder = _people_project()
+        model = _people_model(job_id)
+        emb, thumb = people.face_from_photo(image_path, model)
+        store = people.load_store(folder) or {"version": people.STORE_VERSION, "folder": folder, "consent": True,
+                                              "persons": [], "references": []}
+        people.add_reference(store, role, emb, thumb)
+        people.save_store(store)
+        people.apply_people(data.get("analyzed", []), store)
+        _save_project_inplace(path, data)
+        hit = next((p for p in store["persons"] if p.get("role") == role and p.get("role_from") == "photo"), None)
+        if hit:
+            _log(job_id, f"✅ {role.replace('_', ' ').title()} found in {len(hit['clips'])} clips (match {hit.get('match', 0):.2f})", "info")
+        elif store["persons"]:
+            _log(job_id, f"Photo saved, but no one in the footage looks enough like it. Try a clearer photo.", "warning")
+        else:
+            _log(job_id, "Photo saved. Press “Find people” to look for this person in the footage.", "info")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="done", result=people.public_view(store), progress=100)
+    except Exception as e:
+        _log(job_id, f"People: {e}", "error")
+        with JOBS_LOCK:
+            JOBS[job_id].update(status="error", error=str(e))
+
+
+def people_update(action: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    from packages.ai_engine import people
+    path, data, folder = _people_project()
+    if action == "delete":
+        people.delete_store(folder)
+        people.apply_people(data.get("analyzed", []), None)
+        _save_project_inplace(path, data)
+        return {"success": True, "deleted": True, **people.public_view(None)}
+    store = people.load_store(folder)
+    if not store:
+        return {"success": False, "error": "Run “Find people” first."}
+    if action == "role":
+        people.set_role(store, str(args.get("id") or ""), args.get("role") or None, str(args.get("name") or ""))
+    elif action == "remove_reference":
+        people.remove_references(store, str(args.get("role") or ""))
+    people.save_store(store)
+    people.apply_people(data.get("analyzed", []), store)
+    _save_project_inplace(path, data)
+    return {"success": True, **people.public_view(store)}
+
+
 def _assistant_tools() -> List[Dict[str, Any]]:
     seen, tools = set(DIRECTOR_NAMES), list(DIRECTOR_TOOLS)
     for t in _mcp().MCP_TOOLS:
@@ -2372,6 +2787,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
             return
         if self.path == "/api/last-plan":
             self._json(get_last_plan())
+            return
+
+        if self.path == "/api/people":
+            self._json(people_status())
             return
 
         if self.path == "/api/status":
@@ -2544,8 +2963,27 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                 self._json({"success": True, "job_id": job_id})
                 return
             job_id = start_job(wedding_job, data.get("folder", ""), (data.get("audio") or "").strip(), formats, target_nle, mode, ref_video,
-                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500])
+                               instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500],
+                               bool(data.get("same_day")))
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/people/scan":
+            self._json({"success": True, "job_id": start_job(people_scan_job)})
+
+        elif self.path == "/api/people/reference":
+            role, image = (data.get("role") or "").strip(), (data.get("path") or "").strip()
+            if role not in ("bride", "groom", "bride_mother", "bride_father", "groom_mother", "groom_father", "sibling") or not os.path.isfile(image):
+                self._json({"success": False, "error": "Choose a role and a photo."}, 400)
+            else:
+                self._json({"success": True, "job_id": start_job(people_reference_job, role, image)})
+
+        elif self.path in ("/api/people/role", "/api/people/delete", "/api/people/reference/remove"):
+            action = {"/api/people/role": "role", "/api/people/delete": "delete",
+                      "/api/people/reference/remove": "remove_reference"}[self.path]
+            try:
+                self._json(people_update(action, data))
+            except Exception as e:
+                self._json({"success": False, "error": str(e)}, 400)
 
         elif self.path == "/api/re-edit-timeline":
             prompt = (data.get("prompt") or "").strip()

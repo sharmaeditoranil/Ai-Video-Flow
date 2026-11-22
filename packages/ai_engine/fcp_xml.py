@@ -249,3 +249,25 @@ def add_audio_track(xml_path: str, audio_path: str, seconds: float, start_second
         total.text = str(max(int(total.text), start + length))
     _write(root, xml_path)
     return True
+
+
+def add_sequence_markers(xml_path: str, markers: List[Dict[str, Any]], fps: float = 25.0) -> int:
+    """Adds sequence markers (name + comment at a time in seconds) to an FCP7 XML file, e.g. the Story
+    Director's "why chosen" note on every cut. Premiere shows them on the sequence's marker track."""
+    if not markers:
+        return 0
+    from xml.sax.saxutils import escape
+    with open(xml_path, "r", encoding="utf-8") as f:
+        text = f.read()
+    end = text.rfind("</sequence>")
+    if end < 0:
+        return 0
+    items = []
+    for m in markers:
+        frame = int(round(float(m.get("seconds", 0)) * fps))
+        items.append(f"<marker><comment>{escape(str(m.get('note', ''))[:250])}</comment><name>{escape(str(m.get('name', 'Marker'))[:60])}</name>"
+                     f"<in>{frame}</in><out>-1</out></marker>")
+    text = text[:end] + "".join(items) + text[end:]
+    with open(xml_path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return len(items)

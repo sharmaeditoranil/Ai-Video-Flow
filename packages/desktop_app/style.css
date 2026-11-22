@@ -1,3 +1,6 @@
+/* Elements with the hidden attribute never show, even when a class sets display (e.g. flex) */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #0b0d12;
   --sidebar: #0f1218;
@@ -687,7 +690,7 @@ textarea { resize: vertical; }
 .log-head > div:first-child { flex-shrink: 0; }
 .log-head > div:first-child span { white-space: nowrap; }
 .log-head .row-actions { flex-wrap: nowrap; margin-left: auto; }
-.log-head .row-actions .btn { white-space: nowrap; }
+.log-head .row-actions .btn { white-space: nowrap; padding: 5px 10px; font-size: 12px; }
 .log-head h3 { margin: 0; }
 
 .console {
@@ -1179,3 +1182,27 @@ textarea { resize: vertical; }
   color: #fff;
   background: rgba(255, 255, 255, 0.04);
 }
+
+/* ---------- People (Bride, Groom & family) ---------- */
+.people-tools { display: flex; flex-direction: column; gap: 10px; }
+.people-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.link-btn { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer; }
+.link-btn:hover { color: #f87171; }
+.people-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.people-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: 10px 0 12px; cursor: pointer; line-height: 1.45; }
+.people-consent input { margin-top: 2px; }
+.people-ref-thumbs { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.people-ref-thumbs .ref { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }
+.people-ref-thumbs img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; border: 1px solid var(--line-2); }
+.people-ref-thumbs button { background: none; border: 0; color: var(--faint); cursor: pointer; padding: 0 2px; }
+.people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin-top: 12px; }
+.person { background: var(--card-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center; }
+.person.is-couple { border-color: var(--gold, #e8b95f); box-shadow: 0 0 0 1px var(--gold, #e8b95f); }
+.person img { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; background: #000; }
+.person .meta { font-size: 11px; color: var(--muted); }
+.person select { width: 100%; font-size: 11.5px; padding: 4px; }
+.people-card[aria-busy="true"] .people-actions button { opacity: .6; pointer-events: none; }
+
+.same-day-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px; background: var(--card-2); font-size: 13px; line-height: 1.45; cursor: pointer; }
+.same-day-row input { margin-top: 3px; }
+.same-day-row[hidden] { display: none; }

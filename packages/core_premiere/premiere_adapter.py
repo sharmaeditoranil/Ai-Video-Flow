@@ -623,6 +623,9 @@ class PremiereAdapter:
                 xml_file, name, clips, fps=fps, audio_path=audio_path,
                 aspect_ratio=aspect_ratio, broll_clips=broll_clips
             )
+            if plan.get("markers"):
+                from packages.ai_engine.fcp_xml import add_sequence_markers
+                add_sequence_markers(xml_file, plan["markers"], fps=fps)
             
             # Generate accompanying AI Color & Light Balance 3D LUT for Premiere Lumetri Color
             lut_file = self.generate_premiere_color_look(output_dir)
@@ -819,6 +822,7 @@ class PremiereAdapter:
         audio_elem = ET.SubElement(media, "audio")
 
         # Track A1: Synced Camera Native Audio (vows, speeches, ambient sound)
+        music_under = bool(audio_path and os.path.exists(audio_path))
         atrack1 = ET.SubElement(audio_elem, "track")
         a1_frame = 0
         for idx, clip in enumerate(clips, 1):
@@ -852,6 +856,18 @@ class PremiereAdapter:
             frate = ET.SubElement(afile_elem, "rate")
             ET.SubElement(frate, "timebase").text = str(int(fps))
             ET.SubElement(frate, "ntsc").text = "FALSE"
+
+            # Wedding Story Director with a song: vows / speech keep their sound, other camera sound
+            # stays as soft ambience (-20 dB) under the music
+            if music_under and "keep_audio" in clip:
+                lf = ET.SubElement(aclipitem, "filter")
+                le = ET.SubElement(lf, "effect")
+                ET.SubElement(le, "name").text = "Audio Levels"
+                ET.SubElement(le, "effectid").text = "audiolevels"
+                lp = ET.SubElement(le, "parameter")
+                ET.SubElement(lp, "parameterid").text = "level"
+                ET.SubElement(lp, "name").text = "Level"
+                ET.SubElement(lp, "value").text = "1.0" if clip.get("keep_audio") else "0.1"
 
             a1_frame += dur_frames
 
@@ -895,11 +911,20 @@ class PremiereAdapter:
             ET.SubElement(kf0, "when").text = "0"
             ET.SubElement(kf0, "value").text = "1.0"
 
-            # Detect speech/dialogue segments from clips to duck BGM by -12dB (0.25)
+            # Detect speech/dialogue segments from clips to duck BGM by -12dB (0.25).
+            # Wedding Story Director plans mark the vows / speech cuts themselves (duck_music): only those
+            # duck, by -18 dB (0.126), at their real timeline position.
+            director = any("duck_music" in c for c in clips)
+            duck_level = "0.126" if director else "0.25"
             timeline_pos = 0
             for clip in clips:
-                dur = max(int(clip.get("out_frame", 0)) - int(clip.get("in_frame", 0)), int(fps * 0.5))
-                has_speech = clip.get("has_dialogue") or clip.get("speech") or (clip.get("quality_score", 0) > 85)
+                if director:
+                    timeline_pos = int(round(float(clip.get("timeline_start", 0)) * fps))
+                    dur = max(int(round(float(clip.get("duration", 0)) * fps)), int(fps * 0.5))
+                    has_speech = bool(clip.get("duck_music"))
+                else:
+                    dur = max(int(clip.get("out_frame", 0)) - int(clip.get("in_frame", 0)), int(fps * 0.5))
+                    has_speech = clip.get("has_dialogue") or clip.get("speech") or (clip.get("quality_score", 0) > 85)
                 if has_speech and dur > int(fps * 1.5):
                     # Duck down 12 frames before speech
                     duck_start = max(timeline_pos - int(fps * 0.5), 0)
@@ -913,11 +938,11 @@ class PremiereAdapter:
 
                     kf_b = ET.SubElement(param, "keyframe")
                     ET.SubElement(kf_b, "when").text = str(duck_in)
-                    ET.SubElement(kf_b, "value").text = "0.25"
+                    ET.SubElement(kf_b, "value").text = duck_level
 
                     kf_c = ET.SubElement(param, "keyframe")
                     ET.SubElement(kf_c, "when").text = str(duck_out)
-                    ET.SubElement(kf_c, "value").text = "0.25"
+                    ET.SubElement(kf_c, "value").text = duck_level
 
                     kf_d = ET.SubElement(param, "keyframe")
                     ET.SubElement(kf_d, "when").text = str(duck_end)

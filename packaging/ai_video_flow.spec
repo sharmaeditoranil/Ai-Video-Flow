@@ -12,7 +12,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
-VERSION = "1.1.20"
+VERSION = "1.1.21"
 
 datas = [
     (os.path.join(ROOT, "packages", "desktop_app", "index.html"), "packages/desktop_app"),
@@ -23,12 +23,14 @@ datas = [
     (os.path.join(ROOT, "packages", "desktop_app", "nle"), "packages/desktop_app/nle"),
     (os.path.join(ROOT, "packages", "resolve_workflow"), "packages/resolve_workflow"),
     (os.path.join(ROOT, "packages", "core_premiere", "aivideoflow_bridge.zxp"), "packages/core_premiere"),
+    (os.path.join(ROOT, "packages", "ai_engine", "models"), "packages/ai_engine/models"),
     (os.path.join(ROOT, "assets", "icon_1024.png"), "assets"),
 ]
 binaries = []
 hiddenimports = collect_submodules("packages") + collect_submodules("installer")
 
-for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg", "yt_dlp"]:
+for pkg in ["librosa", "scenedetect", "opentimelineio", "soundfile", "webview", "anthropic", "imageio_ffmpeg", "yt_dlp",
+            "faster_whisper", "ctranslate2", "onnxruntime", "av", "tokenizers"]:
     try:
         d, b, h = collect_all(pkg)
         datas += d

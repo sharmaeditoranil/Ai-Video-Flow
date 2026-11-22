@@ -61,6 +61,81 @@ REVIEW_SCHEMA = {
     "additionalProperties": False,
 }
 
+SEGMENT_REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment_id": {"type": "integer"},
+                    "tier": {"type": "string", "enum": ["A", "B", "C"]},
+                    "moment": {"type": "string"},
+                    "people": {"type": "string"},
+                    "emotion": {"type": "integer"},
+                    "action": {"type": "string"},
+                    "note": {"type": "string"},
+                    "hero_frame_time": {"type": "number"},
+                },
+                "required": ["segment_id", "tier", "moment", "people", "emotion", "action", "note", "hero_frame_time"],
+                "additionalProperties": False,
+            },
+        },
+        "story_note": {"type": "string"},
+    },
+    "required": ["segments", "story_note"],
+    "additionalProperties": False,
+}
+
+SEGMENT_REVIEW_GUIDE = """You are the senior editor of a top Indian wedding film studio, grading raw footage for the
+teaser, highlight and full film. Each image is one clip: a contact sheet of frames across the clip, each stamped with
+its time in seconds from the clip start.
+
+For every clip give:
+- tier: A = hero shot (sharp, well framed, real emotion or a key ritual moment, the couple clearly visible, a
+  beautiful camera move); B = usable coverage; C = reject (blurred, out of focus, blocked view, eyes closed on the key
+  person, awkward expression, people eating, accidental shot, or nothing happening).
+- moment: the ritual or scene in a few words (getting ready, haldi, mehndi, sangeet, baraat, varmala, pheras,
+  sindoor, vidaai, reception, couple portrait, decor, venue, drone, crowd, ...).
+- people: who is on screen in a few words (bride, groom, couple, bride's mother, family, friends, guests, nobody).
+  Use the names the editor gave in the hint when they fit.
+- emotion: 0-100, how strongly the clip carries emotion or energy for a wedding film.
+- action: what happens, in a few words.
+- note: one short editing note (why it is A/B/C, or how to use it).
+- hero_frame_time: the time in seconds (one of the stamped times or between them) of the single best moment.
+Be strict with A: usually not more than 1 in 4 clips. Return every segment_id you were given, exactly once."""
+
+
+_KNOWN_MOMENTS = ["baraat", "chooda", "couple_shoot", "decor", "drone", "engagement", "getting_ready", "haldi", "jaggo",
+                  "mehndi", "muhurtham", "nikah", "anand_karaj", "pheras", "reception", "sangeet", "sindoor", "tilak",
+                  "varmala", "vidaai"]
+_ACT = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "seconds": {"type": "number"},
+        "moments": {"type": "array", "items": {"type": "string", "enum": _KNOWN_MOMENTS}},
+        "mood": {"type": "string", "enum": ["hook", "calm", "energy", "emotion"]},
+        "cut_min": {"type": "number"},
+        "cut_max": {"type": "number"},
+    },
+    "required": ["name", "seconds", "moments", "mood", "cut_min", "cut_max"],
+    "additionalProperties": False,
+}
+_EDIT_PLAN = {
+    "type": "object",
+    "properties": {"acts": {"type": "array", "items": _ACT}, "director_note": {"type": "string"}},
+    "required": ["acts", "director_note"],
+    "additionalProperties": False,
+}
+WEDDING_STORY_SCHEMA = {
+    "type": "object",
+    "properties": {"teaser": _EDIT_PLAN, "highlight": _EDIT_PLAN},
+    "required": ["teaser", "highlight"],
+    "additionalProperties": False,
+}
+
 CREATIVE_PLAN_SCHEMA = {
     "type": "object",
     "properties": {
@@ -268,6 +343,110 @@ class CloudAIClient:
             "shots": {s["index"]: s for s in data.get("shots", []) if 0 <= s.get("index", -1) < len(thumbnails)},
             "story_note": data.get("story_note", ""),
         }
+
+    # ------------------------------------------------------------------
+    # Wedding shot reviewer (STEP 3): one contact sheet per clip, strict JSON tiers
+    # ------------------------------------------------------------------
+    def review_segments(self, segments: List[Dict[str, Any]], context: str = "") -> Dict[str, Any]:
+        """segments: [{"id", "jpeg" (bytes), "times" [s], "hint" str}]. Returns {"segments": {id: {...}}, "story_note"}.
+        One request per call; the caller batches (about 8 clips per call)."""
+        content: List[Dict[str, Any]] = []
+        for seg in segments:
+            content.append({"type": "text", "text": f"segment_id {seg['id']}"
+                            + (f" · {seg['hint']}" if seg.get("hint") else "")
+                            + f" · frames at {', '.join(f'{t:.1f}' for t in seg.get('times', []))} s"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                        "data": base64.standard_b64encode(seg["jpeg"]).decode("ascii")}})
+        content.append({"type": "text", "text": SEGMENT_REVIEW_GUIDE + (f"\n\nEditor's instructions: {context}" if context else "")})
+        response = self._create(
+            max_tokens=16000,
+            messages=[{"role": "user", "content": content}],
+            output_config={"format": {"type": "json_schema", "schema": SEGMENT_REVIEW_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to review these clips.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable review.")
+        ids = {seg["id"] for seg in segments}
+        out = {}
+        for r in data.get("segments", []):
+            if r.get("segment_id") in ids and r.get("tier") in ("A", "B", "C"):
+                r["emotion"] = max(0, min(100, int(r.get("emotion", 0))))
+                out[r["segment_id"]] = r
+        return {"segments": out, "story_note": data.get("story_note", "")}
+
+    # ------------------------------------------------------------------
+    # Wedding Story Director (STEP 4): the acts of the teaser and highlight for THIS wedding
+    # ------------------------------------------------------------------
+    def plan_wedding_story(self, footage_summary: Dict[str, Any], teaser_seconds: float, highlight_seconds: float,
+                           instructions: str = "") -> Dict[str, Any]:
+        """Edit Plans (acts with seconds, moments, mood and cut length) for the teaser and highlight, built from
+        what was actually shot. Text only, small request. Returns {"teaser": plan, "highlight": plan}."""
+        prompt = (
+            "You are the director of a top Indian wedding film studio. Plan the story of a teaser "
+            f"({teaser_seconds:.0f} s) and a cinematic highlight ({highlight_seconds:.0f} s) for this wedding.\n"
+            "Footage summary (moment -> clips, of which A-grade hero shots, couple shots):\n"
+            + json.dumps(footage_summary, ensure_ascii=False) +
+            "\n\nRules: the teaser starts with one 'hook' act of about 2 s (the strongest shot), then follows the story arc "
+            "Anticipation (venue, details, getting ready) -> Celebration (haldi, mehndi, sangeet, baraat) -> Union (varmala, "
+            "pheras, sindoor, vows) -> Emotion & Farewell (vidaai, couple portrait, hero ending). Use only moments that "
+            "exist in the footage; give more seconds to moments with more A-grade shots and to the couple. Energy acts cut "
+            "fast (teaser 0.8-1.3 s, highlight 1.6-2.4 s), emotional acts let shots breathe (teaser 1.4-2.6 s, highlight "
+            "2.6-4 s). Act seconds should add up to the format length. director_note: one sentence on the story idea."
+            + (f"\nEditor's instructions: {instructions}" if instructions else "")
+        )
+        response = self._create(
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {"type": "json_schema", "schema": WEDDING_STORY_SCHEMA}},
+        )
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to plan this story.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable story plan.")
+        out = {}
+        for fmt in ("teaser", "highlight"):
+            plan = data.get(fmt) or {}
+            acts = [{"name": a["name"], "seconds": a["seconds"], "moments": a["moments"], "mood": a["mood"],
+                     "cut": [a["cut_min"], a["cut_max"]]} for a in plan.get("acts", [])]
+            out[fmt] = {"acts": acts, "director_note": plan.get("director_note", ""), "source": "smart_ai"}
+        return out
+
+    # ------------------------------------------------------------------
+    # Vows & speeches (STEP 6): the most emotional spoken lines for the film
+    # ------------------------------------------------------------------
+    def pick_vow_lines(self, lines: List[Dict[str, Any]], max_lines: int = 5, instructions: str = "") -> List[int]:
+        """lines: [{"id", "text", "who", "moment", "seconds"}]. Returns the ids of the best lines, best first."""
+        schema = {"type": "object", "properties": {"picks": {"type": "array", "items": {"type": "integer"}}},
+                  "required": ["picks"], "additionalProperties": False}
+        listing = "\n".join(f"{l['id']}: [{l.get('moment') or '?'} · {l.get('who') or '?'} · {l.get('seconds', 0):.1f}s] {l['text']}"
+                             for l in lines)
+        prompt = (f"You are editing an Indian wedding film. From these spoken lines (vows, speeches, family wishes; "
+                  f"Hindi, Hinglish, English or Punjabi) pick the {max_lines} most emotional ones that work on their own "
+                  "over music: clear, complete, heartfelt, not jokes about something we cannot see, no filler. Prefer the "
+                  "couple and the parents. Return their ids, best first.\n\n" + listing
+                  + (f"\n\nEditor's instructions: {instructions}" if instructions else ""))
+        response = self._create(max_tokens=2000, messages=[{"role": "user", "content": prompt}],
+                                output_config={"format": {"type": "json_schema", "schema": schema}})
+        if response.stop_reason == "refusal":
+            raise CloudAIError("The AI declined to pick lines.")
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        try:
+            picks = json.loads(text).get("picks", [])
+        except json.JSONDecodeError:
+            raise CloudAIError("The AI returned an unreadable answer.")
+        valid = {l["id"] for l in lines}
+        out = []
+        for i in picks:
+            if i in valid and i not in out:
+                out.append(i)
+        return out[:max_lines]
 
     # ------------------------------------------------------------------
     # AI Reference-to-Reel Clone Blueprint (matches ref shots + depth text + Hinglish captions)

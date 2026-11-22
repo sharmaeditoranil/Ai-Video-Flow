@@ -1,0 +1,27 @@
+name: Tests
+
+# Runs the regression tests on every push and pull request, so an upgrade never breaks the
+# timelines, exports or Smart AI tools that work today.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+      - name: Regression tests
+        run: python -m pytest tests -q
+      - name: MCP server protocol test
+        run: python tests/test_mcp_server.py

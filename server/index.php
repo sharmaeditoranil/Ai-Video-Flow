@@ -589,6 +589,8 @@ const DOWNLOAD_FILES = ['windows' => 'AI-Video-Flow-Windows-Setup.exe', 'mac-arm
     'mac-x86_64' => 'AI-Video-Flow-Mac-x86_64.dmg', 'android' => 'AI-Video-Flow-Reels.apk'];
 const DEFAULT_DOWNLOADS_BASE = 'https://aivideoflow.in/downloads';
 const WEBSITE_ORIGINS = ['https://aivideoflow.in', 'https://www.aivideoflow.in'];
+/** Customer buy page. It lives on the website because Razorpay only accepts payments from the approved domain. */
+const WEBSITE_BUY_URL = 'https://aivideoflow.in/buy';
 
 /**
  * Installer for a platform, first match wins: the admin portal's own link, a file in downloads/ next to index.php
@@ -894,10 +896,12 @@ function require_admin(string $method): void
 // Desktop app API
 // ---------------------------------------------------------------------------
 if (str_starts_with($PATH, '/api/v1/')) {
-    // The website's download popup posts here from aivideoflow.in
-    if ($PATH === '/api/v1/download/lead' && in_array($_SERVER['HTTP_ORIGIN'] ?? '', WEBSITE_ORIGINS, true)) {
+    // The website (aivideoflow.in) calls these directly: the download popup, and the buy page, whose Razorpay
+    // checkout has to run on the domain approved in the Razorpay account
+    $websiteApis = ['/api/v1/download/lead', '/api/v1/plans', '/api/v1/pay/order', '/api/v1/pay/verify'];
+    if (in_array($PATH, $websiteApis, true) && in_array($_SERVER['HTTP_ORIGIN'] ?? '', WEBSITE_ORIGINS, true)) {
         header('Access-Control-Allow-Origin: ' . $_SERVER['HTTP_ORIGIN']);
-        header('Access-Control-Allow-Methods: POST, OPTIONS');
+        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
         header('Access-Control-Allow-Headers: Content-Type');
         header('Vary: Origin');
     }
@@ -910,7 +914,7 @@ if (str_starts_with($PATH, '/api/v1/')) {
         $rows = $pdo->query('SELECT id, name, kind, credits, unlimited, price_inr, mrp_inr, validity_days, badge FROM plans WHERE active = 1 AND price_inr > 0 ORDER BY sort, id')->fetchAll();
         json_out(['success' => true, 'plans' => $rows, 'payments_enabled' => get_setting($pdo, 'payments_enabled') === '1',
             'free_daily_projects' => (int)get_setting($pdo, 'free_daily_projects', '2'),
-            'buy_url' => 'https://' . ($_SERVER['HTTP_HOST'] ?? '') . $BASE . '/buy']);
+            'buy_url' => WEBSITE_BUY_URL]);
     }
 
     // Website download popup: name + WhatsApp number become a user (source website_download) before the download starts.
@@ -1501,7 +1505,7 @@ if (str_starts_with($PATH, '/api/admin/')) {
                 'razorpay_key_secret' => mask_secret(get_setting($pdo, 'razorpay_key_secret')),
                 'razorpay_webhook_secret' => mask_secret(get_setting($pdo, 'razorpay_webhook_secret')),
                 'webhook_url' => "https://$host" . $GLOBALS['BASE'] . '/api/v1/pay/webhook',
-                'buy_url' => "https://$host" . $GLOBALS['BASE'] . '/buy',
+                'buy_url' => WEBSITE_BUY_URL,
                 'download_url' => "https://$host" . $GLOBALS['BASE'] . '/download',
                 'anthropic_api_key' => mask_secret(get_setting($pdo, 'anthropic_api_key')),
                 'anthropic_model' => get_setting($pdo, 'anthropic_model', 'claude-opus-5-5'),
@@ -1731,6 +1735,12 @@ if ($PATH === '/download' || str_starts_with($PATH, '/download/')) {
 // Public buy page
 // ---------------------------------------------------------------------------
 if ($PATH === '/buy') {
+    // Old links (website, app, emails) go to the website's buy page, keeping ?plan=
+    header('Location: ' . WEBSITE_BUY_URL . (($_GET['plan'] ?? '') !== '' ? '?plan=' . (int)$_GET['plan'] : ''), true, 302);
+    exit;
+}
+
+if ($PATH === '/buy-legacy') {
     $plans = $pdo->query('SELECT * FROM plans WHERE active = 1 AND price_inr > 0 ORDER BY sort, id')->fetchAll();
     $enabled = get_setting($pdo, 'payments_enabled') === '1';
     header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; frame-src https://api.razorpay.com https://checkout.razorpay.com; connect-src 'self' https://lumberjack.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:");
@@ -2022,7 +2032,7 @@ $needCode = !$loggedIn && !empty($_SESSION['pending_2fa']) && time() - $_SESSION
   th { text-align:left; color:var(--muted); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:8px 10px; border-bottom:1px solid var(--line); }
   td { padding:10px; border-bottom:1px solid #1a1f2c; vertical-align:middle; }
   .tablewrap { overflow-x:auto; }
-  .mono { font-family:'JetBrains Mono', ui-monospace, monospace; font-size:12px; }
+  .mono { font-family:'JetBrains Mono', ui-monospace, monospace; font-size:12px; overflow-wrap:anywhere; }
   .key { color:var(--blue); cursor:pointer; }
   .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; border:1px solid; }
   .pill.ok { color:var(--green); border-color:rgba(34,197,94,.4); }

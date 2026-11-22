@@ -18,7 +18,7 @@
         <img class="brand-logo" src="logo.png" alt="">
         <div>
           <div class="brand-name">AI Video Flow</div>
-          <div class="brand-sub">v1.1.20 · AI editing assistant</div>
+          <div class="brand-sub">v1.1.21 · AI editing assistant</div>
         </div>
       </div>
 
@@ -209,6 +209,10 @@
                 <div class="step-title"><span class="step-n">3</span>Timelines &amp; NLE Target</div>
                 <label class="lbl" style="margin-top:0;">Output Timelines</label>
                 <div class="checks" id="outputs"></div>
+                <label class="same-day-row" id="same-day-row">
+                  <input type="checkbox" id="chk-same-day">
+                  <span><b>⚡ Same-Day mode</b> — reception ke liye jaldi: quick analysis, Smart AI review skip, aur saath me <b>05 Same-Day Edit (2-3 min)</b> timeline</span>
+                </label>
                 <div class="hint" id="mode-hint"></div>
 
                 <label class="lbl" style="margin-top:14px;">Send to NLE</label>
@@ -370,9 +374,6 @@
                     <button type="button" class="chip reedit-chip" data-prompt="Teaser ko 30s me tighter aur faster cut karo, cuts strictly beats par land ho">✂️ Fast 30s Beat Cut</button>
                     <button type="button" class="chip reedit-chip" data-prompt="Royal Warm 5-node cinematic color grade node tree apply karo">👑 Royal Warm Color Tree</button>
                     <button type="button" class="chip reedit-chip" data-prompt="Bride entry and varmala ko opening hero hook me rakho aur slow motion do">👰 Bride &amp; Varmala Hook</button>
-                    <button type="button" class="chip reedit-chip" data-prompt="Background music ko dialogue aur ceremony ke neeche -18dB auto duck karo">🎵 Auto-Duck Music (-18dB)</button>
-                    <button type="button" class="chip reedit-chip" data-prompt="Timeline par 2.39:1 Hollywood Cinemascope letterbox bars lagao">🎬 2.39:1 Letterbox</button>
-                    <button type="button" class="chip reedit-chip" data-prompt="Har ritual aur major beat drop par timeline chapter markers lagao">📍 Add Chapter Markers</button>
                   </div>
 
                   <div class="reedit-actions" style="margin-top:14px;display:flex;gap:10px;">
@@ -381,6 +382,28 @@
                       <span class="btn-text">Apply Smart AI Re-Edit</span>
                     </button>
                   </div>
+                </div>
+              </div>
+
+              <!-- PEOPLE: Bride, Groom & family recognition (on this computer only, opt-in per project) -->
+              <div class="card people-card" id="people-card" hidden>
+                <div class="people-head">
+                  <b>👥 Bride, Groom &amp; Family</b>
+                  <span class="muted" id="people-status"></span>
+                </div>
+                <label class="people-consent">
+                  <input type="checkbox" id="people-consent">
+                  <span>Dulha-dulhan ke shots ko edit me pehli jagah do <span class="muted">— chehre sirf isi computer par pehchane jaate hain</span></span>
+                </label>
+                <div class="people-tools" id="people-tools" hidden>
+                  <div class="people-actions">
+                    <button type="button" class="btn btn-sm btn-secondary" id="btn-people-ref-bride" data-role="bride" title="Optional: a clear photo makes the match exact">📷 Bride photo</button>
+                    <button type="button" class="btn btn-sm btn-secondary" id="btn-people-ref-groom" data-role="groom" title="Optional: a clear photo makes the match exact">📷 Groom photo</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="btn-people-scan">🔍 Find people</button>
+                  </div>
+                  <span class="people-ref-thumbs" id="people-ref-thumbs"></span>
+                  <div class="people-grid" id="people-grid"></div>
+                  <button type="button" class="link-btn" id="btn-people-delete">Delete face data</button>
                 </div>
               </div>
 
@@ -410,9 +433,9 @@
                     <span style="font-weight:700;font-size:13px;letter-spacing:0.02em;">Activity Terminal</span>
                   </div>
                   <div class="row-actions">
-                    <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">↺ Send again</button>
+                    <button class="btn btn-sm" id="btn-send-again" title="Send the last edit plan to the selected editor again">↺ Resend</button>
                     <button class="btn btn-sm" id="btn-clear-log" title="Clear console output">✕ Clear</button>
-                    <button class="btn btn-sm" id="btn-open-output">📁 Output folder</button>
+                    <button class="btn btn-sm" id="btn-open-output" title="Open the output folder">📁 Folder</button>
                   </div>
                 </div>
                 <div class="console" id="console"><div class="line muted">Ready. Load a footage folder to begin.</div></div>

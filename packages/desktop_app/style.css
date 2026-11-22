@@ -1206,3 +1206,16 @@ textarea { resize: vertical; }
 .same-day-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 8px; background: var(--card-2); font-size: 13px; line-height: 1.45; cursor: pointer; }
 .same-day-row input { margin-top: 3px; }
 .same-day-row[hidden] { display: none; }
+
+/* ---------- AI Studio: collapsible steps ---------- */
+.step-title.collapsible { cursor: pointer; margin-bottom: 0; user-select: none; border-radius: 8px; }
+.step-title.collapsible:hover .step-chev, .step-title.collapsible:focus-visible .step-chev { color: var(--text); }
+.step-title.collapsible:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.step.open > .step-title.collapsible { margin-bottom: 14px; }
+.step:not(.open) > .step-body { display: none; }
+.step:not(.open) { padding-bottom: 14px; margin-bottom: 14px; }
+.step-sum { margin-left: auto; min-width: 0; color: var(--muted); font-weight: 500; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step.open .step-sum { visibility: hidden; }
+.step-chev { color: var(--muted); font-size: 18px; line-height: 1; transition: transform .15s ease; flex-shrink: 0; }
+.step:not(.open) .step-chev { transform: rotate(-90deg); }
+

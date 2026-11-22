@@ -1211,3 +1211,70 @@
     call({ allow_code: cb.checked }).then(show).catch(() => {});
   });
 })();
+
+// AI Studio: the 4 steps open and close; a closed step shows a one-line summary of its choices
+(function () {
+  const steps = [...document.querySelectorAll("#pane-studio .step")];
+  if (!steps.length) return;
+  const KEY = "avf.steps";
+  let open = { 1: false, 2: true, 3: false, 4: false };
+  try { open = Object.assign(open, JSON.parse(localStorage.getItem(KEY) || "{}")); } catch (e) { /* ignore */ }
+  const val = (id) => ((document.getElementById(id) || {}).value || "").trim();
+  const base = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+  const summaries = {
+    1: () => { const m = document.querySelector(".mode.active b"); return m ? m.textContent.trim() : ""; },
+    2: () => {
+      const f = val("in-folder");
+      return (f ? "📁 " + base(f) : "No footage yet") + (val("in-audio") ? " · 🎵 song" : "") + (val("in-ref") ? " · 🎯 reference" : "");
+    },
+    3: () => {
+      const n = document.querySelectorAll("#outputs input:checked").length;
+      const ed = document.querySelector("#nle button.active span");
+      const sd = document.getElementById("chk-same-day");
+      return `${n} timeline${n === 1 ? "" : "s"} → ${ed ? ed.textContent : ""}` + (sd && sd.checked && !sd.closest("[hidden]") ? " · ⚡ Same-Day" : "");
+    },
+    4: () => {
+      const on = (document.getElementById("chk-ai-review") || {}).checked;
+      return (on ? "✨ Smart AI on" : "Smart AI off") + (val("in-notes") ? " · prompt" : "");
+    },
+  };
+  steps.forEach((step, i) => {
+    const n = i + 1;
+    const title = step.querySelector(".step-title");
+    if (!title) return;
+    const body = document.createElement("div");
+    body.className = "step-body";
+    while (title.nextSibling) body.appendChild(title.nextSibling);
+    step.appendChild(body);
+    const sum = document.createElement("span");
+    sum.className = "step-sum";
+    const pill = title.querySelector(".step-pill");
+    title.insertBefore(sum, pill || null);
+    const chev = document.createElement("span");
+    chev.className = "step-chev";
+    chev.textContent = "▾";
+    title.appendChild(chev);
+    title.classList.add("collapsible");
+    title.setAttribute("role", "button");
+    title.tabIndex = 0;
+    const set = (on) => {
+      step.classList.toggle("open", on);
+      title.setAttribute("aria-expanded", on ? "true" : "false");
+      open[n] = on;
+      try { localStorage.setItem(KEY, JSON.stringify(open)); } catch (e) { /* ignore */ }
+    };
+    title.addEventListener("click", () => set(!step.classList.contains("open")));
+    title.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); set(!step.classList.contains("open")); } });
+    step.dataset.n = n;
+    set(!!open[n]);
+  });
+  const refresh = () => steps.forEach((step) => {
+    const f = summaries[step.dataset.n];
+    const el = step.querySelector(".step-sum");
+    if (f && el) el.textContent = f();
+  });
+  const pane = document.getElementById("pane-studio");
+  ["input", "change", "click"].forEach((ev) => pane.addEventListener(ev, () => setTimeout(refresh, 0)));
+  setTimeout(refresh, 300);
+  setInterval(refresh, 2000);   // folder / song filled in by Browse or a restored session
+})();

@@ -15,4 +15,4 @@ numba>=0.61,<=0.62.1; sys_platform == "darwin" and platform_machine == "x86_64"
 llvmlite>=0.44,<=0.45.1; sys_platform == "darwin" and platform_machine == "x86_64"
 # Offline transcription of vows / speeches (STEP 6). The speech model (~480 MB) downloads on first use.
 # Not on Intel Macs (no current onnxruntime wheels there): those use Smart AI transcription only.
-faster-whisper>=1.1; not (sys_platform == "darwin" and platform_machine == "x86_64")
+faster-whisper>=1.1; sys_platform != "darwin" or platform_machine != "x86_64"

@@ -1595,6 +1595,8 @@ _DIRECTOR_STEP_LABELS = {
     "director_view_clips": "Footage ke frames dekh raha hoon", "director_view_media": "Reference dekh raha hoon",
     "director_analyze_audio": "Gaana sun raha hoon (beats & energy)", "director_get_timeline": "Current timeline padh raha hoon",
     "director_build_timeline": "Naya cut bana raha hoon",
+    "director_auto_edit": "Story Director se draft bana raha hoon", "director_people": "Dulha-dulhan aur family dekh raha hoon",
+    "director_vows": "Vows aur speech ki lines dekh raha hoon",
 }
 
 
@@ -2286,28 +2288,65 @@ DIRECTOR_TOOLS: List[Dict[str, Any]] = [
          "snap_to_beats": {"type": "boolean", "default": False, "description": "trim cuts so each lands on a beat"},
          "cuts": {"type": "array", "items": {"type": "object", "properties": {
              "clip": {"type": "integer"}, "in": {"type": "number"}, "out": {"type": "number"},
-             "speed_percent": {"type": "integer", "default": 100}, "role": {"type": "string"}},
+             "speed_percent": {"type": "integer", "default": 100}, "role": {"type": "string"},
+             "live_sound": {"type": "boolean", "description": "play this clip's own sound (vows, speech) and duck the music -18 dB"},
+             "note": {"type": "string", "description": "why this shot (becomes a timeline marker)"}},
              "required": ["clip", "in", "out"]}},
          "markers": {"type": "array", "items": {"type": "object", "properties": {
              "seconds": {"type": "number"}, "name": {"type": "string"}}, "required": ["seconds", "name"]}},
          "editor": {"type": "string", "enum": ["project", "resolve", "premiere", "edius", "both", "none"], "default": "project"}},
          "required": ["key", "cuts"]}},
+    {"name": "director_auto_edit",
+     "description": "FAST FIRST DRAFT with the app's wedding Story Director: builds a whole teaser / highlight / reel / "
+                    "same-day edit from the analysed footage (A/B/C shot grades, bride & groom, ritual order, song bars and "
+                    "drops, vows over instrumentals, why-notes) and returns every cut. Optionally give your own acts. Then "
+                    "check it (director_get_timeline / director_view_clips) and refine with director_build_timeline.",
+     "input_schema": {"type": "object", "properties": {
+         "format": {"type": "string", "enum": ["teaser", "highlight", "reel", "same_day"]},
+         "seconds": {"type": "number", "description": "length; default 60 teaser, 240 highlight, 30 reel, 150 same-day"},
+         "instructions": {"type": "string", "description": "the editor's wishes in their words (pace, hook, look...)"},
+         "acts": {"type": "array", "description": "optional story acts", "items": {"type": "object", "properties": {
+             "name": {"type": "string"}, "seconds": {"type": "number"},
+             "moments": {"type": "array", "items": {"type": "string"}},
+             "mood": {"type": "string", "enum": ["hook", "calm", "energy", "emotion"]},
+             "cut_min": {"type": "number"}, "cut_max": {"type": "number"}}, "required": ["name", "seconds", "mood"]}},
+         "key": {"type": "string", "description": "timeline key to save as (default = format)"},
+         "editor": {"type": "string", "enum": ["project", "resolve", "premiere", "edius", "both", "none"], "default": "project"}},
+         "required": ["format"]}},
+    {"name": "director_people",
+     "description": "The people the app recognised in this project (bride, groom, family, guests) with how many clips each "
+                    "is in; set_role names one of them so every edit prefers the couple. Face data stays on this computer.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["list", "set_role"], "default": "list"},
+         "id": {"type": "string"},
+         "role": {"type": "string", "enum": ["bride", "groom", "bride_mother", "bride_father", "groom_mother", "groom_father",
+                                             "sibling", "relative", "friend", "guest", ""]}}}},
+    {"name": "director_vows",
+     "description": "Spoken lines (vows, speeches, family wishes) of the speech clips: 'list' shows the transcribed lines per "
+                    "clip with source times and the lines already chosen; 'find' transcribes the speech clips now and picks the "
+                    "most emotional lines. Use a line's start/end as in/out with live_sound in director_build_timeline.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["list", "find"], "default": "list"},
+         "clip": {"type": "integer", "description": "only this clip (list)"}}}},
 ]
 DIRECTOR_NAMES = {t["name"] for t in DIRECTOR_TOOLS}
 
 DIRECTOR_GUIDE = (
-    "\n\nHOW YOU EDIT (work like a senior editor sitting at the timeline, not like a preset):\n"
-    "1. Understand first: director_project_overview, then director_list_clips. Listen to the song with "
-    "director_analyze_audio and look at every reference image / video the user mentions with director_view_media.\n"
-    "2. Really look at the footage with director_view_clips before choosing shots - several calls are fine. "
-    "Never pick shots only from file names or scores.\n"
-    "3. Plan the story (hook, build, emotional peak, ending) against the song structure: cut on beats, put the "
-    "strongest shots on the drops, slow motion for emotion, faster cuts in high-energy parts. Match the reference's "
-    "pacing, framing and mood when one is given.\n"
-    "4. Cut it with director_build_timeline (choose exact source in/out seconds inside each clip's usable window). "
-    "For a change to an existing edit, read it with director_get_timeline and rebuild it with your changes.\n"
-    "5. Then finish in the editor with the other tools (colour, letterbox, markers, audio, titles) when asked.\n"
-    "6. Check your result (director_get_timeline) and end with a short summary of what you cut and why.\n"
+    "\n\nHOW YOU EDIT (like a senior wedding editor at the timeline: understand, draft, check, refine):\n"
+    "1. Understand: director_project_overview, director_list_clips (tier A hero / B usable / C reject, ritual moment, "
+    "people, camera move, audio). Listen to the song with director_analyze_audio (bars, sections, drops, instrumental "
+    "parts, audible end). Look at every reference the user gives with director_view_media. director_people shows who "
+    "is who; director_vows shows the spoken lines.\n"
+    "2. Draft fast: director_auto_edit builds a complete Story Director edit (ritual order, couple first, cuts on "
+    "bars/beats, best shot on the drop, vows over instrumentals). Pass the user's wishes as instructions, or your own "
+    "acts when the story should be different.\n"
+    "3. Check like an editor: director_get_timeline + director_view_clips on the cuts. Look for weak or repeated shots, "
+    "closed eyes, the wrong ritual order, a weak hook or ending, cuts that miss the music.\n"
+    "4. Refine: rebuild the timeline with director_build_timeline (exact source in/out inside each clip's usable "
+    "window; live_sound for vow lines from director_vows; a short note per cut). Never pick shots only from file "
+    "names or scores - look at them.\n"
+    "5. Finish in the editor with the other tools (colour, letterbox, markers, titles) when asked.\n"
+    "6. End with a short summary of what you cut and why, in the user's language.\n"
     "Footage paths the user writes in quotes are files on this computer - open them with your tools."
 )
 
@@ -2475,8 +2514,10 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
             raise RuntimeError(f"File not found: {args.get('path')}")
         from packages.ai_engine.beat_analyzer import beat_analyzer
         beats = beat_analyzer.analyze_audio(src, 25.0)
-        out = {k: beats.get(k) for k in ("duration", "bpm", "beat_count", "drop_times")}
+        out = {k: beats.get(k) for k in ("duration", "bpm", "beat_count", "drop_times", "bar_seconds", "sections",
+                                         "vocal_regions", "instrumental_regions", "audible_end")}
         out["beat_times"] = (beats.get("beat_times") or [])[:600]
+        out["downbeat_times"] = (beats.get("downbeat_times") or [])[:200]
         try:
             import numpy as np
             from packages.ai_engine.audio_io import load_audio
@@ -2546,7 +2587,14 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
                             "shot_type": c.get("shot_type", "mid"), "role": cut.get("role") or "",
                             "is_still": still, "speed": speed / 100.0, "speed_percent": speed,
                             "speed_label": f"{speed}%" + (" Slow-Mo (Optical Flow)" if speed < 100 else ""),
-                            "retime_process": "Optical Flow" if speed != 100 else "Normal"})
+                            "retime_process": "Optical Flow" if speed != 100 else "Normal",
+                            "duck_music": bool(cut.get("live_sound")), "keep_audio": bool(cut.get("live_sound")),
+                            "why": str(cut.get("note") or "")[:200]})
+            if cut.get("live_sound") and speed != 100:
+                problems.append(f"cut {n}: live sound plays at 100% (speed ignored)")
+                entries[-1].update(speed=1.0, speed_percent=100, duration=round(b - a, 3),
+                                   timeline_end=round(t + b - a, 3), retime_process="Normal")
+                length = round(b - a, 3)
             t += length
         if not entries:
             raise RuntimeError("No usable cuts. " + "; ".join(problems))
@@ -2554,7 +2602,8 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
         plan = {"format": f"Smart_AI_{key}", "aspect_ratio": {"16:9": "16:9 (1920x1080 / 3840x2160)", "9:16": "9:16 (1080x1920)",
                                                                  "1:1": "1:1 (1080x1080)", "4:5": "4:5 (1080x1350)"}.get(aspect, aspect),
                 "sequence_name": (args.get("sequence_name") or f"Smart_AI_{key}_{time.strftime('%H%M%S')}")[:80],
-                "clips": entries, "clip_count": len(entries), "total_duration": round(t, 2), "edited_by": "Smart AI Director"}
+                "clips": entries, "clip_count": len(entries), "total_duration": round(t, 2), "edited_by": "Smart AI Director",
+                "duck_regions": [{"start": e["timeline_start"], "end": e["timeline_end"], "db": -18.0} for e in entries if e["duck_music"]]}
         music = args.get("music")
         music = data.get("audio", "") if music is None else os.path.expanduser(str(music).strip().strip('"'))
         if music and os.path.isfile(music):
@@ -2564,13 +2613,15 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
                 bt = beat_analyzer.analyze_audio(music, 25.0).get("beat_times") or []
                 moved = _snap_to_beats(plan, bt)
                 _log(job_id, f"  🎵 {moved} cuts locked to the beat", "info") if job_id else None
+        markers = {key: [{"seconds": float(m["seconds"]), "name": str(m["name"])[:60]} for m in (args.get("markers") or [])]
+                   + [{"seconds": e["timeline_start"], "name": "Smart AI", "note": e["why"]} for e in entries if e.get("why")]}
+        plan["markers"] = markers[key]
         data.setdefault("plans", {})[key] = plan
         if music and os.path.isfile(music):
             data["audio"] = music
         saved = _dir_save_project(data)
         editor = args.get("editor") or "project"
         target = data.get("target_nle") or "resolve" if editor == "project" else editor
-        markers = {key: [{"seconds": float(m["seconds"]), "name": str(m["name"])[:60]} for m in (args.get("markers") or [])]}
         _log(job_id, f"✂️ Smart AI cut '{plan['sequence_name']}': {len(entries)} shots, {plan['total_duration']}s", "info") if job_id else None
         res: Dict[str, Any] = {}
         if target != "none":
@@ -2581,7 +2632,93 @@ def director_call(name: str, args: Dict[str, Any], job_id: str = "") -> Any:
                 "in_resolve": res.get("timelines_created", []), "premiere_xmls": res.get("premiere_xmls", []),
                 "edius_xmls": res.get("edius_xmls", []), "skipped": problems}
 
+    if name == "director_auto_edit":
+        _, data = _dir_project()
+        from packages.ai_engine.story_planner import story_planner
+        fmt = str(args.get("format") or "teaser")
+        defaults = {"teaser": 60.0, "highlight": 240.0, "reel": 30.0, "same_day": 150.0}
+        seconds = float(args.get("seconds") or defaults.get(fmt, 60.0))
+        instructions = str(args.get("instructions") or "")
+        music = _dir_music(data)
+        beat_times = (music or {}).get("beat_times")
+        acts = None
+        if args.get("acts"):
+            acts = {"source": "smart_ai", "acts": [{"name": a.get("name"), "seconds": a.get("seconds"), "moments": a.get("moments") or [],
+                                                     "mood": a.get("mood"), "cut": [a.get("cut_min", 1.2), a.get("cut_max", 2.4)]}
+                                                    for a in args["acts"]]}
+        analyzed = data.get("analyzed", [])
+        common = dict(beat_times=beat_times, instructions=instructions, music_info=music)
+        if fmt == "highlight":
+            plan = story_planner.plan_highlight(analyzed, target_duration=seconds, story_mode="wedding", edit_plan=acts, **common)
+        elif fmt == "reel":
+            plan = story_planner.plan_reel(analyzed, target_duration=seconds, edit_plan=acts, **common)
+        elif fmt == "same_day":
+            plan = story_planner.plan_same_day_edit(analyzed, target_duration=seconds, edit_plan=acts, **common)
+        else:
+            plan = story_planner.plan_teaser(analyzed, target_duration=seconds, story_mode="wedding", edit_plan=acts, **common)
+        if data.get("audio") and os.path.isfile(data["audio"]):
+            plan["audio"] = data["audio"]
+        key = re.sub(r"[^A-Za-z0-9_\-]", "_", str(args.get("key") or fmt))[:40]
+        plan["edited_by"] = "Smart AI Director (Story Director draft)"
+        data.setdefault("plans", {})[key] = plan
+        saved = _dir_save_project(data)
+        editor = args.get("editor") or "project"
+        target = (data.get("target_nle") or "resolve") if editor == "project" else editor
+        res: Dict[str, Any] = {}
+        if target != "none":
+            res = _export_plans(job_id or _new_job(), {key: plan}, target, plan.get("audio", ""),
+                                markers={key: plan.get("markers") or []}, project_name=data.get("project_name") or "AI_Project")
+        index_of = {os.path.normpath(c.get("file_path", "")): i for i, c in enumerate(analyzed)}
+        _log(job_id, f"✂️ Story Director draft '{plan['sequence_name']}': {plan['clip_count']} shots, {plan['total_duration']}s", "info") if job_id else None
+        return {"key": key, "built": plan["sequence_name"], "duration": plan["total_duration"], "editor": target,
+                "plan_file": saved, "acts": [(a["name"], a["seconds"]) for a in (plan.get("edit_plan") or {}).get("acts", [])],
+                "music_out": plan.get("music_out"), "vows_used": len(plan.get("captions") or []),
+                "cuts": [{"clip": index_of.get(os.path.normpath(e["file_path"] or "")), "at": e["timeline_start"],
+                          "len": e["duration"], "speed": e["speed_percent"], "why": e.get("why", "")} for e in plan["clips"]],
+                "in_resolve": res.get("timelines_created", []), "premiere_xmls": res.get("premiere_xmls", [])}
+
+    if name == "director_people":
+        if (args.get("action") or "list") == "set_role":
+            r = people_update("role", {"id": args.get("id"), "role": args.get("role") or None})
+        else:
+            r = people_status()
+        return {k: v for k, v in r.items() if k != "persons"} | {
+            "persons": [{kk: vv for kk, vv in p.items() if kk != "thumb"} for p in r.get("persons", [])]}
+
+    if name == "director_vows":
+        path, data = _dir_project()
+        analyzed = data.get("analyzed", [])
+        if (args.get("action") or "list") == "find":
+            n = find_vow_lines(job_id or _new_job(), analyzed, bool(license_manager.get_status().get("has_credits")))
+            _save_project_inplace(path, data)
+            if not n:
+                return {"chosen": 0, "note": "No clear spoken lines were found (or transcription is unavailable)."}
+        only = args.get("clip")
+        rows = []
+        for i, c in enumerate(analyzed):
+            if only is not None and i != int(only):
+                continue
+            lines = (c.get("transcript") or {}).get("lines") or []
+            if lines or c.get("vow_line"):
+                rows.append({"clip": i, "file": os.path.basename(c.get("file_path", "")), "moment": c.get("moment"),
+                             "people": c.get("people_roles") or [], "chosen": c.get("vow_line"), "lines": lines[:40]})
+        return {"clips": rows, "note": "" if rows else "No transcripts yet - call with action 'find'."}
+
     raise RuntimeError(f"Unknown tool {name}")
+
+
+_MUSIC_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _dir_music(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The project song's beats, bars, sections and instrumental parts (analysed once per song)."""
+    song = data.get("audio") or ""
+    if not song or not os.path.isfile(song):
+        return None
+    if song not in _MUSIC_CACHE:
+        from packages.ai_engine.beat_analyzer import beat_analyzer
+        _MUSIC_CACHE[song] = beat_analyzer.analyze_audio(song, 25.0)
+    return _MUSIC_CACHE[song]
 
 
 def _assistant_execute(job_id: str):

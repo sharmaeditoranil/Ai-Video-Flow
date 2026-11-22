@@ -1191,3 +1191,23 @@
   try { cb.checked = localStorage.getItem("avf.sameDay") === "1"; } catch (e) { /* ignore */ }
   cb.addEventListener("change", () => { try { localStorage.setItem("avf.sameDay", cb.checked ? "1" : "0"); } catch (e) { /* ignore */ } });
 })();
+
+// Smart AI · Advanced: allow the agent to write and run its own code (off by default)
+(function () {
+  const cb = document.getElementById("chk-allow-code");
+  const note = document.getElementById("allow-code-note");
+  if (!cb) return;
+  const token = () => { try { return sessionStorage.getItem("avf.session") || ""; } catch (e) { return ""; } };
+  const call = (body) => fetch("/api/smart-ai/settings", body ? { method: "POST", headers: { "Content-Type": "application/json", "X-AVF-Token": token() }, body: JSON.stringify(body) } : { headers: { "X-AVF-Token": token() } }).then((r) => r.json());
+  const show = (st) => {
+    cb.checked = !!st.allow_code;
+    note.textContent = st.sandboxed
+      ? "Scripts ek surakshit sandbox me chalte hain: sirf Smart AI ke work folder aur output folder me likh sakte hain, footage ko chhu nahi sakte, internet par kuch nahi bhejte."
+      : "Dhyan dein: Windows par sandbox nahi hai — Smart AI ka code aapke account ki permission se chalega. Footage ka backup rakhiye aur sirf zaroorat ho tab on kijiye.";
+  };
+  call().then(show).catch(() => {});
+  cb.addEventListener("change", () => {
+    if (cb.checked && !confirm("Smart AI ko is computer par code chalane ki anumati dein?")) { cb.checked = false; return; }
+    call({ allow_code: cb.checked }).then(show).catch(() => {});
+  });
+})();

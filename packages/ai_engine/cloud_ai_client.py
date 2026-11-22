@@ -648,7 +648,7 @@ class CloudAIClient:
         tools: List[Dict[str, Any]],
         execute: Callable[[str, Dict[str, Any]], Any],
         on_event: Optional[Callable[[str, str], None]] = None,
-        max_steps: int = 60,
+        max_steps: int = 100,
         system_extra: str = "",
     ) -> str:
         """Runs one user turn to completion. `history` is extended in place so the chat keeps context.
@@ -661,7 +661,7 @@ class CloudAIClient:
                 tools=tools,
                 messages=history,
                 cache_control={"type": "ephemeral"},
-                output_config={"effort": "high"},
+                output_config={"effort": "xhigh"},   # full Claude-Code-level reasoning for editing
             )
             history.append({"role": "assistant", "content": response.content})
 

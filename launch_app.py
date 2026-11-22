@@ -203,7 +203,20 @@ def run_dashboard():
         print("\nStopping AI Video Flow. Goodbye!")
 
 
+def run_script_mode() -> bool:
+    """`--avf-run-script <file.py>`: runs a Smart AI script with the app's own Python and libraries
+    (used by the run_code tool; the installed app has no separate Python)."""
+    if len(sys.argv) >= 3 and sys.argv[1] == "--avf-run-script":
+        import runpy
+        sys.argv = [sys.argv[2]] + sys.argv[3:]
+        runpy.run_path(sys.argv[0], run_name="__main__")
+        return True
+    return False
+
+
 if __name__ == "__main__":
+    if run_script_mode():
+        sys.exit(0)
     if is_mcp_mode():
         from packages.mcp_server.server import run_mcp_server
         run_mcp_server()

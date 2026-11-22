@@ -1596,7 +1596,7 @@ _DIRECTOR_STEP_LABELS = {
     "director_analyze_audio": "Gaana sun raha hoon (beats & energy)", "director_get_timeline": "Current timeline padh raha hoon",
     "director_build_timeline": "Naya cut bana raha hoon",
     "director_auto_edit": "Story Director se draft bana raha hoon", "director_people": "Dulha-dulhan aur family dekh raha hoon",
-    "director_vows": "Vows aur speech ki lines dekh raha hoon",
+    "director_vows": "Vows aur speech ki lines dekh raha hoon", "run_code": "Apna code chala raha hoon",
 }
 
 
@@ -2347,6 +2347,8 @@ DIRECTOR_GUIDE = (
     "names or scores - look at them.\n"
     "5. Finish in the editor with the other tools (colour, letterbox, markers, titles) when asked.\n"
     "6. End with a short summary of what you cut and why, in the user's language.\n"
+    "When no tool can do something and run_code is available, write a small Python script for it (save outputs "
+    "in AVF_WORK, never touch the original footage), check its output, then continue with the tools.\n"
     "Footage paths the user writes in quotes are files on this computer - open them with your tools."
 )
 
@@ -2723,6 +2725,10 @@ def _dir_music(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def _assistant_execute(job_id: str):
     def run(name: str, args: Dict[str, Any]) -> Any:
+        if name == "run_code":
+            if not smart_ai_settings()["allow_code"]:
+                raise RuntimeError("Running code is turned off in Settings.")
+            return run_code(str(args.get("code") or ""), str(args.get("purpose") or ""), int(args.get("timeout") or CODE_TIMEOUT), job_id)
         if name in DIRECTOR_NAMES:
             return director_call(name, args, job_id)
         return _mcp().handle_tool_call(name, args)
@@ -2832,8 +2838,128 @@ def people_update(action: str, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"success": True, **people.public_view(store)}
 
 
+# ----------------------------------------------------------------------
+# Smart AI code runner: lets the agent write and run its own Python, like Claude Code.
+# Off by default (Settings switch). On macOS every script runs in a sandbox that can only write to the
+# Smart AI work folder and the output folder (never the footage) and cannot reach the internet.
+# ----------------------------------------------------------------------
+SMART_AI_SETTINGS = "smart_ai_settings.json"
+CODE_TIMEOUT = 300
+CODE_TIMEOUT_MAX = 900
+
+
+def smart_ai_settings() -> Dict[str, Any]:
+    try:
+        with open(os.path.join(OUTPUT_DIR, ".app", SMART_AI_SETTINGS), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    return {"allow_code": bool(data.get("allow_code")), "sandboxed": platform.system() == "Darwin"}
+
+
+def save_smart_ai_settings(allow_code: bool) -> Dict[str, Any]:
+    folder = os.path.join(OUTPUT_DIR, ".app")
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, SMART_AI_SETTINGS), "w", encoding="utf-8") as f:
+        json.dump({"allow_code": bool(allow_code)}, f)
+    return smart_ai_settings()
+
+
+def code_work_dir() -> str:
+    d = os.path.join(OUTPUT_DIR, "smart-ai-work")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _sandbox_profile(writable: List[str]) -> str:
+    """macOS sandbox: read anything, write only to `writable` (the script's temp folder is inside the work folder),
+    no internet (local connections allowed, e.g. DaVinci Resolve's scripting)."""
+    paths = "".join(f' (subpath "{os.path.realpath(p)}")' for p in writable)
+    return ("(version 1)(allow default)"
+            "(deny file-write*)"
+            f"(allow file-write*{paths}"
+            " (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\") (literal \"/dev/tty\"))"
+            "(deny network-outbound)"
+            "(allow network-outbound (remote ip \"localhost:*\"))"
+            "(allow network-outbound (remote unix-socket))")
+
+
+def _python_command(script: str) -> List[str]:
+    """The app's own Python: the console helper next to the installed app, or this interpreter in development."""
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        for name in ("ai-video-flow-mcp.exe", "ai-video-flow-mcp"):
+            helper = os.path.join(exe_dir, name)
+            if os.path.isfile(helper):
+                return [helper, "--avf-run-script", script]
+        return [sys.executable, "--avf-run-script", script]
+    return [sys.executable, script]
+
+
+def run_code(code: str, purpose: str = "", timeout: int = CODE_TIMEOUT, job_id: str = "",
+             work_dir: Optional[str] = None, sandbox: Optional[bool] = None) -> Dict[str, Any]:
+    """Runs a Python script written by Smart AI. Environment: AVF_WORK (its folder), AVF_OUTPUT, AVF_PROJECT
+    (the project JSON), AVF_FFMPEG; the app's packages are importable."""
+    work = work_dir or code_work_dir()
+    os.makedirs(work, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{uuid.uuid4().hex[:4]}"
+    script = os.path.join(work, f"script_{stamp}.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(f"# Smart AI script: {purpose[:200]}\n" + code)
+    env = dict(os.environ)
+    try:
+        from packages.ai_engine.audio_io import ffmpeg_path
+        env["AVF_FFMPEG"] = ffmpeg_path()
+    except Exception:
+        pass
+    tmp = os.path.join(work, ".tmp")
+    os.makedirs(tmp, exist_ok=True)
+    env.update(TMPDIR=tmp, TEMP=tmp, TMP=tmp, NUMBA_CACHE_DIR=os.path.join(tmp, "numba"), MPLCONFIGDIR=os.path.join(tmp, "mpl"))
+    env.update(AVF_WORK=work, AVF_OUTPUT=OUTPUT_DIR, AVF_PROJECT=os.path.join(OUTPUT_DIR, "last_plan.json"),
+               PYTHONPATH=os.pathsep.join([root_dir, env.get("PYTHONPATH", "")]).strip(os.pathsep), PYTHONIOENCODING="utf-8")
+    cmd = _python_command(script)
+    use_sandbox = (platform.system() == "Darwin") if sandbox is None else sandbox
+    if use_sandbox and os.path.isfile("/usr/bin/sandbox-exec"):
+        cmd = ["/usr/bin/sandbox-exec", "-p", _sandbox_profile([work, OUTPUT_DIR]), *cmd]
+    timeout = int(max(5, min(CODE_TIMEOUT_MAX, timeout or CODE_TIMEOUT)))
+    if job_id:
+        _log(job_id, f"🧪 Smart AI is running its own code: {purpose[:120] or os.path.basename(script)}", "info")
+    started = time.time()
+    try:
+        proc = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True, timeout=timeout,
+                              encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = {"exit_code": proc.returncode, "stdout": proc.stdout[-20000:], "stderr": proc.stderr[-8000:]}
+    except subprocess.TimeoutExpired as e:
+        out = {"exit_code": None, "timed_out": True, "stdout": (e.stdout or "")[-8000:] if isinstance(e.stdout, str) else "",
+               "stderr": f"Stopped after {timeout} s."}
+    out.update(seconds=round(time.time() - started, 1), script=script, work_dir=work, sandboxed=bool(use_sandbox))
+    new_files = sorted(f for f in os.listdir(work) if not f.startswith(("script_", ".tmp")))
+    out["files_in_work_dir"] = new_files[-50:]
+    if job_id:
+        _log(job_id, f"   code finished (exit {out.get('exit_code')}, {out['seconds']} s)", "info" if out.get("exit_code") == 0 else "warning")
+    return out
+
+
+RUN_CODE_TOOL = {
+    "name": "run_code",
+    "description": "Write and run your own Python (like Claude Code) when no other tool can do the job: custom analysis, "
+                   "ffmpeg renders, batch file work, reading the project. Runs with the app's Python and libraries "
+                   "(numpy, cv2, librosa, PIL, the app's packages). Environment: AVF_WORK (your folder - put new files "
+                   "here), AVF_OUTPUT, AVF_PROJECT (project JSON with 'analyzed' clips and 'plans'), AVF_FFMPEG. Never "
+                   "change, move or delete the editor's footage. Print what you need to see; stdout comes back to you.",
+    "input_schema": {"type": "object", "properties": {
+        "code": {"type": "string", "description": "a complete Python 3 script"},
+        "purpose": {"type": "string", "description": "one line: what this script does (shown to the editor)"},
+        "timeout": {"type": "integer", "description": f"seconds, default {CODE_TIMEOUT}, max {CODE_TIMEOUT_MAX}"}},
+        "required": ["code", "purpose"]},
+}
+
+
 def _assistant_tools() -> List[Dict[str, Any]]:
     seen, tools = set(DIRECTOR_NAMES), list(DIRECTOR_TOOLS)
+    if smart_ai_settings()["allow_code"]:
+        tools.append(RUN_CODE_TOOL)
+        seen.add("run_code")
     for t in _mcp().MCP_TOOLS:
         if t["name"] in seen:
             continue
@@ -2928,6 +3054,10 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/people":
             self._json(people_status())
+            return
+
+        if self.path == "/api/smart-ai/settings":
+            self._json(smart_ai_settings())
             return
 
         if self.path == "/api/status":
@@ -3103,6 +3233,9 @@ class AppRequestHandler(SimpleHTTPRequestHandler):
                                instructions, tier, bool(data.get("ai_music")), (data.get("voiceover") or "").strip()[:2500],
                                bool(data.get("same_day")))
             self._json({"success": True, "job_id": job_id})
+
+        elif self.path == "/api/smart-ai/settings":
+            self._json(save_smart_ai_settings(bool(data.get("allow_code"))))
 
         elif self.path == "/api/people/scan":
             self._json({"success": True, "job_id": start_job(people_scan_job)})
